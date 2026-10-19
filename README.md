@@ -1,58 +1,81 @@
-# 🐾 SoulDesktopPet
+# 🐾 SoulDesktopPet · 灵魂桌宠
 
-> 本地优先（local-first）的桌面宠物，用于**关系管理**与**纪念提醒**。
-> A local-first desktop pet for relationship management & reminders.
-
----
-
-## 这是什么
-
-SoulDesktopPet 是一个跑在你电脑上的桌面宠物（桌面应用），帮你记住：
-
-- 👤 联系人——他们的昵称、关系、自定义头像；
-- ❤️ 喜好 / 🚫 忌讳 / 🎁 礼物——你对他们的了解；
-- 📅 重要日期——生日、纪念日，以及每一年自动复发的节日；
-- 📷 回忆事件——带照片的回忆相册；
-- 💼 工作事件——一次性 / 周期性的工作提醒；
-- 🐾 一只陪伴你的桌宠——会走动、会撒娇、会在该提醒的时候叫你。
-
-**所有数据都保存在你自己电脑里**（`%APPDATA%/SoulDesktopPet/`），不上云、不上传。
+> 一只住进你电脑里的桌宠，把**情绪价值、记忆价值、实用价值**三合一。
+> 卖萌的同时，替你记住那些最容易忽略的人和事。
 
 ---
 
-## 核心功能
+## 🌟 这是什么
 
-| 模块 | 功能 |
-|---|---|
-| **联系人** | 新建 / 编辑 / 删除联系人；上传自定义头像；每个联系人独立管理喜好、忌讳、礼物、重要日期。 |
-| **喜好 / 忌讳 / 礼物** | 全局条目库，可批量管理与联系人关联。 |
-| **重要日期** | 按公历或农历记录一次性或年度循环的日期，到日子自动提醒。 |
-| **事件** | 分两类：回忆事件（带照片相册）、工作事件（一次性 / 按 cron 循环）。 |
-| **节日库** | 内置节日（情人节、教师节、七夕、圣诞节 …），支持浮动节日（父亲节等）。 |
-| **桌面宠物** | 半透明无边框窗体；自动行走 / 待机 / 入睡；单击 = 角色动作、右击 = cozy 互动菜单（摸/拍/喂/玩/睡/抱）。 |
-| **亲密值系统** | 三层架构：**Bond（永久羁绊）**、**Cozy（短时温馨值）**、**Mood（情绪）**。亲密度随互动提升，解锁更强的互动（如双击拍头需要 tier≥5）。 |
-| **回忆相册导出** | 把回忆事件一键导出为 **PDF 相册** 或 **MP4 视频相册**；支持多模板布局，所见即所得。 |
-| **工具** | 把视频按帧拆分为 PNG 序列，打包成 zip，方便制作桌宠动画。 |
-| **数据备份 / 还原** | 把整个数据库（含照片）打包为 zip 备份；导入即可在一台新机器恢复所有数据。 |
-| **桌宠导入** | 上传包含帧动画 PNG 的 zip 自动生成桌宠，立刻可在桌面上使用。 |
-| **PIN 密码锁** | 主窗口需 4 位 PIN 码解锁（默认 1234），隐私数据有保护。 |
-| **角色动作配置** | 为每个桌宠自定义：单击 → 什么动作；待机循环哪些动作；右击菜单的 6 个 cozy 动作各自播放什么动画。 |
+**SoulDesktopPet（灵魂桌宠）**是一款本地优先的桌面应用，把陪伴与记事合二为一：
+
+- 💝 **情绪价值**——一只常驻桌面的萌宠，会撒娇、走动、主动凑上来求摸摸；
+- 🧠 **记忆价值**——帮你记住联系人喜好、忌讳、礼物，节日生日自动提醒，回忆事件带相册；
+- 🛠 **实用价值**——工作事件按计划闹铃，回忆一键导出 PDF / MP4 相册。
+
+**🔒 一切数据只保存在你自己电脑里（`%APPDATA%/SoulDesktopPet/`）**，不上云、不上传、不联网。
 
 ---
 
-## 安装与运行
+## ✨ 核心功能
+
+### 👥 联系人管理
+- 新建 / 编辑 / 删除联系人，自定义头像，记录昵称与关系；
+- 每个联系人可绑定「**喜好 · 忌讳 · 礼物**」三类标签，全局条目库批量管理；
+- 重要日期按公历 / **农历**记录，支持一次性或按年循环。
+
+### 📅 周期提醒
+- 生日、纪念日、节日周期触发；
+- **支持农历（新历）日期**，内置节日库：情人节、教师节、七夕、圣诞节、父亲节……含浮动节日自动计算；
+- 桌宠右上角实时显示未读提醒数，到点主动叫醒你。
+
+### 📷 回忆事件 & 相册导出
+- 「回忆事件」按时间线记录，留下每个重要瞬间；
+- 一个事件可绑定多张照片，**情侣第一次 xxx** 这种仪式感时刻专门收录；
+- 一键导出为 **PDF 相册** 或 **MP4 视频相册**，多套模板，所见即所得；
+- **年度相册**：自动汇聚某一年的所有回忆，方便回顾。
+
+### 💼 工作事件提醒
+- 一次性或**按 cron 周期循环**的工作提醒；
+- 与私人事件分通道呈现，不打扰也不遗漏。
+
+### 🐾 桌宠本体
+- 半透明无边框窗体，置顶显示，自动行走 / 待机 / 入睡；
+- **单击 / 双击 / 右击**多种交互：摸头、拍头、喂食、玩耍、睡觉、抱抱；
+- 右击弹出 **Cozy 互动菜单**，6 种动作全部可自定义角色动画。
+
+### 💞 亲密度系统（三层架构）
+- **Bond（永久羁绊）**：按 10 个维度每周结算，季度升级——是你与桌宠的"长线关系"；
+- **Cozy（短时温馨值）**：会随时间衰减，玩一次加一点，决定宠物当下心情；
+- **Mood（情绪）**：由 Cozy + 当天活动驱动，影响桌宠表情滤镜。
+
+> 双击拍头等高级互动需要亲密度 tier ≥ 5 解锁。
+
+### 🎨 个性化 & 插拔更换
+- 每个桌宠可独立配置：单击动作 / 待机循环动作 / 右击菜单 6 个 cozy 动作；
+- 上传帧动画 PNG 压缩包，**自动生成新桌宠，立刻可用**；
+- 内置拆帧工具：把视频按帧拆分为 PNG 序列，打包 zip——亲手 DIY 自己的桌宠。
+
+### 🔐 隐私与安全
+- 主窗口需 4 位 PIN 码解锁（默认 `1234`），可在「设置 → 访问密码」中修改；
+- **数据库纯本地**：使用 sql.js（纯 JS SQLite），零原生依赖，不走任何云端 API；
+- 一键导出 / 导入 zip 备份，整机迁移无忧。
+
+---
+
+## 🚀 安装与运行
 
 ### 准备环境
 - Node.js 18+
-- Windows 10 / 11（macOS 也可运行，但默认打包目标是 Windows）
+- Windows 10 / 11（macOS 也能跑，但默认打包目标是 Windows）
 
-### 安装
+### 安装依赖
 ```bash
 npm install
 ```
 `postinstall` 钩子会自动补齐运行所需的 helper 模块。
 
-### 开发运行
+### 开发模式
 ```bash
 npm run dev
 ```
@@ -62,22 +85,18 @@ npm run dev
 ```bash
 npm start
 ```
-> 主窗口默认隐藏；点击桌宠即可唤起。
 
-> 💡 **如果 `npm install` 看起来卡了、或 `npm start` 报 `Electron failed to install correctly` / `spawn EFTYPE` 等**，
-> 直接跳到下面的 [故障排查](#故障排查) 一节。一条 `npm run doctor -- --fix` 通常就够了。
-
-### 打包为安装程序（Windows）
+### 打包安装程序（Windows）
 ```bash
 npm run build
 ```
-> 产物在 `dist/` 下，默认 NSIS 安装器，输出桌面 + 开始菜单快捷方式（名称：SoulDesktopPet）。
+> 产物在 `dist/` 下，NSIS 安装器，自动生成桌面 + 开始菜单快捷方式（名称：SoulDesktopPet）。
 
 ---
 
-## 数据存储位置
+## 📂 数据存储位置
 
-所有数据都保存在操作系统用户目录：
+所有数据均保存在操作系统用户目录：
 
 ```
 %APPDATA%\SoulDesktopPet\
@@ -87,11 +106,11 @@ npm run build
   └─ pets\                     ← 内置 + 用户导入的桌宠包
 ```
 
-备份的 zip 内仍以 `soul-desktop-pet.db` 为根文件，导入时会原子替换。
+备份 zip 同样以 `soul-desktop-pet.db` 为根文件，导入时原子替换。
 
 ---
 
-## 项目结构
+## 🗂 项目结构
 
 ```
 .
@@ -99,7 +118,7 @@ npm run build
 │  ├─ main.js             入口
 │  ├─ db.js               sql.js 封装 + SQLite 模式
 │  ├─ scheduler.js        提醒队列 + 1Hz 亲密值管线
-│  ├─ ipc.js              所有 IPC handler（约 100+）
+│  ├─ ipc.js              所有 IPC handler
 │  ├─ bond_engine.js      亲密值（tier 1+2）算法
 │  ├─ cozy_engine.js      cozy（tier 3）算法
 │  ├─ pet_controller.js   桌宠自动行为状态机
@@ -114,8 +133,10 @@ npm run build
 │  ├─ pet.html           ← 桌宠窗口 HTML
 │  └─ js/
 │     ├─ main.js, api.js, router.js, auth.js, pet.js
-│     └─ pages/            各路由页面（today / contacts / events / export …）
+│     └─ pages/            路由页面（today / contacts / events / export …）
 ├─ scripts/             ← 工具脚本（含若干 smoke 测）
+├─ docs/                ← 文档
+│  └─ 角色制作与更换指南.md   ← 角色制作 / 更换教程
 ├─ icons/               ← 应用图标
 ├─ resources/           ← 桌宠帧资源（默认包含若干内置桌宠）
 └─ package.json
@@ -123,41 +144,39 @@ npm run build
 
 ### 模块要点
 
-- **主进程**（`main/`）：所有数据库 / 文件系统 / 调度逻辑都在主进程，渲染进程只能通过 `preload.js` 暴露的白名单 IPC 访问。
-- **桌宠窗体**独立进程，自带透明无边框窗体、置顶渲染、不抢焦点。
-- **亲密值系统**分三档：
-  - **Bond**（持久档）——每周结算一次，按 10 个维度（问候 / 喂食 / 玩耍 …）统计，季度升级；
-  - **Cozy**（短期档）——会随时间衰减，玩一次加一点，决定宠物的"心情";
-  - **Mood**——由 cozy + 当天活动 + 周活动密度计算，驱动桌宠的表情滤镜。
+- **主进程**（`main/`）：所有数据库 / 文件系统 / 调度逻辑都在主进程，渲染进程只能通过 `preload.js` 暴露的白名单 IPC 访问；
+- **桌宠窗体**独立进程，自带透明无边框窗体、置顶渲染、不抢焦点；
+- **亲密值三层模型**已在 [核心功能](#-核心功能) 中说明，这里不再赘述。
 
 ---
 
-## 使用入门
+## 📖 使用入门
 
 ### 1. 解锁主窗口
-- 启动后默认显示桌宠 + PIN 解锁界面（默认密码 `1234`）。
+- 启动后默认显示桌宠 + PIN 解锁界面（默认密码 `8888`）；
 - 在 **设置 → 访问密码** 中可修改 4 位 PIN。
 
 ### 2. 添加联系人
-- 进入 **联系人 → 新建联系人**，填名称、关系、选头像 / 上传自定义头像。
+- 进入 **联系人 → 新建联系人**，填名称、关系、选头像 / 上传自定义头像；
 - 进联系人详情页可继续添加：喜好、忌讳、礼物、重要日期。
 
 ### 3. 创建回忆事件 + 上传照片
-- **回忆事件 → 新建** → 填标题、日期、关联联系人。
-- 在详情页可批量上传照片；之后可一键导出为 PDF / MP4 相册。
+- **回忆事件 → 新建** → 填标题、日期、关联联系人；
+- 在详情页可批量上传照片，之后可一键导出 PDF / MP4 相册。
 
 ### 4. 等待桌宠提醒
-- 桌宠右上角会显示未读提醒数，到时间桌面宠物会自动提醒；
+- 桌宠右上角会显示未读提醒数，到时间桌面宠物会自动弹窗；
 - 点桌宠唤起主窗口 / 提醒弹窗，或在 **今日** 页查看所有当天事项。
 
 ### 5. 与桌宠互动
-- **单击**：触发用户为该桌宠配置的"单击动作"（默认：摸一下）。
-- **双击**：触发"双击动作"（默认：拍头，亲密 tier≥5 解锁）。
-- **右击**：弹出 cozy 互动菜单：摸一下 / 拍头 / 喂食 / 玩耍 / 睡觉 / 抱抱。
+- **单击**：触发用户为该桌宠配置的"单击动作"（默认：摸一下）；
+- **双击**：触发"双击动作"（默认：拍头，亲密度 tier ≥ 5 解锁）；
+- **右击**：弹出 cozy 互动菜单：摸一下 / 拍头 / 喂食 / 玩耍 / 睡觉 / 抱抱；
 - 在 **设置 → 角色动作** 中可自由切换每个触发绑定的角色动画。
 
 ### 6. 切换桌宠 / 导入新桌宠
-- **设置 → 桌面宠物形象** → 在下拉中切换；或上传帧动画压缩包（见 `角色更换与制作指南.md`）。
+- **设置 → 桌面宠物形象** → 在下拉中切换，或上传帧动画压缩包；
+- 📘 想亲手做一个？👉 **见 [角色制作与更换指南](docs/角色制作与更换指南.md)**。
 
 ### 7. 备份与迁移
 - **设置 → 数据迁移 → 导出备份** 生成 zip，包含数据库 + 所有照片 + 设置；
@@ -165,128 +184,16 @@ npm run build
 
 ---
 
-## 常见操作速查
+## 📚 文档索引
 
-| 想做什么 | 去哪里 |
-|---|---|
-| 看今天该做什么 | **今日** 页 |
-| 录一个新朋友 | **联系人 → 新建联系人** |
-| 给朋友设置生日提醒 | 联系人详情 → **重要日期 → 新建** |
-| 整理某人的喜好 | **喜好 / 忌讳 / 礼物** 三个全局页 |
-| 录一段带孩子去公园的回忆 | **回忆事件 → 新建**，上传照片 |
-| 录明天的会议 | **工作事件 → 新建**，cron / 一次性 |
-| 给相册加封面 / 换模板 | 相册详情 → 进入 **相册编辑器** |
-| 导出相册为 PDF / MP4 | **工具** 或 **回忆事件** → **导出相册** |
-| 切桌宠 | **设置 → 桌面宠物形象** |
-| 改桌宠单击动作 | **设置 → 角色动作 → 触发方式→角色动作** |
-| 改访问密码 | **设置 → 访问密码** |
-| 备份 / 还原数据 | **设置 → 数据迁移** |
+- 📘 **[角色制作与更换指南](docs/角色制作与更换指南.md)**——如何从零做一个新桌宠：拆帧 → PNG 排序 → 打包 zip → 一键导入。
+
+> 更多文档正在不断完善中……
 
 ---
 
-## 故障排查
 
-> 两个大件依赖二进制下载——`electron` (~100 MB) 与 `ffmpeg-static` (~80 MB)。
-> 它们都是从 **GitHub Releases** 下载的，本机 `npm install` 在网络阻塞 / 镜像超时 / 同步盘占用文件时会下到"占位 1 MB 损坏文件"。
-> 这个项目用 `scripts/install.js` 在 postinstall 阶段自动检测 + 修复；用 `npm run doctor` 用户态随时复查。
-
-### 1. 先跑医生
-```bash
-npm run doctor
-```
-会逐项检查 Node 版本、`node_modules`、Electron 二进制、ffmpeg 二进制（**包括**能否成功 spawn）、磁盘空间，并打印可粘贴的修复命令。
-
-### 2. 一键修复（任何 ✗ 都会自动跑 `npm rebuild`）
-```bash
-npm run doctor -- --fix
-```
-> 仍失败？下面的命令 99% 能解：
-```bash
-npm run install:bin                   # 只重下 Electron 二进制
-npm rebuild ffmpeg-static             # 只重下 ffmpeg
-```
-
-### 3. Slow GitHub / `npm install` 卡住不动
-本项目不内置任何第三方镜像（避免你哪天设错 hardcode 而错过 npm 提示）。如果你**确实**拉不动 GitHub，按需设一次性环境变量即可，**这只影响你当前的 shell**：
-```bash
-# Windows cmd
-set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
-set FFMPEG_BIN_BUILDS_URL=https://npmmirror.com/binaries/ffmpeg-static/
-
-# bash
-export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
-export FFMPEG_BIN_BUILDS_URL=https://npmmirror.com/binaries/ffmpeg-static/
-
-# 然后再跑：
-npm install
-```
-> 也可给 **git** 设代理：`git config --global http.proxy http://127.0.0.1:7890`
-
-### 4. 完全重装
-```bash
-rm -rf node_modules package-lock.json
-npm install
-```
-> 如果重装前看到 `EACCES` / `EPERM`，关掉 OneDrive / 坚果云 / Dropbox 同步后再试。
-
-### 5. 常见报错速查
-| 报错 | 原因 | 修复 |
-|---|---|---|
-| `Electron failed to install correctly` | Electron 二进制未下完 | `npm run install:bin` |
-| `spawn EFTYPE` / `Error: spawn UNKNOWN` | **ffmpeg.exe 是 1 MB 假文件**（npm install.js 下载失败留下的占位）| `npm rebuild ffmpeg-static` 或 `npm run doctor -- --fix` |
-| `npm install 卡住不动` | 在等 GitHub | 见"3. Slow GitHub"一节 |
-| `Error occurred in handler for 'tools:split_video_to_frames'` | 内部 try/catch 拿到的是 spawn EFTYPE | 同上行 |
-| `Cannot create symbolic link` | Windows 普通用户无 `SeCreateSymbolicLinkPrivilege`（仅在打包时） | 打包脚本会自动剔除 macOS 符号链接 |
-| `EACCES ... EPERM` | OneDrive / 杀软占用文件 | 关掉同步后再 `npm install` |
-| 项目路径超过 260 字符 | Windows MAX_PATH | 把项目挪到 `C:\proj\soul-desktop-pet` |
-| 主窗口弹出后立刻消失 | PIN 锁 / 桌宠位置被推到屏幕外 | 在 `%APPDATA%\SoulDesktopPet\` 下手动删 `pet_x` / `pet_y` 设置 |
-
-### 6. ffmpeg.exe 手动恢复（最坏情况）
-
-如果 `npm rebuild ffmpeg-static` 也拉不到（GitHub 在你那边彻底挂了）：
-
-**方法 A：拷文件（推荐）**
-1. 在能上 GitHub 的机器上：`npm install ffmpeg-static` 完成；
-2. 把 `node_modules/ffmpeg-static/ffmpeg.exe`（约 80 MB）拷过来覆盖。
-
-**方法 B：用系统 ffmpeg**
-1. 安装 ffmpeg（Windows: `winget install Gyan.FFmpeg`，macOS: `brew install ffmpeg`）；
-2. 设环境变量 `FFMPEG_BIN=<full path to ffmpeg.exe>`；
-3. `npm start`。
-
-### 7. 数据目录
-所有用户数据都在操作系统用户目录下，独立于项目：
-```
-# Windows
-%APPDATA%\SoulDesktopPet\
-# macOS / Linux
-~/.config/SoulDesktopPet/
-```
-直接删掉这个目录相当于"重置应用"，不会影响项目本身。
-
----
-
-## 开发说明
-
-### Smoke 测试
-```bash
-node scripts/smoke-backup.js
-node scripts/smoke-photo-read.js
-node scripts/smoke-memorial-v2.js
-```
-全部应该输出 `SMOKE OK: ...`。
-
-### 加一个新的 IPC
-1. 在 `main/ipc.js` 注册 `ipcMain.handle('xxx:yyy', ...)`；
-2. 在 `main/preload.js` 的 `mp.xxx.yyy` 下暴露白名单 API；
-3. 在 `src/js/api.js` 转译 `window.mp.xxx.yyy` 供渲染进程使用。
-
-### 写一个新桌宠
-见 **[角色更换与制作指南.md](角色更换与制作指南.md)** ——包含帧目录结构、`manifest.json` 字段、上传流程。
-
----
-
-## 技术栈
+## 🧰 技术栈
 
 | 层 | 选型 |
 |---|---|
@@ -300,8 +207,28 @@ node scripts/smoke-memorial-v2.js
 
 > 无任何云端依赖；无任何追踪；网络只在 OS 自动更新 Electron 时使用。
 
+## 📸 交流群
+
+想和作者 & 其他用户一起交流桌宠玩法、反馈 bug、分享自制角色？
+
+👉 加入 QQ 交流群（扫码下方二维码）：
+
+![qq交流群](assets/qq交流群.jpg)
+
 ---
 
-## License
+## 🙏 致谢
+
+本项目在设计与实现过程中参考了若干优秀的开源项目，特此致谢：
+
+- [desktop-pet](https://github.com/TonyNa-code/desktop-pet)
+- [Monica](https://github.com/monicahq/monica)
+- [Immich Memories](https://github.com/sam-dumont/immich-memories)
+- [PhotoBook Studio](https://github.com/romaruss/ImmichPhotoBook)
+- 以及其它提供灵感的开源作品……
+
+---
+
+## 📄 License
 
 Apache License 2.0 — 见 [LICENSE](LICENSE) / [NOTICE](NOTICE)。
