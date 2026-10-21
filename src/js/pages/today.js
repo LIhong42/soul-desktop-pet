@@ -247,11 +247,11 @@ function renderPetStatus(st, state, petName) {
       <div class="card pet-stat pet-stat-wide">
         <div class="ps-label">陪伴状态</div>
         <div class="ps-cosy-grid">
-          ${meter('本周关系维护', weekly, 100, 'weekly')}
+          ${meter('今日关系维护', weekly, 100, 'weekly')}
           ${meter('舒适度', st.cozy, 100, 'cozy')}
         </div>
         <div class="ps-meta-row">
-          <span>连续陪伴 <b data-bind="streak">${st.streak}</b> 周</span>
+          <span>连续陪伴 <b data-bind="streak">${st.streak}</b> 天</span>
           <span data-bind="lonely">${lonelyHours > 0 ? `已独处 <b>${lonelyHours}</b> 小时` : '一直陪着你'}</span>
         </div>
       </div>
@@ -369,7 +369,7 @@ function moodNote(mood, state) {
   switch (mood) {
     case 'depressed':    return '好久没人陪它了，去摸摸它吧';
     case 'sad':          return '舒适度见底了，喂点东西就好';
-    case 'concerned':    return '本周互动有点少，它注意到了';
+    case 'concerned':    return '今天互动有点少，它注意到了';
     case 'lonely':       return '超过一天没一起玩了';
     case 'festive':      return '周末 + 高羁绊，今天值得庆祝';
     case 'proud':        return '今天你为它做了些什么';

@@ -89,10 +89,10 @@ function computeMood(db, petMoodFn, activeReminderCount, petId) {
   });
 }
 
-// ---- Weekly settlement hook ----
-function runWeeklySettlementIfDue(db, nowStr, petId) {
+// ---- Daily settlement hook ----
+function runSettlementIfDue(db, nowStr, petId) {
   const currentPet = petId || db.getSetting('pet_id');
-  return bond.maybeRunWeeklySettlement(db, currentPet, nowStr);
+  return bond.maybeRunSettlement(db, currentPet, nowStr);
 }
 
 // ---- Celebrate hook ----
@@ -118,6 +118,6 @@ module.exports = {
   applyCozyInteraction,
   getCozySnapshot,
   computeMood,
-  runWeeklySettlementIfDue,
+  runSettlementIfDue,
   celebrate,
 };

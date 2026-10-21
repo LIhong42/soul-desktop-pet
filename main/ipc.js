@@ -1687,35 +1687,30 @@ function normFreeText(s) {
   // itself; the renderer hook in src/js/auth.js handles reminder replay
   // after unlock.
   ipcMain.handle('pet:context_menu', () => {
-    // Snapshot current bond tier so each menu item can be enabled/disabled
-    // consistently without re-reading the DB during click handling. Tier
-    // gates match cozy_engine.COZY_DELTAS and bond_engine thresholds.
-    let bondTier = 1;
-    try { bondTier = bondEngine.getBondSnapshot(db).tier | 0 || 1; }
-    catch (e) { /* leave default 1 */ }
+    // No bond-tier read here: every menu item is available at any tier.
     const muted = db.getSetting('pet_muted') === '1';
     // fireBondAction wraps the IPC calls into a single helper so we can
     // route a click through to the pet renderer (which doubles as the
     // visual feedback layer for the cozy interaction).
     const fireBondAction = (action) => {
-      try { petInteractions.applyCozyInteraction(db, action, { bondTier }, db.nowStr.bind(db)); } catch {}
+      try { petInteractions.applyCozyInteraction(db, action, {}, db.nowStr.bind(db)); } catch {}
       // Tell the pet window to play the variant + optional particle. We
       // intentionally do this here (main process) rather than in the
       // renderer so the menu works even if the pet window is unfocused.
       //
       // `map` keeps the parts of the binding that *can't* be customized
-      // (the particle emoji and the one-shot duration + tier gate) and
+      // (the particle emoji and the one-shot duration) and
       // pulls the variant from the user's per-pet `effect_overrides` via
       // `getEffectVariant` — falling back to the EFFECT_BINDINGS default
       // when the user hasn't customized that action. The effect_overrides
       // map is keyed by cozy action id, so we look it up by `action`.
       const map = {
         pet:    { ms: 1200, particle: '💗' },
-        pat:    { ms: 1800, particle: '✨', minTier: 5 },
+        pat:    { ms: 1800, particle: '✨' },
         feed:   { ms: 1500, particle: '🍖' },
-        play:   { ms: 2000, particle: '🧶', minTier: 3 },
-        sleep:  { ms: 2200, particle: '💤', minTier: 2 },
-        cuddle: { ms: 2500, particle: '💞', minTier: 6 },
+        play:   { ms: 2000, particle: '🧶' },
+        sleep:  { ms: 2200, particle: '💤' },
+        cuddle: { ms: 2500, particle: '💞' },
       };
       const m = map[action];
       if (m) {
@@ -1725,7 +1720,9 @@ function normFreeText(s) {
         const petId = db.getSetting('pet_id') || null;
         const cfg = petId ? petActionsConfig.loadConfig(db, petId) : null;
         const variant = petActionsConfig.getEffectVariant(cfg, action, petRegistry, petId);
-        fireVariant(variant, m.ms, { minTier: m.minTier || 0 });
+        // No minTier: every cozy action plays on every tier, so a fresh
+        // pet still animates when the user right-clicks it.
+        fireVariant(variant, m.ms);
         if (m.particle) sendParticle(m.particle);
       }
     };
@@ -1737,8 +1734,7 @@ function normFreeText(s) {
         click: () => fireBondAction('pet'),
       },
       {
-        label: '🐾 双击拍头 (tier≥5)',
-        enabled: bondTier >= 5,
+        label: '🐾 双击拍头',
         click: () => fireBondAction('pat'),
       },
       { type: 'separator' },
@@ -1747,19 +1743,16 @@ function normFreeText(s) {
         click: () => fireBondAction('feed'),
       },
       {
-        label: '🧶 玩耍 (tier≥3)',
-        enabled: bondTier >= 3,
+        label: '🧶 玩耍',
         click: () => fireBondAction('play'),
       },
       {
-        label: '💤 睡觉 (tier≥2)',
-        enabled: bondTier >= 2,
+        label: '💤 睡觉',
         click: () => fireBondAction('sleep'),
       },
       { type: 'separator' },
       {
-        label: bondTier >= 7 ? '🏆 传说之舞' : '🔒 传说之舞 (tier7 解锁)',
-        enabled: bondTier >= 7,
+        label: '🏆 传说之舞',
         click: () => {
           fireVariant('default', 5000);
           sendParticle('🌟');
@@ -1851,12 +1844,12 @@ function normFreeText(s) {
   for (const action of COZY_HANDLERS) {
     ipcMain.handle(`bond:${action}`, () => {
       const id = db.getSetting('pet_id');
-      const tier = bondEngine.getBondSnapshot(db, id).tier | 0 || 1;
+      // No bond-tier gate — cozy actions are available at every tier.
       const out = petInteractions.applyCozyInteraction(
-        db, action, { bondTier: tier }, db.nowStr.bind(db), id,
+        db, action, {}, db.nowStr.bind(db), id,
       );
       if (out && out.accepted) {
-        if (out.variant) fireVariant(out.variant, out.oneShotMs || 1800, { minTier: out.minTier || 0 });
+        if (out.variant) fireVariant(out.variant, out.oneShotMs || 1800);
         if (out.particle) sendParticle(out.particle);
         // Push the new numbers straight away instead of waiting for the 1s
         // pipeline tick, so the 今日 page's 舒适度 bar animates on the same
@@ -1883,9 +1876,8 @@ function normFreeText(s) {
 
   // Tier 7 dance: refuses unless the user has reached legendary.
   ipcMain.handle('bond:trigger_legendary_dance', () => {
-    const id = db.getSetting('pet_id');
-    const bond = bondEngine.getBondSnapshot(db, id);
-    if (bond.tier < 7) return { ok: false, reason: 'tier', tier: bond.tier };
+    // Not tier-gated — like every other right-click action, the dance is
+    // available to any pet.
     fireVariant('default', 5000);
     sendParticle('🌟');
     return { ok: true };

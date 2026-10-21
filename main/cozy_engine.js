@@ -8,13 +8,18 @@
 // Storage lives entirely in the `cozy_state` and `play_log` tables, no
 // in-memory state, so restarts don't lose ground.
 
+// Interaction deltas and cooldowns. These actions are deliberately NOT
+// gated on bond tier — every one of them is available from the right-click
+// menu on a fresh pet. The bond ladder still exists as long-term progression
+// (tier label + 亲密度 + 传说之舞), it just no longer withholds the basic
+// ways to play with the pet.
 const COZY_DELTAS = {
   pet:    { delta:  4, cooldownMs:   8_000 },
-  pat:    { delta:  8, cooldownMs:  10_000, requiresTier: 5 },
+  pat:    { delta:  8, cooldownMs:  10_000 },
   feed:   { delta: 12, cooldownMs:  30_000 },
   play:   { delta:  6, cooldownMs:  60_000 },
   sleep:  { delta:  3, cooldownMs:  60_000 },
-  cuddle: { delta: 15, cooldownMs: 300_000, requiresTier: 6 },
+  cuddle: { delta: 15, cooldownMs: 300_000 },
 };
 
 // Hour-based decay buckets. Tracks give `--decay per second`; the
@@ -50,7 +55,13 @@ function decayPerHour(lonelyHours) {
   return 0;
 }
 
-const DECAY_LOW_FLOOR = 20;
+// Floor that idle decay stops at. This MUST stay below the two negative
+// mood thresholds in pet_mood.js — `sad` fires at cozy < 10 and
+// `depressed` at cozy < 20 (with 48h+ absence). A floor of 20 made both
+// states mathematically unreachable: decay bottomed out at 20 and was then
+// clamped there forever, so the pet could never look genuinely unhappy.
+// At 5 a pet left alone long enough still reaches the <10 "sad" band.
+const DECAY_LOW_FLOOR = 5;
 
 // ---- DB-coupled helpers ----
 
@@ -159,14 +170,6 @@ function applyInteraction(db, petId, action, opts, nowStr, nowMs) {
   if (!cfg) return { accepted: false, reason: 'unknown_action' };
   const now = nowMs || Date.now();
   const row = rollDayIfNeeded(db, petId, nowStr, now);
-  // Tier gate: only enforce on actions that have a requiresTier.
-  if (cfg.requiresTier) {
-    const tier = (opts && opts.bondTier) | 0 || 1;
-    if (tier < cfg.requiresTier) {
-      logPlay(db, petId, action, 0, 1, now);
-      return { accepted: false, reason: 'tier_locked', required_tier: cfg.requiresTier, tier };
-    }
-  }
   // Cooldown lookup from play_log (cheap: index on pet_id+ts).
   const last = db.one(
     `SELECT ts, silent FROM play_log

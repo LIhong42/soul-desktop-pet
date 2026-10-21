@@ -51,6 +51,8 @@ const WEEKLY_MAX = DIMENSION_FORMULA.reduce(
 ); // not used at runtime — keeps the saturation caps honest at read-time only.
 
 // Returns the Monday-of-this-week date string in local time, YYYY-MM-DD.
+// Kept for reading historical weekly_ritual rows written before the switch
+// to daily settlement, and for the 连续陪伴周数 readout.
 function weekStart(d) {
   const now = d instanceof Date ? d : new Date();
   const dow = now.getDay();            // 0 (Sun) .. 6 (Sat)
@@ -58,6 +60,16 @@ function weekStart(d) {
   const diffToMon = (dow + 6) % 7;     // 0 if Monday, 6 if Sunday
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMon);
   return fmtYMD(monday);
+}
+
+// The settlement bucket key. Bond is now settled DAILY, so a "period" is
+// one calendar day and the ritual row is keyed by that date rather than by
+// the Monday. The table is otherwise unchanged — same columns, same
+// PRIMARY KEY (pet_id, <key>) — so no schema migration is needed and rows
+// written under the old weekly scheme simply stop being read.
+function periodStart(d) {
+  const now = d instanceof Date ? d : new Date();
+  return fmtYMD(now);
 }
 
 function fmtYMD(d) {
@@ -118,23 +130,26 @@ function computeBondDelta(weeklyScore, streakWeeks, streakSkip) {
 // Each function takes a small db-shaped object { one, all, run, setSetting,
 // getSetting, nowStr } so they're testable with a fake db in tests.
 
-function ensureCurrentWeekRow(db, petId, nowStr) {
-  const week = weekStart();
+// Returns the current settlement-period key (a calendar date) and makes
+// sure a ritual row exists for it. Named for the ritual dimensions rather
+// than the cadence, since both changed together.
+function ensureCurrentPeriodRow(db, petId, nowStr) {
+  const period = periodStart();
   const existing = db.one(
     'SELECT 1 FROM weekly_ritual WHERE pet_id = ? AND week_start = ?',
-    [petId, week]
+    [petId, period]
   );
-  if (existing) return week;
+  if (existing) return period;
   db.run(
     `INSERT INTO weekly_ritual(pet_id, week_start, last_touched_at)
      VALUES (?, ?, ?)`,
-    [petId, week, nowStr()]
+    [petId, period, nowStr()]
   );
-  return week;
+  return period;
 }
 
 function incrementWeekDimension(db, petId, dim, by, nowStr) {
-  const week = ensureCurrentWeekRow(db, petId, nowStr);
+  const period = ensureCurrentPeriodRow(db, petId, nowStr);
   // Whitelist protects against SQL injection via arbitrary dim key.
   const safeDim = DIMENSION_FORMULA.find(([k]) => k === dim);
   if (!safeDim) throw new Error(`unknown weekly dimension: ${dim}`);
@@ -142,12 +157,11 @@ function incrementWeekDimension(db, petId, dim, by, nowStr) {
     `UPDATE weekly_ritual
         SET ${safeDim[0]} = ${safeDim[0]} + ?, last_touched_at = ?
       WHERE pet_id = ? AND week_start = ?`,
-    [by, nowStr(), petId, week]
+    [by, nowStr(), petId, period]
   );
   // Mark "today we saw an event of certain types" flags so PetMood can
-  // decide to show a "proud" bubble — these auto-decay at next weekly
-  // rollover because we read them by petId only and the scheduler resets
-  // them when the week flips.
+  // decide to show a "proud" bubble. The scheduler resets these at each
+  // period rollover (see maybeRunSettlement).
   if (dim === 'event_created') {
     const cur = parseInt(db.getSetting(`today_event:${petId}`) || '0', 10) + by;
     db.setSetting(`today_event:${petId}`, String(cur));
@@ -157,16 +171,15 @@ function incrementWeekDimension(db, petId, dim, by, nowStr) {
   }
 }
 
-// Append a contact_id to the JSON list of "contacts reviewed this week".
-// We cap the list length at 20 to keep the JSON tiny — dimensions are
-// what's scored; the ids are only used for analytics in the /pets page
-// later.
+// Append a contact_id to the JSON list of "contacts reviewed this period".
+// We cap the list length to keep the JSON tiny — dimensions are what's
+// scored; the ids are only used for analytics later.
 function logContactReviewed(db, petId, contactId, nowStr) {
   if (!petId || !contactId) return;
-  const week = ensureCurrentWeekRow(db, petId, nowStr);
+  const period = ensureCurrentPeriodRow(db, petId, nowStr);
   const row = db.one(
     'SELECT reviewed_contacts FROM weekly_ritual WHERE pet_id = ? AND week_start = ?',
-    [petId, week]
+    [petId, period]
   );
   let list = [];
   try { list = JSON.parse(row?.reviewed_contacts || '[]'); } catch {}
@@ -178,13 +191,13 @@ function logContactReviewed(db, petId, contactId, nowStr) {
     `UPDATE weekly_ritual
         SET reviewed_contacts = ?, last_touched_at = ?
       WHERE pet_id = ? AND week_start = ?`,
-    [JSON.stringify(list), nowStr(), petId, week]
+    [JSON.stringify(list), nowStr(), petId, period]
   );
   db.run(
     `UPDATE weekly_ritual
         SET contact_reviewed = contact_reviewed + 1
       WHERE pet_id = ? AND week_start = ?`,
-    [petId, week]
+    [petId, period]
   );
 }
 
@@ -220,28 +233,33 @@ function recomputeTierFromValue(db, petId, nowStr) {
   return newTier;
 }
 
-// Apply a single week's worth of points to bond_strength.
+// Apply one day's worth of points to bond_strength.
 //   * Increments bond.value by computeBondDelta(score, streakWeeks, skip).
-//   * Updates last_week_settled to `weekStart`.
+//   * Updates last_week_settled to the date this period settled.
 //   * Recomputes tier.
-//   * Sets streakWeeks based on consecutive settlements — we approximate
-//     streakSkip by comparing last_week_settled's Monday to `prevWeekStart`.
-function applyWeeklySettlement(db, petId, prevWeekStart, thisWeekStart, nowStr) {
+//   * Advances streakDays based on consecutive settlements — `streakSkip`
+//     counts how many whole days were missed, derived from the gap between
+//     the last settled date and the day before this period.
+//
+// `streak_weeks` keeps its column name (and its "how long have you stuck
+// with me" meaning) but now counts *consecutive days*, not weeks.
+function applyPeriodSettlement(db, petId, prevPeriodStart, thisPeriodStart, nowStr) {
   const row = ensureBondRow(db, petId, nowStr);
-  const weekRow = db.one(
+  const periodRow = db.one(
     'SELECT * FROM weekly_ritual WHERE pet_id = ? AND week_start = ?',
-    [petId, prevWeekStart]
+    [petId, prevPeriodStart]
   );
-  const score = computeWeeklyScore(weekRow);
+  const score = computeWeeklyScore(periodRow);
   let streakSkip = 0;
-  // Gap > 1 week of Monday difference == at least 1 skip.
+  // Missed days between the last settled period and this one. 1 day = the
+  // expected cadence (no skip), 2 days = skipped one, 3+ = skipped more.
   if (row.last_week_settled) {
     const prev = parseYMD(row.last_week_settled);
-    const expectedPrev = addDays(parseYMD(prevWeekStart), -7);
+    const expectedPrev = addDays(parseYMD(prevPeriodStart), -1);
     const msDay = 24 * 3600_000;
     const gap = Math.round((prev.getTime() - expectedPrev.getTime()) / msDay);
-    if (gap >= 14) streakSkip = 2;
-    else if (gap >= 7) streakSkip = 1;
+    if (gap >= 3) streakSkip = 2;
+    else if (gap >= 2) streakSkip = 1;
     else streakSkip = 0;
   }
   const delta = computeBondDelta(score, row.streak_weeks | 0, streakSkip);
@@ -252,7 +270,7 @@ function applyWeeklySettlement(db, petId, prevWeekStart, thisWeekStart, nowStr) 
     `UPDATE bond_strength
         SET value = ?, tier = ?, streak_weeks = ?, last_week_settled = ?, updated_at = ?
       WHERE pet_id = ?`,
-    [newValue, newTier, newStreak, thisWeekStart, nowStr(), petId]
+    [newValue, newTier, newStreak, thisPeriodStart, nowStr(), petId]
   );
   return { score, delta, newValue, newTier, newStreak };
 }
@@ -281,14 +299,15 @@ function tierFloor(tier) {
   return 0;
 }
 
-// Snapshot used by main renderer page + pet window. The
-// `weekly_score` here is for the *current* week — already accumulated.
+// Snapshot used by main renderer page + pet window. `weekly_score` is the
+// score for the current settlement period (one calendar day) — already
+// accumulated for today.
 function getBondSnapshot(db, petId) {
   const row = readBondRow(db, petId);
-  const week = weekStart();
+  const period = periodStart();
   const weekRow = db.one(
     'SELECT * FROM weekly_ritual WHERE pet_id = ? AND week_start = ?',
-    [petId, week]
+    [petId, period]
   );
   const weeklyScore = computeWeeklyScore(weekRow);
   if (!row) {
@@ -315,55 +334,59 @@ function getBondSnapshot(db, petId) {
   };
 }
 
-// Idempotent hook called from the 1s scheduler tick. If we are in a new
-// week (last_week_settled < this Monday), settle last week forward. Safe
-// to call every second.
-function maybeRunWeeklySettlement(db, petId, nowStr) {
+// Idempotent hook called from the 1s scheduler tick. If the calendar date
+// has moved past the last settled day, settle each elapsed day forward.
+// Safe to call every second.
+//
+// Note the day-rollover is detected here rather than at a fixed hour, so a
+// pet that only runs in the evening settles once per date change — the
+// first tick after midnight is what credits the previous day.
+function maybeRunSettlement(db, petId, nowStr) {
   if (!petId) return { settled: false };
   const row = ensureBondRow(db, petId, nowStr);
-  const thisMon = weekStart();
+  const today = periodStart();
   if (!row.last_week_settled) {
-    // First ever settlement — just mark this Monday as the baseline; don't
-    // credit an empty prior week.
+    // First ever settlement — just mark today as the baseline; don't
+    // credit an empty prior period.
     db.run(
       `UPDATE bond_strength
           SET last_week_settled = ?, updated_at = ?
         WHERE pet_id = ?`,
-      [thisMon, nowStr(), petId]
+      [today, nowStr(), petId]
     );
     return { settled: false, reason: 'first_run' };
   }
-  if (row.last_week_settled === thisMon) return { settled: false, reason: 'already_settled' };
-  // Settle every week between last_week_settled and this Monday (in case
-  // the user was offline for a few).
+  if (row.last_week_settled === today) return { settled: false, reason: 'already_settled' };
+  // Settle every day between last settled and today (in case the app was
+  // closed for a few days). Empty days score 0 and simply add nothing, so
+  // the catch-up is cheap and cannot inflate the bond.
   const last = parseYMD(row.last_week_settled);
-  const target = parseYMD(thisMon);
+  const target = parseYMD(today);
   const oneDay = 24 * 3600_000;
   let settledThisCall = null;
-  const weekCursor = new Date(last.getTime() + 7 * oneDay);
-  while (weekCursor.getTime() <= target.getTime()) {
-    const prevWeekStart = weekStart(new Date(weekCursor.getTime() - 7 * oneDay));
-    const thisWeekStart = weekStart(weekCursor);
-    const result = applyWeeklySettlement(
-      db, petId, prevWeekStart, thisWeekStart, nowStr
+  const cursor = new Date(last.getTime() + oneDay);
+  while (cursor.getTime() <= target.getTime()) {
+    const prevPeriodStart = fmtYMD(new Date(cursor.getTime() - oneDay));
+    const thisPeriodStart = fmtYMD(cursor);
+    const result = applyPeriodSettlement(
+      db, petId, prevPeriodStart, thisPeriodStart, nowStr
     );
     settledThisCall = result;
-    weekCursor.setDate(weekCursor.getDate() + 7);
+    cursor.setDate(cursor.getDate() + 1);
   }
-  // Also reset "today" mood flags — they were per-day, the new Monday
-  // starts fresh.
+  // Reset the per-day mood flags now that the period rolled over.
   db.setSetting(`today_event:${petId}`, '0');
   db.setSetting(`today_memorial:${petId}`, '0');
   return settledThisCall
     ? { settled: true, ...settledThisCall }
-    : { settled: false, reason: 'no_new_week' };
+    : { settled: false, reason: 'no_new_period' };
 }
 
 function getWeeklyBreakdown(db, petId) {
-  const week = weekStart();
+  const period = periodStart();
   const row = db.one(
     'SELECT * FROM weekly_ritual WHERE pet_id = ? AND week_start = ?',
-    [petId, week]
+    [petId, period]
   );
   const reviewed = (() => {
     try {
@@ -386,11 +409,11 @@ function getWeeklyBreakdown(db, petId) {
 
 module.exports = {
   TIER_THRESHOLDS, TIER_LABELS, DIMENSION_FORMULA,
-  weekStart, fmtYMD, clamp, sat,
+  weekStart, periodStart, fmtYMD, clamp, sat,
   computeWeeklyScore, computeTier, computeBondDelta,
   nextTierThreshold, tierLabel, tierFloor,
-  ensureCurrentWeekRow, incrementWeekDimension, logContactReviewed,
+  ensureCurrentPeriodRow, incrementWeekDimension, logContactReviewed,
   readBondRow, ensureBondRow, recomputeTierFromValue,
-  applyWeeklySettlement, getBondSnapshot, getWeeklyBreakdown,
-  maybeRunWeeklySettlement,
+  applyPeriodSettlement, getBondSnapshot, getWeeklyBreakdown,
+  maybeRunSettlement,
 };

@@ -273,9 +273,8 @@ window.addEventListener('contextmenu', (e) => {
 // menu items) keep their legacy behavior, fired through `M.bond.*` so the
 // cozy score side effect still applies; anything else goes through
 // `pet:trigger_action` as a one-shot variant. The main-process
-// `triggerOneShot` already has `requiresTier`/tierForced fallback so
-// unknown variants degrade to the default frame set without crashing the
-// renderer.
+// `triggerOneShot` already has a tierForced fallback so unknown variants
+// degrade to the default frame set without crashing the renderer.
 
 // In-memory cache of the per-pet actions config. Refreshed on init and on
 // `pet:pet-changed`. The click handler reads this without any await so it
@@ -288,10 +287,10 @@ let _actionsCfg = {
 };
 
 // Cozy-reserved names that route through the bond IPC (so cozy scores
-// + tier gate + cooldown still apply) instead of becoming a plain
-// one-shot variant. Anything else (a manifest-declared variant like
-// `blink` / `greet`, or the always-present `default`) is fired as a
-// one-shot via `M.pet.triggerAction`.
+// + cooldown still apply) instead of becoming a plain one-shot variant.
+// These are no longer tier-gated — every one is available on a fresh pet.
+// Anything else (a manifest-declared variant like `blink` / `greet`, or the
+// always-present `default`) is fired as a one-shot via `M.pet.triggerAction`.
 const COZY_KEYS = new Set(['pet', 'pat', 'feed', 'play', 'sleep', 'cuddle']);
 
 async function refreshActionsCfg() {

@@ -371,8 +371,8 @@ function startBondPipeline({ petController, winPet, winMain, petRegistry }) {
         pushStatus(winPet, winMain, 'pet:status-changed', Object.assign({ mood: mood.mood }, statusFields(bondSnap, cozySnap)));
       }
 
-      // 7) weekly settlement check
-      petInteractions.runWeeklySettlementIfDue(db, db.nowStr.bind(db), petId);
+      // 7) daily settlement check
+      petInteractions.runSettlementIfDue(db, db.nowStr.bind(db), petId);
     } catch (e) {
       console.error('[bond pipeline]', e && e.message ? e.message : e);
     }
