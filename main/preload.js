@@ -202,6 +202,7 @@ contextBridge.exposeInMainWorld('mp', {
       'export:progress',
       'tools:progress',
       'pet:mood-changed',
+      'pet:status-changed',
       'pet:cozy-changed',
       'pet:bond-tier-changed',
     ];

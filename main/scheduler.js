@@ -244,6 +244,50 @@ module.exports = { start, stop, ReminderQueue, startBondPipeline, stopBondPipeli
 let moodTimer = null;
 let lastMoodEmitted = null;
 
+// Change-detector for the value-gated `pet:status-changed` broadcast. Holds
+// a compact signature of the last-pushed snapshot so the 1s tick can stay
+// silent while nothing is actually moving.
+let lastStatusEmitted = null;
+
+// The subset of bond + cozy the renderer needs to repaint the 今日 page's
+// 桌宠状态 panel. Shared by both broadcast channels so the two payloads
+// can't drift apart.
+function statusFields(bondSnap, cozySnap) {
+  return {
+    bond_tier: bondSnap.tier,
+    bond_value: bondSnap.value,
+    tier_label: bondSnap.tier_label,
+    tier_floor: bondSnap.tier_floor,
+    week_score: bondSnap.weekly_score,
+    next_tier: bondSnap.next_tier,
+    cozy: cozySnap.value,
+    cozy_today_peak: cozySnap.today_peak,
+    cozy_today_interactions: cozySnap.today_interactions,
+    lonely_hours: Math.round((cozySnap.lonely_hours | 0) * 10) / 10,
+  };
+}
+
+// Round lonely_hours to whole hours so slow decay doesn't re-broadcast on
+// every sub-hour step; the UI only renders whole hours anyway.
+function statusSignature(bondSnap, cozySnap, mood) {
+  return [
+    mood,
+    bondSnap.tier,
+    bondSnap.value,
+    bondSnap.weekly_score,
+    bondSnap.streak_weeks,
+    cozySnap.value,
+    Math.floor(cozySnap.lonely_hours | 0),
+  ].join('|');
+}
+
+// Send to whichever windows still exist. Both channels are advisory — the
+// renderer treats a missing window as "no listener" rather than an error.
+function pushStatus(winPet, winMain, channel, payload) {
+  if (winPet && !winPet.isDestroyed()) winPet.webContents.send(channel, payload);
+  if (winMain && !winMain.isDestroyed()) winMain.webContents.send(channel, payload);
+}
+
 function startBondPipeline({ petController, winPet, winMain, petRegistry }) {
   if (moodTimer) return;
   moodTimer = setInterval(() => {
@@ -310,20 +354,21 @@ function startBondPipeline({ petController, winPet, winMain, petRegistry }) {
 
       // 6) broadcast if mood changed
       if (mood.mood !== lastMoodEmitted) {
-        const payload = Object.assign({}, mood, {
-          bond_tier: bondSnap.tier,
-          bond_value: bondSnap.value,
-          tier_label: bondSnap.tier_label,
-          week_score: bondSnap.weekly_score,
-          next_tier: bondSnap.next_tier,
-          cozy: cozySnap.value,
-          cozy_today_peak: cozySnap.today_peak,
-          cozy_today_interactions: cozySnap.today_interactions,
-          lonely_hours: Math.round((cozySnap.lonely_hours | 0) * 10) / 10,
-        });
-        if (winPet && !winPet.isDestroyed()) winPet.webContents.send('pet:mood-changed', payload);
-        if (winMain && !winMain.isDestroyed()) winMain.webContents.send('pet:mood-changed', payload);
         lastMoodEmitted = mood.mood;
+        pushStatus(winPet, winMain, 'pet:mood-changed', Object.assign({}, mood, statusFields(bondSnap, cozySnap)));
+      }
+
+      // 6b) broadcast the numeric status whenever it actually changes.
+      // The mood-changed broadcast above only fires on a mood-id flip, but
+      // the cozy/bond numbers move on their own schedule: a cozy action
+      // (喂食 +12 舒适度) or the decay tick changes them while the mood id
+      // stays 'content'. Without this second, value-gated push the 今日
+      // page would show a stale 舒适度/亲密度 until the user re-navigated.
+      // Gate on the values (not the clock) so this stays quiet at rest.
+      const sig = statusSignature(bondSnap, cozySnap, mood.mood);
+      if (sig !== lastStatusEmitted) {
+        lastStatusEmitted = sig;
+        pushStatus(winPet, winMain, 'pet:status-changed', Object.assign({ mood: mood.mood }, statusFields(bondSnap, cozySnap)));
       }
 
       // 7) weekly settlement check
@@ -337,4 +382,5 @@ function startBondPipeline({ petController, winPet, winMain, petRegistry }) {
 function stopBondPipeline() {
   if (moodTimer) { clearInterval(moodTimer); moodTimer = null; }
   lastMoodEmitted = null;
+  lastStatusEmitted = null;
 }

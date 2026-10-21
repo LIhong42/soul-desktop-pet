@@ -74,6 +74,38 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
     winPet.webContents.send('pet:particle', Object.assign({ char }, opts || {}));
   };
 
+  // Recompute bond + cozy + mood and push them to both windows on the
+  // `pet:status-changed` channel. Same payload the scheduler's 1s tick
+  // emits, so the renderer's repaint path handles both identically and
+  // there's no ordering hazard between the two producers.
+  const pushPetStatusNow = (petId) => {
+    try {
+      const id = petId || db.getSetting('pet_id');
+      if (!id) return;
+      const bond = petInteractions.getBondSnapshot(db, id);
+      const cozy = petInteractions.getCozySnapshot(db, id);
+      const mood = petInteractions.computeMood(db, petMoodMod.computeMood, queue.activeCount(), id);
+      const payload = {
+        mood: mood.mood,
+        bond_tier: bond.tier,
+        bond_value: bond.value,
+        tier_label: bond.tier_label,
+        tier_floor: bond.tier_floor,
+        week_score: bond.weekly_score,
+        next_tier: bond.next_tier,
+        streak_weeks: bond.streak_weeks,
+        cozy: cozy.value,
+        cozy_today_peak: cozy.today_peak,
+        cozy_today_interactions: cozy.today_interactions,
+        lonely_hours: Math.round((cozy.lonely_hours | 0) * 10) / 10,
+      };
+      if (winPet && !winPet.isDestroyed()) winPet.webContents.send('pet:status-changed', payload);
+      if (winMain && !winMain.isDestroyed()) winMain.webContents.send('pet:status-changed', payload);
+    } catch (e) {
+      console.error('[pushPetStatusNow]', e && e.message ? e.message : e);
+    }
+  };
+
   // ---- Contacts ----
   // ---- Contacts ----
   ipcMain.handle('contacts:list', () =>
@@ -1739,7 +1771,19 @@ function normFreeText(s) {
         click: () => {
           if (winMain && !winMain.isDestroyed()) {
             winMain.show();
-            winMain.webContents.send('main:navigate', '/pets');
+            winMain.focus();
+            // The bond/cozy/mood readouts now live on the 今日 page, so the
+            // menu item lands there instead of the never-registered /pets
+            // route. `main:navigate` only assigns location.hash — if the
+            // window is already sitting on #/today (the default), that
+            // assignment is a no-op and no hashchange fires, so the page
+            // would never re-render. Bounce through a sentinel route to
+            // force the transition, and have the renderer normalize it
+            // back to /today.
+            winMain.webContents.send('main:navigate', '/today');
+            winMain.webContents.executeJavaScript(
+              'if (location.hash === "#/today") { location.hash = "#/__today"; }'
+            ).catch(() => {});
           }
         },
       },
@@ -1787,13 +1831,16 @@ function normFreeText(s) {
   });
 
   ipcMain.handle('bond:get_full_state', (_e, petId) => {
-    // Composite snapshot used by the bond page so the renderer doesn't
-    // need to round-trip four IPC calls. All four engines are pure
-    // functions over the DB row, so this is safe to call at any cadence.
+    // Composite snapshot used by the 今日 page so the renderer doesn't need
+    // to round-trip four IPC calls. All four engines are pure functions over
+    // the DB row, so this is safe to call at any cadence. The reminder count
+    // is passed through because "reminder" is the top-priority mood — with a
+    // hardcoded 0 the pet could never report that it was nagging, which is
+    // exactly the state the user most wants to see on the page.
     const id = petId || db.getSetting('pet_id');
     const bond = petInteractions.getBondSnapshot(db, id);
     const cozy = petInteractions.getCozySnapshot(db, id);
-    const mood = petInteractions.computeMood(db, petMoodMod.computeMood, 0, id);
+    const mood = petInteractions.computeMood(db, petMoodMod.computeMood, queue.activeCount(), id);
     return Object.assign({}, bond, cozy, { mood: mood.mood });
   });
 
@@ -1811,6 +1858,11 @@ function normFreeText(s) {
       if (out && out.accepted) {
         if (out.variant) fireVariant(out.variant, out.oneShotMs || 1800, { minTier: out.minTier || 0 });
         if (out.particle) sendParticle(out.particle);
+        // Push the new numbers straight away instead of waiting for the 1s
+        // pipeline tick, so the 今日 page's 舒适度 bar animates on the same
+        // click. The tick is value-gated and would otherwise swallow this if
+        // the scheduler happened to sample before the write landed.
+        pushPetStatusNow(id);
       }
       return out;
     });

@@ -103,9 +103,17 @@ registerLockedEventHandlers();
 
 // Allow the main process (e.g. pet context menu) to push a hash route.
 api.on('main:navigate', (path) => {
-  if (typeof path === 'string' && path.startsWith('/')) {
-    location.hash = '#' + path;
+  if (typeof path !== 'string' || !path.startsWith('/')) return;
+  // `/today` is also the default landing route, so a plain hash assignment
+  // when we're already there is a no-op (no hashchange → no re-render) and
+  // the "查看羁绊" menu item would look like it did nothing. Route through a
+  // sentinel hash to force a real transition, then let the router's own
+  // unknown-route fallback put us back on /today.
+  if (path === '/today' && location.hash === '#/today') {
+    location.hash = '#/__today';
+    return;
   }
+  location.hash = '#' + path;
 });
 
 // App-internal open-reminder (from home page click)

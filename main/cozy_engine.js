@@ -20,11 +20,34 @@ const COZY_DELTAS = {
 // Hour-based decay buckets. Tracks give `--decay per second`; the
 // `applyDecayTick` decides which bucket applies based on
 // `now - last_decay_at`.
-function decayPerSec(lonelyHours) {
-  if (lonelyHours >= 72) return 0;     // clamped at 20, no further decay
-  if (lonelyHours >= 24) return -2.0 / 3600;
-  if (lonelyHours >= 6)  return -1.0 / 3600;
-  return -0.3 / 3600;
+//
+// Decay is expressed as *points lost per whole hour away*, not per second.
+// The scheduler ticks once a second, so a per-second rate would need a
+// fractional `value` to accumulate correctly — and `cozy_state.value` is an
+// INTEGER column, so the stored value can only move in 1-point steps. A
+// per-second rate quantized to integers therefore loses up to a full point
+// every tick (the -0.3/hour intent behaved as ~-1/sec, draining a full bar
+// in under an hour). Counting *completed hours* instead makes every step an
+// exact integer decrement, so the stored value always matches the intended
+// rate with no truncation drift.
+const DECAY_PER_HOUR = [
+  { afterHours: 72, perHour: 1 },      // slow bleed; the floor stops it anyway
+  { afterHours: 24, perHour: 2 },
+  { afterHours: 6,  perHour: 1 },
+  { afterHours: 0,  perHour: 0.3 },
+];
+
+// Points lost per completed hour of being away, for the current bucket.
+// Fractional rates round *up* so a slow bucket still registers a visible
+// drop each hour instead of rounding to zero. The slowest bucket keeps a
+// non-zero rate on purpose: a 0 there would freeze decay entirely past 72h,
+// leaving a pet that wandered off at 60h stranded well above the floor
+// instead of settling into it.
+function decayPerHour(lonelyHours) {
+  for (const b of DECAY_PER_HOUR) {
+    if (lonelyHours >= b.afterHours) return b.perHour;
+  }
+  return 0;
 }
 
 const DECAY_LOW_FLOOR = 20;
@@ -81,19 +104,37 @@ function applyDecayTick(db, petId, nowStr, nowMs) {
   // ~1.7e12); use Number() instead of `| 0` so a stored value > 2^31
   // doesn't wrap to negative and produce a 50-year decay delta.
   const last = Number(row.last_decay_at) || now;
-  const dtSec = Math.max(0, (now - last) / 1000);
-  if (dtSec < 1) return readCozy(db, petId);  // skip sub-second calls
-  const lonelyHours = row.last_play_at
-    ? (now - row.last_play_at) / 3_600_000
-    : 0;
-  const rate = decayPerSec(lonelyHours);
-  const candidate = (row.value | 0) + rate * dtSec;
-  let newValue;
-  if (rate === 0) {
-    newValue = Math.max(row.value | 0, DECAY_LOW_FLOOR);  // never below 20 once clamped
-  } else {
-    newValue = clamp(candidate, 0, 100);
+  // Charge decay per *whole elapsed hour*, never for a partial one. This is
+  // what makes the rate hourly in practice: a session that's 59 minutes old
+  // has decayed 0, and only crosses to 1 at the one-hour mark.
+  const hoursElapsed = Math.floor(Math.max(0, now - last) / 3_600_000);
+  if (hoursElapsed <= 0) {
+    // Less than a full hour since the last charge. Return WITHOUT touching
+    // last_decay_at so the partial hour keeps accumulating against the same
+    // anchor — advancing it here would silently discard the remainder and
+    // the pet would never decay at all.
+    return readCozy(db, petId);
   }
+  const current = row.value | 0;
+  // Accumulate the whole elapsed span hour by hour, re-evaluating the
+  // bucket each hour against how long the pet had been away *at that
+  // point*. Charging a single rate for the full span would be wrong at the
+  // boundary: a pet away 120h would pick the ">=72h → 0" bucket from the
+  // total and never decay, instead of having bled down to the floor.
+  const awayHoursAt = row.last_play_at
+    ? (last - row.last_play_at) / 3_600_000
+    : 0;
+  let newValue = current;
+  for (let h = 0; h < hoursElapsed; h++) {
+    const rate = decayPerHour(awayHoursAt + h);
+    if (rate <= 0) break;              // clamped bucket — stop, floor holds
+    newValue = Math.max(DECAY_LOW_FLOOR, newValue - Math.max(1, Math.ceil(rate)));
+    if (newValue <= DECAY_LOW_FLOOR) break;  // nothing left to bleed
+  }
+  // Never *raise* the value as a side effect of decay — the old code did
+  // this via Math.max(value, FLOOR) in the clamped branch, which turned a
+  // long absence into a free refill for a pet sitting below 20.
+  newValue = Math.min(newValue, current);
   db.run(
     `UPDATE cozy_state
         SET value = ?, last_decay_at = ?, updated_at = ?
@@ -145,10 +186,11 @@ function applyInteraction(db, petId, action, opts, nowStr, nowMs) {
   interactions[action] = (interactions[action] | 0) + 1;
   db.run(
     `UPDATE cozy_state
-        SET value = ?, last_play_at = ?, today_peak = MAX(today_peak, ?),
+        SET value = ?, last_play_at = ?, last_decay_at = ?,
+            today_peak = MAX(today_peak, ?),
             today_interactions = ?, updated_at = ?
       WHERE pet_id = ?`,
-    [after, now, after, JSON.stringify(interactions), nowStr(), petId]
+    [after, now, now, after, JSON.stringify(interactions), nowStr(), petId]
   );
   logPlay(db, petId, action, cfg.delta, 0, now);
   return {
@@ -234,8 +276,8 @@ function getSnapshot(db, petId) {
 }
 
 module.exports = {
-  COZY_DELTAS, DECAY_LOW_FLOOR,
-  decayPerSec,
+  COZY_DELTAS, DECAY_LOW_FLOOR, DECAY_PER_HOUR,
+  decayPerHour,
   ensureCozy, rollDayIfNeeded, applyDecayTick,
   applyInteraction,
   getSnapshot,

@@ -70,6 +70,19 @@ export const api = {
   search: {
     query: (q) => M.search.query(q),
   },
+  // Bond / cozy / mood readouts. `getFullState` is the composite the 今日
+  // page uses (bond + cozy + resolved mood in one round-trip); the rest
+  // back the pet window's interactions and the tier-gated menu items.
+  bond: {
+    getFullState:      () => M.bond.getFullState?.() || Promise.resolve(null),
+    getSnapshot:       () => M.bond.getSnapshot?.() || Promise.resolve(null),
+    getCozySnapshot:   () => M.bond.getCozySnapshot?.() || Promise.resolve(null),
+    getWeeklyBreakdown:() => M.bond.getWeeklyBreakdown?.() || Promise.resolve(null),
+    celebrate:         () => M.bond.celebrate?.(),
+    legendaryDance:    () => M.bond.legendaryDance?.(),
+    setMuted:          (b) => M.bond.setMuted?.(!!b),
+    getMuted:          () => M.bond.getMuted?.(),
+  },
   pet: {
     getState: () => M.pet.getState(),
     setPosition: (x, y) => M.pet.setPosition(x, y),

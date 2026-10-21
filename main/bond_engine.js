@@ -270,6 +270,17 @@ function addDays(d, n) {
   return x;
 }
 
+// Lower bound of a tier: the bond value you need to be at least at that
+// tier. Exposed on the snapshot so the renderer can draw a "progress to
+// next tier" bar that starts at the *current* tier's floor rather than at
+// zero — otherwise a tier-6 pet at 8001 would render a full bar.
+function tierFloor(tier) {
+  for (const t of TIER_THRESHOLDS) {
+    if (t.tier === tier) return t.threshold;
+  }
+  return 0;
+}
+
 // Snapshot used by main renderer page + pet window. The
 // `weekly_score` here is for the *current* week — already accumulated.
 function getBondSnapshot(db, petId) {
@@ -283,7 +294,7 @@ function getBondSnapshot(db, petId) {
   if (!row) {
     return {
       pet_id: petId,
-      value: 0, tier: 1, tier_label: tierLabel(1),
+      value: 0, tier: 1, tier_label: tierLabel(1), tier_floor: 0,
       streak_weeks: 0, last_week_settled: null,
       weekly_score: weeklyScore, weekly_max: 100,
       next_tier: { tier: 2, threshold: 200 },
@@ -295,6 +306,7 @@ function getBondSnapshot(db, petId) {
     value: row.value | 0,
     tier,
     tier_label: tierLabel(tier),
+    tier_floor: tierFloor(tier),
     streak_weeks: row.streak_weeks | 0,
     last_week_settled: row.last_week_settled || null,
     weekly_score: weeklyScore,
@@ -376,7 +388,7 @@ module.exports = {
   TIER_THRESHOLDS, TIER_LABELS, DIMENSION_FORMULA,
   weekStart, fmtYMD, clamp, sat,
   computeWeeklyScore, computeTier, computeBondDelta,
-  nextTierThreshold, tierLabel,
+  nextTierThreshold, tierLabel, tierFloor,
   ensureCurrentWeekRow, incrementWeekDimension, logContactReviewed,
   readBondRow, ensureBondRow, recomputeTierFromValue,
   applyWeeklySettlement, getBondSnapshot, getWeeklyBreakdown,
