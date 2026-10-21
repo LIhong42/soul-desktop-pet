@@ -6,6 +6,7 @@ import { api, toast } from './api.js';
 const PIN_LENGTH = 4;
 let unlocked = false;
 let pendingReminder = null;
+let pendingSay = false;
 let consecutiveFails = 0;
 
 // ---- Public API ----
@@ -23,6 +24,16 @@ export function registerLockedEventHandlers() {
       pendingReminder = payload;
     }
   });
+  // 说句话 from the pet's right-click menu. Same treatment as reminders: the
+  // prompt is a DOM modal, so showing it while `body.locked` hides #app would
+  // pop it against an invisible layout. Buffered and replayed on unlock.
+  api.on('main:say-prompt', () => {
+    if (unlocked) {
+      window.dispatchEvent(new CustomEvent('open-say-prompt'));
+    } else {
+      pendingSay = true;
+    }
+  });
 }
 
 // Lock the window. Idempotent; safe to call from visibilitychange / pageshow
@@ -32,6 +43,7 @@ export function lock() {
   document.body.classList.add('locked');
   unlocked = false;
   pendingReminder = null;
+  pendingSay = false;
   const cells = document.querySelectorAll('#pin-cells .pin-cell');
   const errorEl = document.getElementById('pin-error');
   if (cells.length) {
@@ -91,6 +103,14 @@ async function tryUnlock(cells, errorEl) {
       // which is back in the normal layout chain once #app is visible.
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('open-reminder', { detail: p }));
+      }, 0);
+    }
+    // Same deferral for the 说句话 prompt: it focuses its <input> on show,
+    // which only lands in the right place once the lock UI is gone.
+    if (pendingSay) {
+      pendingSay = false;
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('open-say-prompt'));
       }, 0);
     }
   } else {

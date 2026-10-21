@@ -71,6 +71,9 @@ contextBridge.exposeInMainWorld('mp', {
       // either the right-click menu or a cozy interaction. Renderer
       // spawns a transient <div> on the .pet-particles layer.
       'pet:particle',
+      // Contextual text bubble (吃饭提醒 / 休息提醒). Emitted by
+      // main/pet_bubbles.js; `{ text: null }` means "clear the bubble".
+      'pet:bubble-changed',
     ];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_e, payload) => cb(payload);

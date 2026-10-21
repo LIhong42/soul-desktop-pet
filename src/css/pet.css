@@ -4,23 +4,30 @@
    reminder badge/bubble UI bits.
 */
 :root {
-  /* Window/CSS render size for the active pet. Defaults to 220×220 so the
-     first paint (before pet.js fetches the real size) is at least square.
-     pet.js sets these from `manifest.defaultSize` — height stays fixed
-     (220), width tracks the aspect ratio. */
-  --size-w: 220px;
-  --size-h: 220px;
+  /* Window box for the active pet — TALLER and WIDER than the sprite itself,
+     so bubbles have somewhere to draw (they're centred on the sprite and
+     constrained to the window width). Without the padding they rendered
+     outside the window and the desktop compositor cropped them.
+
+     Defaults to a 220×220 square with a 220×220 sprite so the first paint
+     (before pet.js fetches the real size) looks right.
+     pet.js sets all four; see BUBBLE_HEADROOM_PX / BUBBLE_SIDE_ROOM_PX in
+     main/pet_controller.js. */
+  --size-w: 220px;   /* window width  */
+  --size-h: 220px;   /* window height */
+  --sprite-w: 220px; /* pet's own width  */
+  --sprite-h: 220px; /* pet's own height */
 }
 html, body {
   margin: 0; padding: 0;
   width: var(--size-w); height: var(--size-h);
   background: transparent;
-  /* Hidden on html/body (instead of visible) so an overflowing child
-     element — reminder-bubble / bond-bubble / particle — never causes
-     the BrowserWindow to display scrollbars, which it otherwise does
-     even when the body itself is transparent. The .pet-root keeps
-     overflow:visible below so those absolute-positioned children
-     still float outside the sprite box without being clipped. */
+  /* Hidden on html/body so an overflowing child element — reminder-bubble /
+     bond-bubble / particle — never causes the BrowserWindow to show
+     scrollbars. Note this DOES clip anything drawn above y=0, which is why
+     the window is deliberately taller than the sprite (BUBBLE_HEADROOM_PX):
+     that headroom is where the bubbles live. `.pet-root`'s overflow:visible
+     does not escape this clip — an ancestor's hidden overflow wins. */
   overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
@@ -36,12 +43,25 @@ html, body {
   overflow: visible;
 }
 
+/* The window box is larger than the sprite on all sides, so centre the
+   sprite horizontally and pin it to the BOTTOM. Everything anchored above the
+   sprite (all three bubbles) then lands inside the window instead of above
+   y=0 / off the left and right edges, where body's `overflow: hidden` and
+   the desktop compositor would crop it.
+
+   Centring uses `left: 50%` + a negative margin rather than
+   `translateX(-50%)`, because `transform` is already spent on the bob/shake
+   animation. */
 .pet-sprite {
-  width: var(--size-w); height: var(--size-h);
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  margin-left: calc(var(--sprite-w) / -2);
+  width: var(--sprite-w);
+  height: var(--sprite-h);
   pointer-events: auto;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  position: relative;
   transform-origin: center bottom;
   /* Default: gentle idle bob. REMINDER state overrides below. */
   animation: bob 3.2s ease-in-out infinite;
@@ -52,8 +72,8 @@ html, body {
 }
 
 .pet-frame {
-  width: var(--size-w);
-  height: var(--size-h);
+  width: var(--sprite-w);
+  height: var(--sprite-h);
   object-fit: contain;
   filter: drop-shadow(0 4px 8px rgba(0,0,0,0.18));
   image-rendering: auto;
@@ -91,10 +111,15 @@ html, body {
   80% { transform: translateX(2px) translateY(-2px); }
 }
 
-/* ---- Reminder count badge (top-right corner) ---- */
+/* ---- Reminder count badge (top-right corner) ----
+   Anchored to the SPRITE on both axes: `right`/`top` would put it in the
+   window's padding (out in the transparent margin beside the pet, and 120px
+   above its head). Anchoring from the sprite's bottom-left keeps it on the
+   pet's shoulder regardless of how much room the bubbles need. */
 .badge {
   position: absolute;
-  top: 8px; right: 8px;
+  bottom: calc(var(--sprite-h) - 32px);
+  left: calc(50% + var(--sprite-w) / 2 - 32px);
   background: #ff5252;
   color: white;
   border-radius: 50%;
@@ -115,33 +140,42 @@ html, body {
 /* ---- Reminder speech bubble (above sprite) ---- */
 .reminder-bubble {
   position: absolute;
-  bottom: 100%;
+  /* Sprite top edge, not the root's bottom — see .pet-bubble for why a
+     percentage would resolve against the taller window box. The existing
+     margin-bottom below provides the gap from the pet. */
+  bottom: var(--sprite-h);
   left: 50%;
   transform: translateX(-50%);
   background: white;
   color: var(--text, #2a2a2a);
-  font: 12px sans-serif;
-  padding: 6px 10px;
-  border-radius: 8px;
-  white-space: nowrap;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  font: 500 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  padding: 9px 16px;
+  border-radius: 14px;
+  border: 1px solid #e3e8ee;
+  box-shadow:
+    0 1px 2px rgba(60, 70, 85, 0.10),
+    0 4px 14px rgba(60, 70, 85, 0.08);
   margin-bottom: 8px;
   pointer-events: none;
   opacity: 1;
   transition: opacity 600ms ease;
-  max-width: 240px;
+  /* Same window-fitting geometry as .pet-bubble — see its comment block. */
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: calc(var(--size-h) - var(--sprite-h));
+  white-space: pre-wrap;
+  word-break: break-word;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 .reminder-bubble.hidden { display: none; }
 .reminder-bubble.fade   { opacity: 0; }
 .reminder-bubble::after {
   content: '';
   position: absolute;
-  top: 100%;
+  top: calc(100% - 1px);
   left: 50%;
   transform: translateX(-50%);
-  border: 6px solid transparent;
+  border: 5px solid transparent;
   border-top-color: white;
 }
 
@@ -171,39 +205,171 @@ html, body {
    produces a soft line ("周末好~", "今天的你超棒", etc.). */
 .bond-bubble {
   position: absolute;
-  bottom: calc(100% - 4px);
+  /* Sprite top edge — see .pet-bubble for why a percentage bottom would
+     resolve against the taller window box and push this too high. */
+  bottom: calc(var(--sprite-h) - 4px);
   left: 50%;
   transform: translateX(-50%);
-  background: linear-gradient(135deg, #fff7e0, #ffe9c2);
-  color: #5b3e1b;
-  font: 12px sans-serif;
-  padding: 5px 10px;
-  border-radius: 10px;
-  white-space: nowrap;
-  box-shadow: 0 3px 10px rgba(120,80,30,0.18);
+  /* Flat tint rather than the old diagonal gradient: a gradient at this size
+     reads as a stale highlight box, and it fought with the per-kind accents
+     on .pet-bubble. Warm but low-saturation, so all three bubbles look like
+     one family. */
+  background: #fdf6ec;
+  color: #7a5527;
+  border: 1px solid #f0e2cc;
+  font: 500 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  padding: 9px 16px;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 2px rgba(60, 70, 85, 0.10),
+    0 4px 14px rgba(60, 70, 85, 0.08);
   pointer-events: none;
   opacity: 0;
   transition: opacity 400ms ease;
+  /* Window-fitting, same as the other two bubbles — see .pet-bubble. Without
+     this this one had no max-width at all and was the worst offender. */
+  box-sizing: border-box;
+  max-width: 100%;
+  /* Bubble sits above the sprite; the headroom above it is the only room
+     it has, so cap the height there rather than at the root's full
+     height (which would let a tall bubble grow down over the pet). */
+  max-height: calc(var(--size-h) - var(--sprite-h));
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Hidden, not auto — `overflow-y: auto` was drawing a scrollbar arrow on
+     the right edge of a purely decorative bubble (this is the artifact that
+     made the bubbles look clumsy). The max-height above already keeps
+     overflow rare, and nothing here is meant to be read at length. */
+  overflow: hidden;
 }
 .bond-bubble:not(.hidden) { opacity: 1; }
 .bond-bubble.hidden { display: none; }
 .bond-bubble::after {
   content: '';
   position: absolute;
-  top: 100%;
+  /* 1px INTO the bubble so the tail's base covers the bottom edge (and the
+     1px ring) instead of leaving a seam — same trick as .pet-bubble. */
+  top: calc(100% - 1px);
   left: 50%;
   transform: translateX(-50%);
-  border: 6px solid transparent;
-  border-top-color: #ffe9c2;
+  border: 5px solid transparent;
+  border-top-color: #fdf6ec;
 }
+
+/* ---- Contextual text bubble (main/pet_bubbles.js) ----
+   Meal / break / manual reminders. Purely presentational: the main process
+   decides *whether* and *what*, this only styles and fades. `data-kind` is
+   the CSS hook a new rule gets for free by declaring a kind — a new rule
+   never has to touch this file unless it wants a distinct color.
+
+   Geometry (both axes are load-bearing, and both were wrong at some point):
+     - `bottom` is anchored to --sprite-h, NOT a percentage. These bubbles are
+       children of .pet-root, whose height is the whole window
+       (--size-h = sprite + bubble headroom), so `bottom: 100%` resolves
+       against 340px and pushes the bubble ~116px above the window.
+     - `max-width` is the WINDOW width. The window is wider than the pet by
+       BUBBLE_SIDE_ROOM_PX so a 2160×2880 sprite (165px wide) still has room
+       for a readable bubble; a bubble wider than that gets cropped sideways
+       by the desktop compositor.
+     - `max-height` is the headroom above the sprite. Capping at 100% (the
+       root) instead would let a tall bubble grow down over the pet.
+
+   Appearance: a soft rounded card with a hairline ring instead of a hard
+   shadow, so it reads as a floating label rather than a UI card pasted on the
+   desktop. Colors per-kind live in the accent block below. */
+.pet-bubble {
+  position: absolute;
+  bottom: calc(var(--sprite-h) - 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  font: 500 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #3a4552;
+  /* Generous horizontal padding relative to the small type — the bubble reads
+     as a pill/label, not a paragraph. */
+  padding: 9px 16px;
+  border-radius: 14px;
+  box-sizing: border-box;
+  /* Hairline ring + very soft shadow. A hard drop shadow at this size reads as
+     a floating dialog; a 1px ring + blur reads as a bubble. */
+  box-shadow:
+    0 1px 2px rgba(60, 70, 85, 0.10),
+    0 4px 14px rgba(60, 70, 85, 0.08);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 400ms ease;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Hidden, not auto: a visible scrollbar on a decorative bubble is ugly and
+     the max-height above already keeps overflow rare. Text that exceeds the
+     cap is clipped rather than scrollable — nothing here is meant to be read
+     at length. */
+  max-height: calc(var(--size-h) - var(--sprite-h));
+  overflow: hidden;
+  /* Above the reminder / bond bubbles (both default to z-index auto) so a
+     simultaneous burst reads as "the pet is saying something" rather than a
+     collision of three overlapping cards. */
+  z-index: 3;
+}
+.pet-bubble.hidden { display: none; }
+.pet-bubble.fade   { opacity: 0; }
+/* Tail pointing down at the pet. Sits 1px INTO the bubble so its base covers
+   the bottom edge (including the 1px ring) rather than leaving a seam. The
+   triangle is 5px wide at the base — small, so it reads as a speech tail
+   rather than as a big arrowhead on a 165px-wide pet. Each kind overrides
+   only border-top-color. */
+.pet-bubble::after {
+  content: '';
+  position: absolute;
+  top: calc(100% - 1px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #ffffff;
+}
+
+/* Per-kind accent.
+   All three share the same construction — a very light tinted background, a
+   matching 1px ring, and a darker version of the tint for the text — so they
+   read as one family. Saturation is kept low deliberately: these are gentle
+   nudges ("have you eaten?"), and a saturated chip would feel like an alert.
+   The manual (user-typed) bubble is near-white so it reads as the pet
+   repeating your words rather than as another system notification. */
+.pet-bubble[data-kind="meal"] {
+  background: #fff7ed;
+  color: #8a5a2b;
+  border: 1px solid #f3e0c7;
+}
+.pet-bubble[data-kind="meal"]::after { border-top-color: #fff7ed; }
+
+.pet-bubble[data-kind="break"] {
+  background: #f0f8f2;
+  color: #37694a;
+  border: 1px solid #d5e8dc;
+}
+.pet-bubble[data-kind="break"]::after { border-top-color: #f0f8f2; }
+
+.pet-bubble[data-kind="manual"] {
+  background: #ffffff;
+  color: #2f3b45;
+  border: 1px solid #e3e8ee;
+}
+.pet-bubble[data-kind="manual"]::after { border-top-color: #ffffff; }
 
 /* ---- Particles (hearts / sparkles / food / etc.) ----
    The main process emits `pet:particle { char, x?, y? }` on cozy
    interactions; pet.js appends a <span class="particle"> to the
    .pet-particles layer and removes it after the floatUp animation. */
+/* Matched to the sprite box, not the window box: the window is larger on all
+   sides (bubble headroom + side room), so `inset: 0` would stretch this layer
+   past the pet and shift the particle spawn point up and outward. */
 .pet-particles {
   position: absolute;
-  inset: 0;
+  left: 50%;
+  bottom: 0;
+  margin-left: calc(var(--sprite-w) / -2);
+  width: var(--sprite-w);
+  height: var(--sprite-h);
   pointer-events: none;
   overflow: visible;
 }

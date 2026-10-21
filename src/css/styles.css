@@ -2719,6 +2719,10 @@ body.locked #app { display: none !important; }
 #pin-modal { display: none; }
 body.locked #pin-modal { display: grid; }
 body.locked #pin-modal.hidden { display: none !important; }
+/* 说句话 prompt is a sibling of #app, so body.locked alone wouldn't hide it
+   and it would float on top of the PIN screen. auth.js buffers the event and
+   replays it on unlock, so keep it off-screen until then. */
+body.locked #say-modal { display: none !important; }
 
 .pin-modal { width: 360px; max-width: 92vw; }
 .pin-cells {

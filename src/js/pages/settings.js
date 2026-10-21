@@ -65,6 +65,14 @@ async function render() {
     </div>
 
     <div class="card">
+      <h2>文本气泡</h2>
+      <p class="meta">桌宠会根据条件主动说话，气泡浮在桌宠上方，与动作播放互不影响。每条规则都可以单独关闭。</p>
+      <div id="pet-bubbles-card-body">
+        <div class="empty">载入中…</div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>开机启动</h2>
       <div class="field" style="justify-content:flex-start;">
         <label style="display:flex; align-items:center; gap:6px;">
@@ -232,6 +240,105 @@ async function render() {
   // validates + filters against the manifest, so the renderer just sends
   // raw form state.
   await renderPetActionsCard(currentPetId);
+  await renderBubblesCard();
+}
+
+// ---------------------------------------------------------------------------
+// 文本气泡卡片
+// ---------------------------------------------------------------------------
+//
+// The card renders whatever `api.bubbles.getConfig()` returns. It has no
+// hard-coded knowledge of 吃饭提醒 / 休息提醒 — the labels, descriptions and
+// toggle ids all come from the main process's rule list (main/pet_bubbles.js
+// `describeRules`). Adding a rule there makes a new row appear here
+// automatically, with no change to this file.
+let _bubblesCfg = null;
+
+async function renderBubblesCard() {
+  const body = document.getElementById('pet-bubbles-card-body');
+  if (!body) return;
+  if (!api.bubbles) {
+    body.innerHTML = `<div class="empty">当前版本不支持文本气泡配置。</div>`;
+    return;
+  }
+  let cfg;
+  try {
+    cfg = await api.bubbles.getConfig();
+  } catch (e) {
+    body.innerHTML = `<div class="empty">读取失败：${escapeHtml((e && e.message) || String(e))}</div>`;
+    return;
+  }
+  const rules = (cfg && cfg.rules) || [];
+  _bubblesCfg = cfg;
+  if (rules.length === 0) {
+    body.innerHTML = `<div class="empty">暂无文本气泡规则。</div>`;
+    return;
+  }
+
+  const fedWindows = (cfg && cfg.feedWindows) || {};
+
+  body.innerHTML = `
+    <div class="list-item" style="margin-top:10px;">
+      ${rules.map((r) => `
+        <div class="row" style="gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid #eee;">
+          <label style="display:flex; align-items:center; gap:6px; flex:1; min-width:0; cursor:pointer;">
+            <input type="checkbox" data-bubble-kind="${escapeHtml(r.kind)}" ${r.enabled ? 'checked' : ''}/>
+            <span style="min-width:0;">
+              <span style="font-weight:600;">${escapeHtml(r.label)}</span>
+              <div class="meta">${escapeHtml(r.description || '')}</div>
+            </span>
+          </label>
+          <button class="btn secondary" data-bubble-preview="${escapeHtml(r.name)}">预览</button>
+        </div>
+      `).join('')}
+    </div>
+    <p class="meta" style="margin-top:10px;">
+      气泡默认持续 1 小时；吃饭提醒会在你喂食后立即结束。
+      ${Object.keys(fedWindows).length ? '今天的吃饭提醒已处理。' : ''}
+    </p>
+  `;
+
+  // Toggle handlers — each checkbox writes the whole kind→bool map, since
+  // that's the shape the IPC handler takes.
+  body.querySelectorAll('[data-bubble-kind]').forEach((cb) => {
+    cb.onchange = async () => {
+      const map = {};
+      for (const r of (_bubblesCfg && _bubblesCfg.rules) || []) {
+        map[r.kind] = r.kind === cb.getAttribute('data-bubble-kind')
+          ? cb.checked
+          : r.enabled;
+      }
+      try {
+        const saved = await api.bubbles.setEnabled(map);
+        if (_bubblesCfg && _bubblesCfg.rules) {
+          for (const r of _bubblesCfg.rules) {
+            if (saved && typeof saved[r.kind] === 'boolean') r.enabled = saved[r.kind];
+          }
+        }
+        toast(cb.checked ? '已开启' : '已关闭');
+      } catch (e) {
+        cb.checked = !cb.checked;   // snap back so the UI never lies
+        toast('设置失败：' + ((e && e.message) || e));
+      }
+    };
+  });
+
+  // Preview — asks the main process what this rule would say right now and
+  // shows the answer inline. Useful for the time-window rules, where the
+  // answer outside the window is "not due right now".
+  body.querySelectorAll('[data-bubble-preview]').forEach((btn) => {
+    btn.onclick = async () => {
+      const name = btn.getAttribute('data-bubble-preview');
+      try {
+        const r = await api.bubbles.preview(name);
+        if (!r) { toast('无返回'); return; }
+        if (r.error) { toast('读取失败：' + r.error); return; }
+        toast(r.due ? `现在会说：${r.text}` : `${r.label}：当前未到触发条件`);
+      } catch (e) {
+        toast('预览失败：' + ((e && e.message) || e));
+      }
+    };
+  });
 }
 
 // Local working copy of the action-config form so chip toggles + select

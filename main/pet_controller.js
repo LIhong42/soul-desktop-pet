@@ -25,6 +25,32 @@ const TICK_MS = 100;
 const PET_RENDER_HEIGHT = 220;
 const PET_RENDER_MIN_WIDTH = 48;
 
+// The window is also WIDER than the sprite, by the same amount on each side.
+// All three bubbles are centred on the sprite and constrained to the window
+// width (`max-width: 100%`), so without this the window is only as wide as
+// the pet — ~165px for the shipped 2160×2880 sprite, which fits barely 13
+// CJK characters per line and forced every bubble to wrap awkwardly.
+//
+// The extra width is transparent and `pointer-events: none` (only
+// .pet-sprite is clickable), so the wider hit box doesn't steal clicks from
+// whatever is behind the pet.
+const BUBBLE_SIDE_ROOM_PX = 70;
+
+// The window is deliberately TALLER than the sprite, and the sprite sits at
+// the bottom of it. All three bubbles (reminder / bond / contextual) are
+// positioned above the sprite with `bottom: calc(100% - 4px)`, so when the
+// window was exactly as tall as the pet they rendered above y=0 and were
+// clipped away by the body's `overflow: hidden` — a single-line bubble lost
+// its top few pixels, and a wrapped one lost most of itself.
+//
+// This headroom is the space those bubbles actually draw into. The trade-off
+// is a transparent band above the pet: the window reports a taller hit box
+// than the visible character, which is why the sprite keeps
+// `pointer-events: auto` and the headroom stays `pointer-events: none`
+// (see --size-h usage in src/css/pet.css). Must stay in sync with
+// BUBBLE_HEADROOM in pet.css, which pins the sprite to the bottom of the box.
+const BUBBLE_HEADROOM_PX = 120;
+
 // ---- Movement profiles ----
 //
 // `walking` (bare) is the autonomous wander loop emitted by
@@ -165,14 +191,27 @@ function getMovementProfile(name) {
 }
 
 // Resolve `{w, h}` for the renderer / window given a manifest's
-// `defaultSize`. Always returns PET_RENDER_HEIGHT on `h`. Falls back to
-// 220×220 (square) when the input is missing or malformed.
+// `defaultSize`. Both dimensions are the WINDOW box, padded beyond the sprite
+// so bubbles have room to draw (see BUBBLE_HEADROOM_PX /
+// BUBBLE_SIDE_ROOM_PX). `spriteW` / `spriteH` are the pet's own size within
+// it — the renderer sizes the character from those, not from w/h.
+//
+// Falls back to a square window when the input is missing or malformed.
 function petRenderSize(defaultSize) {
+  const windowH = PET_RENDER_HEIGHT + BUBBLE_HEADROOM_PX;
   const w = (defaultSize && Number(defaultSize.w)) || 1;
   const h = (defaultSize && Number(defaultSize.h)) || 1;
-  if (!(w > 0) || !(h > 0)) return { w: PET_RENDER_HEIGHT, h: PET_RENDER_HEIGHT };
-  const wPx = Math.max(PET_RENDER_MIN_WIDTH, Math.round(PET_RENDER_HEIGHT * (w / h)));
-  return { w: wPx, h: PET_RENDER_HEIGHT };
+  if (!(w > 0) || !(h > 0)) {
+    const fallback = windowH;
+    return { w: fallback, h: fallback, spriteW: PET_RENDER_HEIGHT, spriteH: PET_RENDER_HEIGHT };
+  }
+  const spriteW = Math.max(PET_RENDER_MIN_WIDTH, Math.round(PET_RENDER_HEIGHT * (w / h)));
+  return {
+    w: spriteW + BUBBLE_SIDE_ROOM_PX * 2,
+    h: windowH,
+    spriteW,
+    spriteH: PET_RENDER_HEIGHT,
+  };
 }
 
 // UI-level variants the controller emits. The vup resource set shipped
@@ -883,7 +922,13 @@ class PetController {
       x = b.x + b.w - this.renderW;
       this.actionDirection = -1;
     }
-    if ((y || 0) < b.y) y = b.y;
+    // The window is taller than the pet by BUBBLE_HEADROOM_PX, and the sprite is
+    // pinned to the window's BOTTOM — so the sprite's top edge is at
+    // y + renderH - PET_RENDER_HEIGHT. Clamping the window's top instead
+    // would let the pet be pushed a full headroom off the top of the screen.
+    if ((y || 0) + this.renderH - PET_RENDER_HEIGHT < b.y) {
+      y = b.y - this.renderH + PET_RENDER_HEIGHT;
+    }
     if ((y + this.renderH) > b.y + b.h) y = b.y + b.h - this.renderH;
     this.win.setPosition(Math.round(x), Math.round(y), false);
   }

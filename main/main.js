@@ -80,6 +80,12 @@ function createWindows({ petRegistry } = {}) {
   // back to a 220×220 square when no pet has been resolved yet (first
   // launch with an empty registry) — pet.js's CSS variables also default to
   // 220px so the first frame doesn't flash at the wrong size.
+  //
+  // The fallback here is the SPRITE size, not the window size: the window is
+  // taller by the bubble headroom (see petRenderSize / BUBBLE_HEADROOM_PX).
+  // pet.js's CSS defaults to the same sprite size and the controller sends
+  // the real window size on `pet:size-changed` a moment later, so a brief
+  // mismatch here just means one clipped frame before the first bubble.
   let initialW = 220, initialH = 220;
   if (petRegistry) {
     const persisted = db.getSetting('pet_id');
@@ -247,6 +253,10 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   scheduler.stop();
   scheduler.stopBondPipeline();
+  // Drains ipc.js's registered timers (currently the bubble engine's 1s
+  // tick + the idle sampler). Called before db.save() so any final
+  // bubble-state write lands in the snapshot we persist.
+  ipc.shutdown();
   if (petController) petController.stop();
   try { db.save(); } catch (e) { console.error('db save error:', e); }
 });

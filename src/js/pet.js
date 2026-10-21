@@ -7,6 +7,10 @@ const sprite = document.getElementById('pet-sprite');
 const frame = document.getElementById('pet-frame');
 const badge = document.getElementById('pet-badge');
 const bubble = document.getElementById('pet-bubble');
+// Contextual bubble (吃饭提醒 / 休息提醒). Distinct from `bubble`
+// above, which is the reminder-queue speech bubble. Both are drawn above the
+// sprite; the contextual one carries a z-index so it wins when they collide.
+const ctxBubble = document.getElementById('pet-text-bubble');
 
 // Bubble auto-fade timer — when a new head arrives we reset the timer so the
 // bubble is re-showable even if it was mid-fade-out.
@@ -208,6 +212,37 @@ function clearReminderBubble() {
   if (bubbleFadeTimer) { clearTimeout(bubbleFadeTimer); bubbleFadeTimer = null; }
 }
 
+// ---- Contextual text bubble (main/pet_bubbles.js) ----
+//
+// The main process owns the *policy* — which bubble is due, what it says,
+// and when it expires. This side only paints it and starts a self-expiry
+// timer, which exists so the bubble disappears even if the main process
+// stops ticking (e.g. the app is mid-quit and the interval is torn down
+// before the next tick that would clear it).
+//
+// The payload is `{ text, kind, rule }`; `text: null` means "clear".
+function showContextBubble(payload) {
+  if (!ctxBubble) return;
+  clearTimeout(ctxBubble._timer);
+  if (!payload || !payload.text) {
+    ctxBubble.classList.add('hidden');
+    ctxBubble.classList.remove('fade');
+    ctxBubble.dataset.kind = '';
+    return;
+  }
+  ctxBubble.textContent = payload.text;
+  ctxBubble.dataset.kind = payload.kind || '';
+  ctxBubble.classList.remove('hidden', 'fade');
+  // Self-expiry backstop. 1h is the framework's default duration; the main
+  // side sends the authoritative clear well before this fires in the normal
+  // case, so this is only a safety net against a missed broadcast.
+  const ttl = (Number(payload.durationMs) || 60 * 60_000) + 30_000;
+  ctxBubble._timer = setTimeout(() => {
+    ctxBubble.classList.add('fade');
+    setTimeout(() => ctxBubble.classList.add('hidden'), 600);
+  }, ttl);
+}
+
 // ---- Drag implementation ----
 const DRAG_THRESHOLD_PX = 4;
 let pressing = false;
@@ -340,6 +375,12 @@ if (M.on) {
     const root = document.documentElement;
     root.style.setProperty('--size-w', `${payload.w}px`);
     root.style.setProperty('--size-h', `${payload.h}px`);
+    // --size-* is the whole window (sprite + bubble headroom/side room).
+    // --sprite-* is the pet's own box within it; without them the pet would
+    // stretch to fill the padding. Fall back to the window size so an older
+    // main process (no spriteW/spriteH in the payload) still paints sanely.
+    root.style.setProperty('--sprite-w', `${payload.spriteW || payload.w}px`);
+    root.style.setProperty('--sprite-h', `${payload.spriteH || payload.h}px`);
   });
   M.on('pet:pet-changed', (payload) => {
     if (payload && payload.petId && payload.petId !== currentPetId) {
@@ -408,6 +449,14 @@ if (M.on) {
     }
   });
 
+  // Contextual text bubble (吃饭提醒 / 休息提醒). Entirely
+  // rule-driven from the main process — see main/pet_bubbles.js. This
+  // handler is intentionally dumb so adding a rule requires no renderer
+  // change at all.
+  M.on('pet:bubble-changed', (payload) => {
+    showContextBubble(payload);
+  });
+
   // Cozy / bond-tier broadcasts — also route the cozy value to the data
   // attribute so future CSS hooks (e.g. hunger bar) can read it.
   M.on('pet:cozy-changed', (payload) => {
@@ -461,6 +510,8 @@ if (M.on) {
           const root = document.documentElement;
           root.style.setProperty('--size-w', `${sz.w}px`);
           root.style.setProperty('--size-h', `${sz.h}px`);
+          root.style.setProperty('--sprite-w', `${sz.spriteW || sz.w}px`);
+          root.style.setProperty('--sprite-h', `${sz.spriteH || sz.h}px`);
         }
       } catch {}
     }

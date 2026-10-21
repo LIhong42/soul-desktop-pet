@@ -21,6 +21,10 @@
     <div class="reminder-bubble hidden" id="pet-bubble"></div>
     <!-- Cozy bond bubble (auto-generated text from pet_mood) -->
     <div class="bond-bubble hidden" id="pet-bond-bubble"></div>
+    <!-- Contextual text bubble (吃饭提醒 / 休息提醒). Driven entirely
+         by main/pet_bubbles.js over the `pet:bubble-changed` channel; the
+         renderer only paints what it's told and auto-hides on `endsAt`. -->
+    <div class="pet-bubble hidden" id="pet-text-bubble" data-kind=""></div>
     <!-- Particle layer — transient hearts / sparkles / food / etc. -->
     <div class="pet-particles" id="pet-particles" aria-hidden="true"></div>
   </div>

@@ -1,5 +1,5 @@
 // main/ipc.js — register all ipcMain handlers (sql.js-friendly)
-const { ipcMain, app, screen, Menu, dialog, shell } = require('electron');
+const { ipcMain, app, screen, Menu, dialog, shell, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -21,6 +21,7 @@ const bondEngine = require('./bond_engine');
 const cozyEngine = require('./cozy_engine');
 const petMoodMod = require('./pet_mood');
 const petActionsConfig = require('./pet_actions_config');
+const petBubbles = require('./pet_bubbles');
 const videoFrameSplit = require('./video_frame_split');
 const autostart = require('./autostart');
 
@@ -50,7 +51,55 @@ function resolveName(input) {
   return legacy || '';
 }
 
+// Teardown callbacks pushed by register(). main.js's before-quit handler
+// drains this list, so any module that starts a timer during registration
+// gets a single, explicit shutdown path instead of leaking an interval that
+// keeps the process alive.
+const shutdownFns = [];
+
+function shutdown() {
+  while (shutdownFns.length) {
+    const fn = shutdownFns.pop();
+    try { fn(); } catch (e) { console.error('shutdown hook failed:', e); }
+  }
+}
+
 function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder, broadcastPetState, petController, petRegistry }) {
+  // ---- 文本气泡引擎 ----
+  // Two responsibilities live here, both of them needing an Electron
+  // capability the rule engine deliberately doesn't depend on:
+  //
+  //   1. Broadcasting. petBubbles has no Electron import, so it hands us a
+  //      callback instead of calling webContents.send directly. The pet
+  //      window is the only consumer; if it's gone the tick simply no-ops.
+  //   2. Idle sampling. The 休息提醒 rule needs "how long has the user been
+  //      at the keyboard", which is powerMonitor.getSystemIdleTime() — a
+  //      platform query, not a rule concern. Sampling it here keeps
+  //      pet_bubbles.js runnable under plain node for tests.
+  const broadcastBubble = (payload) => {
+    if (winPet && !winPet.isDestroyed()) {
+      winPet.webContents.send(petBubbles.BROADCAST_CHANNEL, payload);
+    }
+  };
+
+  // getSystemIdleTime() counts seconds of *system-wide* input inactivity
+  // (keyboard + mouse). That's exactly "坐太久了" from the rule's point of
+  // view, and unlike window focus it keeps working while the user is in
+  // another app — which is most of a work session.
+  const currentIdleSeconds = () => {
+    try { return powerMonitor.getSystemIdleTime(); }
+    catch (e) { return -1; }
+  };
+
+  // The engine owns its own 1s interval. Sampling idle time on the same
+  // cadence (rather than per-tick inside the engine) keeps the Electron call
+  // out of the rule code path entirely.
+  const idleSampler = setInterval(() => {
+    petBubbles.setIdleSeconds(currentIdleSeconds());
+  }, 15_000);
+  petBubbles.setIdleSeconds(currentIdleSeconds());
+  petBubbles.start({ broadcast: broadcastBubble });
+
   // ---- Bond / Cozy / Mood glue ----
   // One-line helper called from existing CRUD handlers so we never forget
   // a dimension. Errors are swallowed because bond tracking is best-effort
@@ -1336,18 +1385,19 @@ function normFreeText(s) {
       }
     });
     // Renderer asks for the current pet's render size so it can set the
-    // --size-w / --size-h CSS variables before the first frame paints
-    // (avoids a 220×220 → actual-size flash on launch). Returns the
-    // scaled-to-render-size dimensions (height fixed at 220), not the raw
-    // manifest.defaultSize — so the renderer's CSS variables match the
-    // window the main process just created.
+    // --size-w / --size-h / --sprite-h CSS variables before the first frame
+    // paints (avoids a 220×220 → actual-size flash on launch). Returns the
+    // scaled-to-render-size dimensions, not the raw manifest.defaultSize — so
+    // the renderer's CSS variables match the window the main process just
+    // created. `spriteH` is the pet's own height; `h` is the taller window
+    // that includes the bubble headroom.
     ipcMain.handle('pet:get_current_size', () => {
-      if (!petRegistry) return { w: 220, h: 220 };
+      if (!petRegistry) return petRenderSize(null);
       const persisted = db.getSetting('pet_id');
       const first = petRegistry.list()[0];
       const id = (persisted && petRegistry.getManifest(persisted)) ? persisted
         : (first && first.id);
-      if (!id) return { w: 220, h: 220 };
+      if (!id) return petRenderSize(null);
       const m = petRegistry.getManifest(id);
       return petRenderSize(m && m.defaultSize);
     });
@@ -1621,6 +1671,76 @@ function normFreeText(s) {
     return { variants: filtered.loop_variants };
   });
 
+  // ---- 文本气泡（吃饭提醒 / 休息提醒）----
+  //
+  // The rule set lives entirely in main/pet_bubbles.js. These handlers only
+  // expose its self-describing list and its toggle setter, so adding a rule
+  // means editing that one file — no IPC handler, no preload method, no
+  // renderer branch.
+  //
+  // The push side (pet:bubble-changed) is wired up once, at the bottom of
+  // register(), via petBubbles.start().
+  ipcMain.handle('bubbles:get_config', () => petBubbles.describeRules(db));
+
+  // Text typed into the main window's 说句话 prompt. Routed through the
+  // engine rather than broadcast here so the typed bubble gets the same
+  // override lifetime (and the same tick-suppression) as one sent any other
+  // way — otherwise the next tick would overwrite it within a second.
+  ipcMain.handle('bubbles:say', (_e, text) => petBubbles.say(text));
+
+  ipcMain.handle('bubbles:set_enabled', (_e, map) => {
+    const saved = petBubbles.saveEnabled(db, map || {});
+    // Re-evaluate immediately so unchecking a rule makes its bubble vanish
+    // without waiting up to a full tick for the change to be observed.
+    petBubbles.tick();
+    return saved;
+  });
+
+  // Debug helpers. `preview` reports what each rule *would* say right now
+  // without broadcasting; `force` makes one specific rule the winner for a
+  // single tick so the bubble can be eyeballed without waiting for its real
+  // trigger.
+  ipcMain.handle('bubbles:preview', (_e, ruleName) => {
+    const snap = petBubbles._internals.buildSnapshot(
+      petBubbles._internals.loadState(db), new Date(), currentIdleSeconds(),
+    );
+    const rule = petBubbles.BUILTIN_RULES.find((r) => r.name === ruleName);
+    if (!rule) {
+      return petBubbles.BUILTIN_RULES.map((r) => {
+        let intent = null;
+        try { intent = r.build(snap); } catch { intent = null; }
+        return { name: r.name, label: r.label, kind: r.kind, due: !!(intent && intent.text) };
+      });
+    }
+    let intent = null;
+    try { intent = rule.build(snap); } catch (e) {
+      return { name: rule.name, error: e && e.message };
+    }
+    return {
+      name: rule.name,
+      label: rule.label,
+      kind: rule.kind,
+      due: !!(intent && intent.text),
+      text: (intent && intent.text) || null,
+      durationMs: (intent && intent.durationMs) || null,
+    };
+  });
+
+  ipcMain.handle('bubbles:force', (_e, ruleName) => {
+    const rule = petBubbles.BUILTIN_RULES.find((r) => r.name === ruleName);
+    if (!rule) return { ok: false };
+    if (winPet && !winPet.isDestroyed()) {
+      winPet.webContents.send(petBubbles.BROADCAST_CHANNEL, {
+        text: (typeof rule.forceText === 'function') ? rule.forceText() : rule.name,
+        kind: rule.kind,
+        rule: rule.name,
+      });
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle('bubbles:get_idle_seconds', () => currentIdleSeconds());
+
   ipcMain.handle('window:show_main', () => {
     if (winMain && !winMain.isDestroyed()) {
       winMain.show();
@@ -1693,7 +1813,17 @@ function normFreeText(s) {
     // route a click through to the pet renderer (which doubles as the
     // visual feedback layer for the cozy interaction).
     const fireBondAction = (action) => {
-      try { petInteractions.applyCozyInteraction(db, action, {}, db.nowStr.bind(db)); } catch {}
+      let accepted = false;
+      try {
+        const r = petInteractions.applyCozyInteraction(db, action, {}, db.nowStr.bind(db));
+        accepted = !!(r && r.accepted);
+      } catch {}
+      // Same 吃饭提醒 early-end hook as the `bond:feed` IPC above — the
+      // right-click menu is the primary way a user feeds the pet, so
+      // without this the bubble would outlive the meal it was asking about.
+      if (accepted && action === 'feed') {
+        try { petBubbles.emit('fed', { source: 'context_menu', at: Date.now() }); } catch {}
+      }
       // Tell the pet window to play the variant + optional particle. We
       // intentionally do this here (main process) rather than in the
       // renderer so the menu works even if the pet window is unfocused.
@@ -1756,6 +1886,27 @@ function normFreeText(s) {
         click: () => {
           fireVariant('default', 5000);
           sendParticle('🌟');
+        },
+      },
+      { type: 'separator' },
+      {
+        label: '💬 说句话',
+        click: () => {
+          // Electron's native Menu has no text-input item type, and
+          // dialog.showMessageBox can't supply one either: `inputFieldType`
+          // doesn't exist until Electron 36 (this app runs 32.3.3), so on
+          // 32 it silently degrades to a button-only dialog that throws.
+          //
+          // The input therefore has to be our own HTML, which means it has to
+          // live in a window that can take keyboard focus. The pet window is
+          // created `focusable: false` (mouse-through by design), so it can't.
+          // So: surface the main window and let it render the prompt; it sends
+          // the text straight back through say().
+          if (winMain && !winMain.isDestroyed()) {
+            if (!winMain.isVisible()) winMain.show();
+            winMain.focus();
+            winMain.webContents.send('main:say-prompt');
+          }
         },
       },
       { type: 'separator' },
@@ -1856,6 +2007,14 @@ function normFreeText(s) {
         // click. The tick is value-gated and would otherwise swallow this if
         // the scheduler happened to sample before the write landed.
         pushPetStatusNow(id);
+        // Tell the bubble framework the user fed the pet. The 吃饭提醒 rule
+        // watches this and closes its bubble immediately instead of leaving
+        // "今天吃撒" up for the rest of its one-hour window. Routed through
+        // `emit` rather than a direct call so future rules can watch other
+        // cozy actions the same way without any call-site changes.
+        if (action === 'feed') {
+          try { petBubbles.emit('fed', { petId: id, at: Date.now() }); } catch {}
+        }
       }
       return out;
     });
@@ -2401,6 +2560,15 @@ function normFreeText(s) {
       return false;
     }
   });
+
+  // Tear down the bubble engine's timers on app quit. Both intervals keep
+  // Node's event loop alive, and `main.js`'s before-quit handler is the one
+  // place that already owns timer teardown, so we expose the cleanup rather
+  // than hiding it behind a process listener here.
+  shutdownFns.push(() => {
+    clearInterval(idleSampler);
+    petBubbles.stop();
+  });
 }
 
 function updatePetState({ queue, setPetState, setActiveReminder }) {
@@ -2417,4 +2585,4 @@ function updatePetState({ queue, setPetState, setActiveReminder }) {
   }
 }
 
-module.exports = { register };
+module.exports = { register, shutdown };

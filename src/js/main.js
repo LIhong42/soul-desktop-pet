@@ -88,6 +88,60 @@ document.getElementById('reminder-close').onclick = () => {
   document.getElementById('reminder-modal').classList.add('hidden');
 };
 
+// ---- 说句话 (pet right-click → 💬 说句话) ----
+//
+// The input lives here rather than in the pet window because the pet window
+// is `focusable: false` — a <input> inside it can never receive the caret.
+// (Neither Electron's native Menu nor dialog.showMessageBox can help: the
+// former has no input item type, and `inputFieldType` doesn't exist until
+// Electron 36 while this app runs 32.)
+//
+// Routed through the auth lock the same way reminders are: if the main
+// window is PIN-locked the prompt is buffered rather than shown against a
+// hidden DOM.
+function showSayPrompt() {
+  const modal = document.getElementById('say-modal');
+  const input = document.getElementById('say-input');
+  if (!modal || !input) return;
+  input.value = '';
+  modal.classList.remove('hidden');
+  input.focus();
+}
+
+function closeSayPrompt() {
+  const modal = document.getElementById('say-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function submitSayPrompt() {
+  const input = document.getElementById('say-input');
+  const text = (input && input.value || '').trim();
+  closeSayPrompt();
+  if (!text) return;
+  // The engine owns the bubble lifetime; sending the text back through it
+  // (rather than broadcasting here) is what stops the next 1s tick from
+  // overwriting the typed bubble with whatever rule happens to be due.
+  try {
+    await api.bubbles.say(text);
+  } catch (e) {
+    toast('发送失败：' + ((e && e.message) || e));
+  }
+}
+
+document.getElementById('say-close').onclick = closeSayPrompt;
+document.getElementById('say-cancel').onclick = closeSayPrompt;
+document.getElementById('say-submit').onclick = submitSayPrompt;
+document.getElementById('say-input').onkeydown = (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitSayPrompt(); }
+  if (e.key === 'Escape') { e.preventDefault(); closeSayPrompt(); }
+};
+document.getElementById('say-modal').onclick = (e) => {
+  // Click the backdrop to dismiss, matching the other modals.
+  if (e.target === e.currentTarget) closeSayPrompt();
+};
+
+window.addEventListener('open-say-prompt', showSayPrompt);
+
 api.on('pet:state-changed', (payload) => {
   updatePetPill(payload);
   if (payload.state === 'NORMAL' && !document.getElementById('reminder-modal').classList.contains('hidden')) {

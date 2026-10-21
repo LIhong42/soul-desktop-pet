@@ -125,6 +125,16 @@ export const api = {
     get: (k) => M.settings.get(k),
     set: (k, v) => M.settings.set(k, v),
   },
+  // 文本气泡配置（吃饭提醒 / 休息提醒）。规则由主进程
+  // main/pet_bubbles.js 单点定义，这里只做薄封装。
+  bubbles: {
+    getConfig:      ()     => M.bubbles?.getConfig?.() || Promise.resolve({ rules: [], feedWindows: {} }),
+    setEnabled:     (map)  => M.bubbles?.setEnabled?.(map || {}),
+    say:            (t)    => M.bubbles?.say?.(t || ''),
+    preview:        (r)    => M.bubbles?.preview?.(r || ''),
+    force:          (r)    => M.bubbles?.force?.(r || ''),
+    getIdleSeconds: ()     => M.bubbles?.getIdleSeconds?.(),
+  },
   app: {
     quit: () => M.app.quit(),
     // PIN gate (see main/auth.js). Renderer never sees the salt/hash —

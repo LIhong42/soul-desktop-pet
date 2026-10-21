@@ -128,6 +128,22 @@ contextBridge.exposeInMainWorld('mp', {
     get: (k) => ipcRenderer.invoke('settings:get', k),
     set: (k, v) => ipcRenderer.invoke('settings:set', k, v),
   },
+  // 文本气泡（吃饭提醒 / 休息提醒）配置。规则本身由
+  // main/pet_bubbles.js 单点定义，/settings 只能读它的自描述列表并切
+  // 换开关——新增一条规则时这里不需要改动。
+  //   getConfig()  → { rules: [{name,label,kind,description,enabled}], feedWindows }
+  //   setEnabled({ meal: false, … })
+  //   say(text)    → 右键「说句话」输入的原文，立即以气泡显示
+  //   onSayPrompt(cb) → 主进程请求弹出输入框
+  //   preview / force / getIdleSeconds
+  bubbles: {
+    getConfig:      ()         => ipcRenderer.invoke('bubbles:get_config'),
+    setEnabled:     (map)      => ipcRenderer.invoke('bubbles:set_enabled', map || {}),
+    say:            (text)     => ipcRenderer.invoke('bubbles:say', text || ''),
+    preview:        (ruleName) => ipcRenderer.invoke('bubbles:preview', ruleName || ''),
+    force:          (ruleName) => ipcRenderer.invoke('bubbles:force', ruleName || ''),
+    getIdleSeconds: ()         => ipcRenderer.invoke('bubbles:get_idle_seconds'),
+  },
   app: {
     quit: () => ipcRenderer.invoke('app:quit'),
     // PIN gate: server-side verify + change. Renderer never sees the
@@ -199,6 +215,7 @@ contextBridge.exposeInMainWorld('mp', {
       'pet:size-changed',
       'main:open-reminder',
       'main:navigate',
+      'main:say-prompt',
       'export:progress',
       'tools:progress',
       'pet:mood-changed',
