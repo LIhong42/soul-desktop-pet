@@ -134,6 +134,10 @@ contextBridge.exposeInMainWorld('mp', {
     // stored hash / salt — only `{ ok: boolean }` round-trips.
     verifyPin: (pin) => ipcRenderer.invoke('app:verify_pin', pin),
     setPin:    (pin) => ipcRenderer.invoke('app:set_pin', pin),
+    // 开机自启动 (Windows Run key). `get` resolves to
+    // { supported, enabled, active } — see main/autostart.js.
+    getAutostart:    ()      => ipcRenderer.invoke('app:get_autostart'),
+    setAutostart:    (on)    => ipcRenderer.invoke('app:set_autostart', on),
   },
   // Backup / restore. Two-step import (pick → apply) so the renderer can
   // surface a confirm() dialog between picking the zip and overwriting the

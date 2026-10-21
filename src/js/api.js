@@ -118,6 +118,9 @@ export const api = {
     // only `{ ok: boolean }` round-trips through these wrappers.
     verifyPin: (pin) => M.app.verifyPin(pin),
     setPin:    (pin) => M.app.setPin(pin),
+    // 开机自启动. Returns { supported, enabled, active }.
+    getAutostart: ()     => M.app.getAutostart(),
+    setAutostart: (on)   => M.app.setAutostart(on),
   },
   backup: {
     export: () => M.backup.export(),

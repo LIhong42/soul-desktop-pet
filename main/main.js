@@ -8,6 +8,7 @@ const scheduler = require('./scheduler');
 const ipc = require('./ipc');
 const { PetController, petRenderSize } = require('./pet_controller');
 const { PetRegistry } = require('./pet_registry');
+const autostart = require('./autostart');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
 
@@ -178,6 +179,12 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   await db.open(getDbPath());
+
+  // Align the Windows Run key with what the user last asked for. First launch
+  // opts in by default (see syncOnLaunch); later launches honour the stored
+  // choice. No-op in dev — autostart is packaged-build only, so `npm start`
+  // never registers electron.exe as a startup entry.
+  autostart.syncOnLaunch(db);
 
   // Scan pet resources before creating the controller so the controller can
   // pick a valid petId from the registry on construction.

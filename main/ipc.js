@@ -22,6 +22,7 @@ const cozyEngine = require('./cozy_engine');
 const petMoodMod = require('./pet_mood');
 const petActionsConfig = require('./pet_actions_config');
 const videoFrameSplit = require('./video_frame_split');
+const autostart = require('./autostart');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
 // `export:cancel`. The value is a mutable record: { killed, outPath? }.
@@ -1470,6 +1471,36 @@ function normFreeText(s) {
       petController.setEnabled(!!enabled);
     }
     return true;
+  });
+
+  // ---- 开机自启动 ----
+  // `supported` is false in dev builds: process.execPath points at the
+  // Electron binary there, which must never be registered as a startup
+  // entry. The renderer uses this to disable the checkbox and explain why,
+  // instead of showing a toggle that silently does nothing.
+  ipcMain.handle('app:get_autostart', () => ({
+    supported: autostart.isSupported(),
+    // Report what the user asked for, not just what's in the registry — a
+    // failed write should stay visible as "on" so the next launch retries,
+    // rather than the checkbox snapping back to "off" on every page visit.
+    enabled: db.getSetting(autostart.SETTING_KEY) !== '0',
+    // Lets the UI warn when the intent is on but the OS entry is missing
+    // (e.g. the user removed it in Task Manager).
+    active: autostart.isEnabled(),
+  }));
+  ipcMain.handle('app:set_autostart', (_e, enabled) => {
+    const want = !!enabled;
+    const r = autostart.setEnabled(want);
+    if (r.ok) {
+      // Only commit the stored intent once the registry write actually
+      // succeeded, so a failure doesn't get mistaken for a user opt-out.
+      db.setSetting(autostart.SETTING_KEY, want ? '1' : '0');
+    }
+    return {
+      ok: r.ok,
+      supported: r.supported,
+      enabled: r.ok ? want : db.getSetting(autostart.SETTING_KEY) !== '0',
+    };
   });
   ipcMain.handle('pet:set_paused', (_e, ms) => {
     if (petController && typeof petController.setPaused === 'function') {

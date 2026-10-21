@@ -13,6 +13,10 @@ async function render() {
   const installed = (await api.pet.listInstalled?.()) || (await api.pet.list()) || [];
   const currentPetId = await api.pet.getCurrent();
   const walkEnabled = await api.pet.getWalkEnabled();
+  // 开机自启动。Defaults to on, but the source of truth is the DB (the main
+  // process decides that on first launch). `supported` is false in dev builds.
+  const autoStart = (await api.app.getAutostart?.())
+    || { supported: false, enabled: true, active: false };
 
   const petOptions = installed.length
     ? installed.map((p) =>
@@ -58,6 +62,25 @@ async function render() {
       <div id="pet-actions-card-body">
         <div class="empty">载入中…</div>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>开机启动</h2>
+      <div class="field" style="justify-content:flex-start;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="app-autostart" ${autoStart.enabled ? 'checked' : ''}
+                 ${autoStart.supported ? '' : 'disabled'}/>
+          开机时自动启动 SoulDesktopPet
+        </label>
+      </div>
+      <p class="meta" style="margin-top:8px">
+        ${autoStart.supported
+          ? '开启后，电脑开机登录时会自动运行桌宠，无需手动双击。默认已开启。'
+          : '当前为开发模式，暂不支持开机自启动；打包安装后才能使用。'}
+      </p>
+      ${autoStart.supported && autoStart.enabled && !autoStart.active
+        ? '<p class="meta" style="margin-top:4px; color:#b26a00;">⚠ 开机启动项当前未生效，可能已被系统或安全软件禁用；取消勾选后重新勾选可尝试恢复。</p>'
+        : ''}
     </div>
 
     <div class="card">
@@ -119,6 +142,25 @@ async function render() {
       await api.pet.setWalkEnabled(!!e.target.checked);
       toast(e.target.checked ? '自动行走已开启' : '自动行走已关闭');
     } catch (err) {
+      toast('设置失败：' + ((err && err.message) || err));
+    }
+  };
+  document.getElementById('app-autostart').onchange = async (e) => {
+    const want = !!e.target.checked;
+    try {
+      const r = await api.app.setAutostart(want);
+      if (!r || !r.ok) {
+        // The registry write failed. Snap the checkbox back to the stored
+        // intent rather than leaving it showing a state that isn't real.
+        e.target.checked = !want;
+        toast(r && r.supported === false
+          ? '开发模式下不支持开机自启动'
+          : '设置失败：无法写入开机启动项');
+        return;
+      }
+      toast(want ? '开机自启动已开启' : '开机自启动已关闭');
+    } catch (err) {
+      e.target.checked = !want;
       toast('设置失败：' + ((err && err.message) || err));
     }
   };
