@@ -279,6 +279,59 @@ let _actionTextsForm = null;
 // so it's kept at module scope and survives the in-memory re-renders that
 // chip edits trigger.
 let _actionTextsRows = null;
+// The 文本框 catalog from resources/text_boxes, as
+// `[{ id, label, url }]`. Module-scoped for the same reason as
+// _actionTextsRows: it's fixed for the life of the card render, and both the
+// per-row dropdown and the rule-bubble dropdown build off it.
+let _textBoxes = [];
+
+// One <select> over the catalog, with the CSS-drawn bubble as the first option.
+//
+// `value` is the currently-selected id ('' = default). A selected id that
+// isn't in the catalog — the PNG was deleted, or the config came from another
+// machine — is added as an extra option marked unavailable, so the dropdown
+// shows the honest stored value instead of silently snapping to 默认 and
+// making the user think their choice was never saved. Saving without touching
+// it keeps the id, so dropping the PNG back in restores the bubble.
+function renderTextBoxSelect(name, value) {
+  const sel = (v) => String(v || '') === String(value || '') ? ' selected' : '';
+  const orphans = (value && !_textBoxes.some((b) => b.id === value))
+    ? `<option value="${escapeHtml(value)}"${sel(value)} selected>${escapeHtml(value)}（当前不可用）</option>`
+    : '';
+  return `<span class="action-texts-boxwrap">
+      <select class="action-texts-box" data-box-select="${escapeHtml(name)}">
+        <option value=""${sel('')}>默认</option>
+        ${orphans}
+        ${_textBoxes.map((b) => `
+          <option value="${escapeHtml(b.id)}"${sel(b.id)}>${escapeHtml(b.label)}</option>
+        `).join('')}
+      </select>
+      ${renderTextBoxPreview(value)}
+    </span>`;
+}
+
+// A thumbnail of the chosen bubble, cropped to the drawn bubble exactly the way
+// the pet window crops it (same `geom`, same scale — see main/pet_text_boxes.js).
+//
+// Without this the dropdown is a list of bare numbers, so picking one is a
+// guess; the art is 2048×2048 with a bubble in the middle, so showing the raw
+// canvas would show mostly empty space. The scale/offset here are the same
+// arithmetic the renderer applies, which is why `geom` travels in the payload.
+function renderTextBoxPreview(value) {
+  const hit = _textBoxes.find((b) => b.id === value);
+  if (!hit || !hit.geom) return '';
+  const g = hit.geom;
+  const visW = 100 - g.left - g.right;
+  const visH = 100 - g.top - g.bottom;
+  const k = 100 / Math.max(visW, visH);
+  // The preview frame is the bubble; the canvas is overscaled inside it and
+  // offset so the drawn bubble lands in the frame — the same arithmetic the
+  // pet window applies, which is why `geom` rides in the payload.
+  return `<span class="action-texts-boxprev"
+      style="--prev-w:${k}%;--prev-left:${g.left}%;--prev-top:${g.top}%">
+      <img alt="" draggable="false" src="${escapeHtml(hit.url)}">
+    </span>`;
+}
 
 async function renderActionTextsCard() {
   const body = document.getElementById('pet-action-texts-card-body');
@@ -302,7 +355,18 @@ async function renderActionTextsCard() {
   for (const k of Object.keys(saved)) {
     formTexts[k] = Array.isArray(saved[k]) ? saved[k].slice() : [];
   }
-  _actionTextsForm = { texts: formTexts };
+  // 文本框 catalog + the two selections that go with it. `textBoxes` is the
+  // list main/pet_text_boxes.js scanned out of resources/text_boxes; it's empty
+  // on an install with no art, in which case every dropdown below is disabled
+  // and the feature is simply absent rather than broken.
+  _textBoxes = (snapshot && snapshot.texts !== undefined && snapshot.textBoxes) || [];
+  const formBoxes = {};
+  for (const k of Object.keys((snapshot && snapshot.boxes) || {})) {
+    formBoxes[k] = String((snapshot.boxes[k]) || '');
+  }
+  // The 吃饭提醒 / 休息提醒 box is a single user-level choice, kept here as a
+  // scalar on the same form so the card has one save button.
+  _actionTextsForm = { texts: formTexts, boxes: formBoxes, ruleBox: (snapshot && snapshot.ruleBox) || '' };
 
   if (_actionTextsRows.length === 0) {
     body.innerHTML = `<div class="empty">当前桌宠没有可配置文本的动作。</div>`;
@@ -321,6 +385,11 @@ async function renderActionTextsCard() {
         当前插播（来自文本气泡规则，气泡结束后自动移除）：
         ${runtimeLines.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join(' ')}
       </p>` : ''}
+    ${_textBoxes.length ? `
+      <p class="meta" style="margin:12px 0 6px;">
+        提醒气泡（吃饭 / 休息 / 说句话）的文本框：
+        ${renderTextBoxSelect('rule', _actionTextsForm.ruleBox)}
+      </p>` : ''}
     <div class="action-texts-list" id="action-texts-list">
       ${_actionTextsRows.map(renderActionTextsRow).join('')}
     </div>
@@ -335,8 +404,11 @@ async function renderActionTextsCard() {
 
   document.getElementById('action-texts-reset').onclick = async () => {
     if (!confirm('确认清空所有动作的绑定文本？')) return;
-    _actionTextsForm = { texts: {} };
-    rerenderActionTextsList();
+    // Boxes are reset too: "清空" means back to defaults, and leaving a
+    // decorated bubble on an action with no text left would be a silent
+    // half-reset the user didn't ask for.
+    _actionTextsForm = { texts: {}, boxes: {}, ruleBox: '' };
+    renderActionTextsCard();
   };
   document.getElementById('action-texts-save').onclick = async () => {
     const status = document.getElementById('action-texts-status');
@@ -353,7 +425,19 @@ async function renderActionTextsCard() {
       if (r && r.texts) {
         const next = {};
         for (const k of Object.keys(r.texts)) next[k] = (r.texts[k] || []).slice();
-        _actionTextsForm = { texts: next };
+        const nextBoxes = {};
+        for (const k of Object.keys(r.boxes || {})) nextBoxes[k] = r.boxes[k];
+        // Rebase the form on what the main side actually stored, not on what
+        // we asked for: normalizeBoxes drops blanks, so a form still holding
+        // them would drift from the DB and re-add them on the next save.
+        _actionTextsForm = {
+          texts: next,
+          boxes: nextBoxes,
+          // A null ruleBox means "the stored id doesn't resolve on this
+          // machine". Keep showing the real id so the orphan option in the
+          // dropdown explains itself instead of silently reverting to 默认.
+          ruleBox: (r.ruleBox && r.ruleBox.id) || _actionTextsForm.ruleBox || '',
+        };
       }
       if (status) status.textContent = '已保存 · 改动会立即生效';
       toast('动作文本已保存');
@@ -373,10 +457,16 @@ async function renderActionTextsCard() {
 function renderActionTextsRow(a) {
   const bound = (_actionTextsForm && _actionTextsForm.texts[a.action]) || a.texts || [];
   const lines = Array.isArray(bound) ? bound : [];
+  const box = (_actionTextsForm && _actionTextsForm.boxes[a.action]) ?? a.box ?? '';
   return `
     <div class="action-texts-row">
       <div class="action-texts-label" title="${escapeHtml(a.action)}">${escapeHtml(a.label)}</div>
       <div class="action-texts-body">
+        ${_textBoxes.length ? `
+          <div class="action-texts-boxrow">
+            <span class="meta">文本框</span>
+            ${renderTextBoxSelect(a.action, box)}
+          </div>` : ''}
         ${lines.length ? `
           <div class="action-texts-chips">
             ${lines.map((t, i) => `
@@ -441,6 +531,38 @@ function wireActionTextsList(body) {
     input.value = '';
     rerenderActionTextsList();
   };
+
+  // 文本框 dropdowns. Bound on `change` rather than `click` because a <select>
+  // fires click on the opening and each option; `change` fires once, with the
+  // final value.
+  //
+  // Mutates the form but does NOT re-render the list: the dropdown is already
+  // showing the chosen value, and replacing the rows mid-interaction would
+  // collapse the menu under the cursor. The row repaints on the next chip edit.
+  list.onchange = (e) => {
+    const sel = e.target.closest('[data-box-select]');
+    if (!sel) return;
+    setTextBox(sel.getAttribute('data-box-select'), sel.value);
+  };
+
+  // The rule-bubble dropdown lives outside the list container (it's the card
+  // header), so it needs its own listener rather than riding the delegation
+  // above.
+  const ruleSel = body.querySelector('[data-box-select="rule"]');
+  if (ruleSel) {
+    ruleSel.onchange = () => { _actionTextsForm.ruleBox = ruleSel.value; };
+  }
+}
+
+// Record a 文本框 choice into the in-memory form. An empty value deletes the
+// key rather than storing '', so "默认" and "never set" are the same state —
+// matching how an emptied text list is stored.
+function setTextBox(name, value) {
+  if (!_actionTextsForm) return;
+  const id = String(value || '');
+  if (name === 'rule') { _actionTextsForm.ruleBox = id; return; }
+  if (id) _actionTextsForm.boxes[name] = id;
+  else delete _actionTextsForm.boxes[name];
 }
 
 // Mutating helper shared by the add button, Enter, and the pre-save DOM

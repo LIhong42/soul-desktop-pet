@@ -23,8 +23,14 @@
     <div class="bond-bubble hidden" id="pet-bond-bubble"></div>
     <!-- Contextual text bubble (吃饭提醒 / 休息提醒). Driven entirely
          by main/pet_bubbles.js over the `pet:bubble-changed` channel; the
-         renderer only paints what it's told and auto-hides on `endsAt`. -->
-    <div class="pet-bubble hidden" id="pet-text-bubble" data-kind=""></div>
+         renderer only paints what it's told and auto-hides on `endsAt`.
+         `data-box` names the 文本框 artwork (resources/text_boxes); when it's
+         set the bubble switches from the CSS card to that image and the text
+         is centred on it. -->
+    <div class="pet-bubble hidden" id="pet-text-bubble" data-kind="" data-box="">
+      <img class="pet-bubble-art" id="pet-bubble-art" alt="" draggable="false" />
+      <span class="pet-bubble-text" id="pet-bubble-text"></span>
+    </div>
     <!-- Particle layer — transient hearts / sparkles / food / etc. -->
     <div class="pet-particles" id="pet-particles" aria-hidden="true"></div>
   </div>

@@ -1501,6 +1501,64 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   gap: 8px;
   min-width: 0;
 }
+/* 文本框 picker row. Sits above the chip list in each action row, and inline
+   with its label in the card header for the rule bubbles. The inline-flex +
+   fixed label width keeps the <select> left-aligned between the two places
+   it's used, so the card doesn't look like it has two different layouts. */
+.action-texts-boxrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.action-texts-box {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  max-width: 220px;
+}
+.action-texts-box:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* <select> + preview thumbnail. Inline-flex so the thumbnail sits flush against
+   whichever side of the select the browser renders it on. */
+.action-texts-boxwrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* The preview frame stands in for the bubble; the canvas is overscaled inside
+   it and offset so the drawn bubble fills the frame.
+
+   This mirrors the pet window's crop exactly (see .pet-bubble.has-art in
+   pet.css): the canvas is drawn at `k × frame` and pulled back by the canvas's
+   transparent margins, which lands the bubble's own edge on the frame's edge.
+   `transform-origin: top left` plus a negated offset is what makes that exact
+   rather than approximate — centring with translate() would only line up if the
+   margins were symmetric, and they aren't (3.png's tail sits bottom-left). */
+.action-texts-boxprev {
+  position: relative;
+  display: inline-block;
+  width: 64px;
+  height: 42px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+.action-texts-boxprev > img {
+  position: absolute;
+  width: var(--prev-w, 125%);
+  height: var(--prev-w, 125%);
+  max-width: none;
+  left: calc(var(--prev-left, 10%) * -1);
+  top: calc(var(--prev-top, 25%) * -1);
+  transform-origin: top left;
+  object-fit: fill;
+  pointer-events: none;
+}
 .action-texts-chips {
   display: flex;
   flex-wrap: wrap;

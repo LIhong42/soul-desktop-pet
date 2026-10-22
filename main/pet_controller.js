@@ -20,6 +20,9 @@ const { screen } = require('electron');
 // dependency one-way makes the "bubbles never touch the animation path"
 // invariant easier to see. See main/pet_action_texts.js.
 const petActionTexts = require('./pet_action_texts');
+// 文本框 catalog (resources/text_boxes). Required eagerly rather than lazily:
+// it has no imports of its own, so there's no cycle to avoid.
+const petTextBoxes = require('./pet_text_boxes');
 
 const TICK_MS = 100;
 
@@ -581,6 +584,11 @@ class PetController {
         oneShotMs: Math.max(durationMs, ms || 1500),
         loop: false,        // play the walk/run frames exactly once
         text: this._pickActionText(effective),
+        // Which 文本框 to draw this line in (or null → the CSS bubble).
+        // Carried alongside `text` because the two are chosen together: the
+        // renderer paints the line into whichever box arrives on the same
+        // payload, so a box can never be applied to the wrong line.
+        box: this._resolveActionBox(effective),
       });
       return;
     }
@@ -642,6 +650,8 @@ class PetController {
         oneShotMs,
         loop: false,        // play cozy / idle-variant frames exactly once
         text: this._pickActionText(variant),
+        // See the note on the walk broadcast: box travels with its line.
+        box: this._resolveActionBox(variant),
       });
     }
   }
@@ -732,6 +742,32 @@ class PetController {
     }
   }
 
+  // Which 文本框 this action's speech should be drawn in, as a `file://` URL,
+  // or null to keep the CSS-drawn bubble.
+  //
+  // Resolved here rather than in the renderer because the box is a *config*
+  // lookup (per action, per pet) and this is the only place that already holds
+  // both the DB and the pet id. The renderer receives a finished URL and stays
+  // dumb — the same split the frame URLs follow.
+  //
+  // Returns null for an action with no box, and equally for an id that no
+  // longer resolves (PNG deleted, config copied from another machine), so the
+  // pet degrades to the default bubble instead of painting a broken image.
+  _resolveActionBox(action) {
+    if (!this.db || !this.petId) return null;
+    try {
+      const cfg = petActionTexts.loadConfig(this.db, this.petId);
+      // No appPath argument: pet_text_boxes defaults to the app root derived
+      // from its own __dirname, which is the same directory pet_registry
+      // scans for `resources/pets`. Threading a path through the controller
+      // for this would mean a second source of truth for "where is resources".
+      return petTextBoxes.resolve(null, cfg.boxes && cfg.boxes[action]);
+    } catch (e) {
+      console.error('[pet_controller] _resolveActionBox failed:', e && e.message ? e.message : e);
+      return null;
+    }
+  }
+
   broadcastAction() {
     if (!this.win || this.win.isDestroyed()) return;
     // Resolve the variant name through currentVariantName so the default-
@@ -755,6 +791,10 @@ class PetController {
       action,
       direction: this.actionDirection > 0 ? 'right' : 'left',
       text: this._pickActionText(action),
+      // The 文本框 for the looped action. Sent on every loop broadcast (not
+      // just the first) so a box the user just picked appears on the next
+      // action without needing a restart — the loop re-broadcasts anyway.
+      box: this._resolveActionBox(action),
     });
   }
 

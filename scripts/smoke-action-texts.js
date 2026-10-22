@@ -289,4 +289,67 @@ check('runtime entries are scoped per action', () => {
   assert.deepStrictEqual(texts.listRuntime('default').map((r) => r.text), ['a']);
 });
 
+console.log('\n[文本框] 每个动作的文本框选择');
+
+check('boxes round-trip alongside texts', () => {
+  texts.saveConfig(fakeDb, 'boxy', { texts: { dance: ['a'] }, boxes: { dance: '3' } });
+  const back = texts.loadConfig(fakeDb, 'boxy');
+  assert.deepStrictEqual(back.texts.dance, ['a'], 'lines survive');
+  assert.deepStrictEqual(back.boxes, { dance: '3' }, 'box survives');
+});
+
+check('an empty box choice is dropped, not stored as ""', () => {
+  // "默认" and "never set" must be the same state, so a box map never carries
+  // a blank value the picker would have to special-case.
+  texts.saveConfig(fakeDb, 'emptybox', { texts: {}, boxes: { dance: '', other: '   ' } });
+  assert.deepStrictEqual(texts.loadConfig(fakeDb, 'emptybox').boxes, {});
+});
+
+check('box ids are trimmed and non-strings rejected', () => {
+  assert.deepStrictEqual(texts.normalizeBoxes({ a: '  3  ', b: 42, c: null, d: '  ' }), { a: '3' });
+});
+
+check('a box survives for a variant the current pet lacks', () => {
+  // Same promise as for lines: the choice was made on a machine that had the
+  // PNG, so switching pets must not silently drop it.
+  texts.saveConfig(fakeDb, 'switcher', { texts: {}, boxes: { dancing: '5' } });
+  const rows = texts.describeActions(fakeDb, 'switcher', { variants: ['default'] });
+  assert.strictEqual(rows.find((r) => r.action === 'dancing').box, '5');
+});
+
+check('an action with a box but no lines still gets a row', () => {
+  // Otherwise the box would be unreachable from the UI — set only by
+  // hand-editing the DB.
+  texts.saveConfig(fakeDb, 'boxonly', { texts: {}, boxes: { solo: '2' } });
+  const rows = texts.describeActions(fakeDb, 'boxonly', { variants: ['default'] });
+  const row = rows.find((r) => r.action === 'solo');
+  assert.ok(row, 'expected a row for a box-only action');
+  assert.strictEqual(row.box, '2');
+});
+
+check('every row carries a box string, defaulting to ""', () => {
+  texts.saveConfig(fakeDb, 'norowbox', { texts: { default: ['x'] } });
+  const rows = texts.describeActions(fakeDb, 'norowbox', { variants: ['default', 'walking'] });
+  assert.ok(rows.every((r) => typeof r.box === 'string'),
+    'the UI binds a <select> straight to this, so it must never be undefined');
+  assert.strictEqual(rows.find((r) => r.action === 'walking').box, '');
+});
+
+check('a corrupt row degrades to no boxes', () => {
+  fakeDb.setSetting('pet_action_texts:boxbroken', '{not json');
+  assert.deepStrictEqual(texts.loadConfig(fakeDb, 'boxbroken').boxes, {});
+});
+
+check('the box map is per-pet', () => {
+  texts.saveConfig(fakeDb, 'bp1', { texts: {}, boxes: { default: '1' } });
+  texts.saveConfig(fakeDb, 'bp2', { texts: {}, boxes: { default: '2' } });
+  assert.strictEqual(texts.loadConfig(fakeDb, 'bp1').boxes.default, '1');
+  assert.strictEqual(texts.loadConfig(fakeDb, 'bp2').boxes.default, '2');
+});
+
+check('an invalid config object yields empty boxes', () => {
+  texts.saveConfig(fakeDb, 'nope', null);
+  assert.deepStrictEqual(texts.loadConfig(fakeDb, 'nope').boxes, {});
+});
+
 console.log(`\n${passed} checks passed${process.exitCode ? ' (with failures)' : ''}\n`);

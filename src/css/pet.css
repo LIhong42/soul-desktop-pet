@@ -377,6 +377,117 @@ html, body {
 }
 .pet-bubble[data-kind="action"]::after { border-top-color: #f2f5fa; }
 
+/* ---- 文本框 artwork mode (resources/text_boxes) ----
+   When the user picks a text box for an action, the bubble stops being a CSS
+   card and becomes that PNG instead.
+
+   Three things line up here, each fixing one of the two problems a fixed
+   square had:
+
+   * **Cropping** — the art is a 2048×2048 canvas with the bubble in the middle
+     band. The <img> is sized to the *canvas* and pushed out by the measured
+     transparent margins (`--art-*`, written by showContextBubble from
+     main/pet_text_boxes.js), so the margin hangs outside the bubble instead of
+     pushing it away from the pet. `--art-scale` is 1/visibleFraction, which is
+     what makes the crop exact in both axes.
+   * **Proportional size** — the element is sized from the text and the bubble's
+     own measured aspect ratio sets its height, so a 2.45:1 bubble isn't
+     squashed into the square a 1.5:1 one wants.
+   * **Centred text** — `place-items: center` on a box that, after cropping,
+     * *is* the bubble.
+
+   The CSS ::after tail is dropped in this mode: the artwork draws its own and
+   ours would land on top of it. */
+
+.pet-bubble > .pet-bubble-text { position: relative; }
+
+/* Hidden unless has-art, so both modes share one text node and nothing is
+   duplicated. */
+.pet-bubble > .pet-bubble-art { display: none; }
+
+.pet-bubble.has-art {
+  /* No card chrome: the artwork IS the bubble. Padding stays 0 so this box and
+     the drawn bubble are the same rectangle — any padding would offset the
+     text from the bubble's centre. */
+  padding: 0;
+  /* `bottom` is inherited from .pet-bubble (the sprite's top edge), which is
+     now the *bubble's* bottom edge because the canvas margin is cropped away.
+     The gap is small and explicit: the drawn tails vary (3.png's points
+     down-left, 5.png has none), so a fixed offset keeps every bubble the same
+     distance from the pet instead of letting each drawing's own margin decide. */
+  margin-bottom: 6px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  /* Width is set inline from the measured text width (see ART_MIN_W below);
+     this is the cap, so a long line widens the bubble until it hits the
+     window edge and then wraps instead of overflowing. */
+  width: fit-content;
+  max-width: 100%;
+  display: grid;
+  place-items: center;
+  /* The grid track has to fill the box, or centring does nothing.
+     `place-items: center` centres the text *within its own track*, and a
+     `fit-content` track is sized to the text — so the track collapses onto it
+     and the text ends up flush at the start of the box in both axes. `stretch`
+     on the single implicit column makes the track the box's full width, which
+     is what lets `justify-self: center` (below) actually centre anything. This
+     pairing is why the text used to pile into the top-left corner while the
+     bubble's bottom-right stayed empty. */
+  grid-template-columns: minmax(0, 1fr);
+  /* A drawn bubble sizes itself; the card's height cap would fight that and
+     clip the artwork's tail, which deliberately overhangs the image box. */
+  max-height: none;
+  /* The artwork is deliberately larger than this box (it carries the cropped
+     margin), so it must be allowed to spill — but only into the transparent
+     margin, which is why the text stays centred rather than following it. */
+  overflow: visible;
+}
+
+.pet-bubble.has-art > .pet-bubble-art {
+  display: block;
+  position: absolute;
+  /* The canvas is sized explicitly in px by setArtScale — each axis scaled by its
+     own factor so the visible drawing exactly covers this box — and offset by the
+     matching px margins. Nothing here is a percentage: the box is sized from the
+     text while the canvas is sized from the artwork, so the two are unrelated
+     quantities and a percentage would resolve against the wrong one. */
+  top: var(--art-top, -25px);
+  left: var(--art-left, -10px);
+  /* The right/bottom edges are left unset: with all four insets set the element
+     would be over-constrained and the browser would drop `top`/`left`. The
+     explicit size above supplies the rest. */
+  width: var(--art-w, 100%);
+  height: var(--art-h, 100%);
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.pet-bubble.has-art > .pet-bubble-text {
+  position: relative;
+  /* Above the artwork (which is absolutely positioned earlier in the flow). */
+  z-index: 1;
+  /* The drawn bubble's own frame allowance: without this the text would sit on
+     the frame line rather than inside it. Fixed px rather than a percentage,
+     so it stays put as the bubble scales with the text. */
+  padding: 2px 14px;
+  text-align: center;
+  line-height: 1.5;
+  /* Fill the (now full-width) grid track so `place-items: center` has something
+     to centre within. Without this the node shrink-wraps to its longest line
+     and sits at the start of the track again — the other half of the
+     top-left-pile-up fix; the track and the item have to agree. */
+  justify-self: stretch;
+  /* `place-items: center` above centres this on the *drawing*, but the drawing
+     isn't symmetric: its wings, tails and frames hang off one side, so its
+     centre isn't the visual centre of the white area the text sits in. These
+     two shifts are the measured difference between the two, applied as a
+     transform rather than a margin — a margin would re-enter layout and resize
+     the very box the correction was computed from. Both default to 0, so a box
+     with no measurement needs no special-casing. */
+  transform: translate(var(--text-dx, 0), var(--text-dy, 0));
+}
+
 /* ---- Particles (hearts / sparkles / food / etc.) ----
    The main process emits `pet:particle { char, x?, y? }` on cozy
    interactions; pet.js appends a <span class="particle"> to the

@@ -231,6 +231,266 @@ function clearReminderBubble() {
 // showing gets refreshed rather than flickering out.
 const ACTION_TEXT_MS = 6_000;
 
+// ---------------------------------------------------------------------------
+// 文本框 sizing (see main/pet_text_boxes.js for where the numbers come from)
+// ---------------------------------------------------------------------------
+//
+// The artwork is a canvas with the bubble in the middle band, so two things
+// have to happen that a plain `background-image` wouldn't give us:
+//
+//   * The element is sized from the *text*, then the bubble's measured aspect
+//     ratio sets its height. A fixed size made a 4-character line look lost in
+//     a box sized for a sentence, and squashed the wide bubbles (5.png is
+//     2.45:1) into the square the narrow ones want.
+//   * The <img> is sized to the whole canvas and offset by the transparent
+//     margins, so the drawn bubble — not the canvas — is what lands next to
+//     the pet. Skipping this left ~25% of invisible padding under every
+//     bubble, which is what made it look like it was floating away.
+//
+// ART_MIN_W / ART_MAX_W bound the text-driven width. The floor keeps a short
+// line like "嗨" from producing a bubble too small to hold its frame artwork;
+// the ceiling matches the CSS card's own wrapping behaviour.
+const ART_MIN_W = 88;
+const ART_MAX_W = 240;
+
+// The artwork-mode text node's horizontal padding, mirrored from
+// `.pet-bubble.has-art > .pet-bubble-text` in pet.css. The padding is not part
+// of the text's own measured width, so the box has to add it back on both sides
+// to hold the line. Kept as a constant rather than read from CSS because there's
+// no cross-file channel for it and it is load-bearing for sizing; the CSS
+// comment there says so too.
+//
+// There is deliberately no vertical counterpart: the box's height comes from the
+// interior aspect (see applyArtGeometry), and the line count read from the DOM is
+// what reserves vertical room. The only place it is added by hand is the
+// last-resort floor for text that can't fit at any scale, where the alternative
+// is clipping the user's line — see the note there.
+const ART_TEXT_PAD_H = 14;
+
+// The same padding on the vertical axis, used only by that last-resort floor.
+const ART_TEXT_PAD_V = 2;
+
+// How many doublings the bubble will make before it gives up on fitting the text
+// by scaling. Bounded because a pathological input (a single unbreakable token in
+// a very wide bubble) would otherwise loop toward an enormous box; at this point
+// the `needH` floor takes over and the bubble simply grows tall enough.
+const ART_MAX_GROW_STEPS = 6;
+
+// A CJK glyph at the bubble's 13px font. Only the estimate path uses these two;
+// anything with real layout measures instead. Mixed CJK/Latin text is a bit
+// narrower per character than this on average (Latin letters are narrower, but
+// in a CJK font most still advance a large fraction of an em), so treating the
+// glyph as full width errs toward *under*-estimating capacity — the safe
+// direction, since it wraps a line early rather than overflowing the white area.
+const ART_CHAR_W = 13;
+
+// One line's height, from the 13px/1.5 font the bubble uses. Only needed when
+// there's no layout to measure (see the fallback in applyArtGeometry); the
+// wrapped-height calculation prefers the DOM's own height whenever it exists.
+const ART_LINE_H = 20;
+
+// How many lines the bubble holds before the whole thing scales up instead of
+// wrapping further. Two lines is where a bubble stops reading as a bubble and
+// starts reading as a paragraph; past it, growing the box keeps a reminder
+// glanceable, which is what a bubble is for.
+//
+// This is the "fill the interior first, scale only when it's full" rule: the
+// bubble is laid out to this many lines at the interior's own aspect, and scales
+// proportionally only when the text needs more.
+const ART_LINES_PER_BUBBLE = 2;
+
+// Size the bubble and hand the CSS the geometry it needs.
+//
+// The ordering here is the whole trick. The bubble's **interior** aspect (`ia`,
+// from main/pet_text_boxes.js) is the shape of the white area the text lives in
+// — not `aspect`, which is the drawing including its wings, tails and lace trim.
+// The two differ by 5–38%, and sizing to the drawing made every box too tall for
+// its text, so the surplus showed up as empty space under the text rather than
+// as a bubble that fit what it was saying.
+//
+// So: give the text every character the window allows, measure the lines the
+// browser actually produced, and scale the bubble up only when that exceeds
+// `ART_LINES_PER_BUBBLE`. The interior aspect is preserved at every step, which
+// is what stops a long sentence turning into a letterbox.
+function applyArtGeometry(box) {
+  const b = ctxBubble;
+  if (!b || !box) return;
+  // A box with no geometry is unmeasured art, not a reason to skip the
+  // artwork — fall back to the CSS default's proportions so the bubble still
+  // appears (cropped approximately) instead of silently reverting to a plain
+  // card when the user has deliberately chosen a text box.
+  const g = box.geom || { left: 10, top: 25, right: 10, bottom: 25, aspect: 1.6, ia: 1.6, dx: 0, dy: 0 };
+
+  // The interior's aspect, with the drawing's as a backstop for an older cached
+  // geometry row that predates the split. Same fallback main/pet_text_boxes.js
+  // makes, so the two agree on what an unmeasured box looks like.
+  const ia = (Number.isFinite(g.ia) && g.ia > 0) ? g.ia : (g.aspect || 1.6);
+
+  const textEl = document.getElementById('pet-bubble-text');
+  if (!textEl) return;
+  const raw = textEl.textContent || '';
+  const padBox = ART_TEXT_PAD_H * 2;
+
+  // Measure with the artwork *on*, so the text node is inside the same grid the
+  // bubble will use and reports the width it will actually lay out at.
+  //
+  // Measuring with `has-art` removed — which is what this used to do — reports
+  // the text's single unwrapped line, because with no artwork constraint the node
+  // has no reason to wrap at all. Every downstream number came from a width the
+  // text never occupied, and the browser then re-wrapped it into the clamped box
+  // afterwards, wherever it liked. That mismatch is why breaks landed at four
+  // characters regardless of how much room the box actually had.
+  //
+  // The width is cleared first so this re-measures from scratch: leaving the
+  // previous line's width in place would wrap a shorter new line against a
+  // constraint sized for the old one.
+  b.classList.add('has-art');
+  b.style.width = '';
+  b.style.height = '';
+
+  // Start from the widest the bubble may get and let the text's own measured
+  // width pull it back down. The text node is stretched to the grid track (see
+  // `justify-self: stretch` in pet.css — that's what makes centring work), so the
+  // *node* measures as wide as the box no matter how short the line is. Reading
+  // the node's width would therefore always return this maximum, which is what
+  // left a two-character line sitting in a box sized for sixteen.
+  //
+  // `range` is the escape hatch: an inline range wraps the same text content and
+  // reports its *ink* width, which is unaffected by the node's box, the grid
+  // track, or the padding. Its width is the text as it would lay out on one
+  // line — exactly the "how wide does this need to be" number the bubble wants.
+  let textW = 0;
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(textEl);
+    const rects = range.getClientRects();
+    // The widest line box. A range over wrapped content reports one rect per
+    // line, and the widest of those is the line that sets the natural width.
+    let widest = 0;
+    for (const r of rects) if (r.width > widest) widest = r.width;
+    textW = widest;
+  } catch {
+    textW = 0;   // no layout, or a detached node — the estimate below covers it
+  }
+
+  const textH = textEl.getBoundingClientRect().height;
+
+  let lines = 1;
+  let finalW;
+
+  if (textW > 0 && textH > 0) {
+    // The node reports its own padding, so the block height is a whole number of
+    // lines. Rounding to nearest (not up) is right here: the node is exactly one
+    // line-height per line, and `Math.round` keeps a single line from reporting
+    // two.
+    lines = Math.max(1, Math.round(textH / ART_LINE_H));
+    // Hug the rendered text horizontally, plus the node's own padding — the
+    // padding is not in the range's rects but is part of what the box must hold.
+    finalW = Math.max(ART_MIN_W, Math.min(ART_MAX_W, Math.round(textW + padBox)));
+  } else {
+    // No layout available (hidden ancestor, or a non-rendering environment such
+    // as a headless test). Scale by the text's character count, which is all we
+    // can know here and is far better than a fixed box.
+    const estW = Math.max(ART_MIN_W, Math.min(ART_MAX_W, padBox + raw.length * ART_CHAR_W));
+    finalW = estW;
+    const charsPerLine = Math.max(1, Math.floor((estW - padBox) / ART_CHAR_W));
+    lines = Math.max(1, Math.ceil(raw.length / charsPerLine));
+  }
+
+  // Scale the *whole* bubble up rather than letting the box grow tall and thin.
+  //
+  // The interior aspect is the thing held fixed. Growing width and height by the
+  // same factor is what "等比" means here, and it keeps the drawn frame's shape
+  // identical — only bigger — which is what makes these read as one set of
+  // artwork rather than seven differently-stretched ones.
+  //
+  // The factor is *solved for*, not guessed from the line count. A box scaled by
+  // `f` holds `(f*w / ia) / ART_LINE_H` lines, but only while the width cap
+  // isn't binding — and it usually is, since the text was just measured against
+  // `ART_MAX_W`. Assuming capacity scales linearly with `f` (the old
+  // `ceil(lines / ART_LINES_PER_BUBBLE)`) under-sized the bubble and clipped the
+  // last line on the wide bubbles, where 5.png's 3.38:1 interior needs to grow
+  // more than twice to gain the same room. Solving the inequality directly keeps
+  // the guarantee "the text fits" independent of the aspect.
+  let grow = Math.max(1, Math.ceil(lines / ART_LINES_PER_BUBBLE));
+  for (let i = 0; i < ART_MAX_GROW_STEPS; i++) {
+    const w2 = Math.round(finalW * grow);
+    const h2 = Math.round(w2 / ia);
+    if (h2 / ART_LINE_H >= lines) break;
+    grow++;
+  }
+  finalW = Math.max(ART_MIN_W, Math.min(ART_MAX_W * grow, Math.round(finalW * grow)));
+
+  // Height from the interior aspect, so the white area is filled exactly and the
+  // text sits centred in it. `grow` has already reserved the room for `lines`,
+  // so this is the whole story — the measured block height is not needed as a
+  // floor, and keeping it as one is what let the box break its own ratio.
+  //
+  // The floor is kept only for text that is genuinely taller than the aspect
+  // allows at any scale (a very narrow bubble, or a long word that can't wrap).
+  // It breaks the ratio, but the alternative is cutting the user's text off, and
+  // unreadable text is a worse failure than a slightly tall bubble.
+  const aspectH = Math.round(finalW / ia);
+  const needH = Math.round(lines * ART_LINE_H + ART_TEXT_PAD_V);
+  const finalH = Math.max(aspectH, needH);
+
+  b.style.width = `${finalW}px`;
+  b.style.height = `${finalH}px`;
+  setArtScale(b, g, finalW, finalH);
+}
+
+// The canvas-to-bubble conversion, shared by the measured and fallback paths.
+//
+// ---------------------------------------------------------------------------
+// Why the two axes need different scales
+// ---------------------------------------------------------------------------
+//
+// The element is sized to the *interior's* aspect (`ia`), because that is the
+// shape of the white area the text sits in. The drawing inside the canvas has its
+// own aspect, and the two are not equal: 1.png's element is 1.611 while its
+// drawing is 1.497. A single uniform `scale(k)` preserves the drawing's own
+// aspect, so it can never exactly fill a box of a different aspect — one axis
+// always overhangs. Unifying both axes on the same factor (what this used to do,
+// taking the smaller of the two so nothing would be cropped) therefore left the
+// artwork sticking out on one side, and since the text centres on the *box*, the
+// visual result was the text sitting off to one side of the bubble.
+//
+// Scaling each axis by its own reciprocal instead makes the visible drawing
+// exactly cover the element in both axes — the box and the drawn bubble become
+// the same rectangle, which is the whole premise of this mode.
+//
+// The scale is applied with `width`/`height` rather than `transform`, so the
+// offsets below are in the same units and are not scaled a second time.
+function setArtScale(b, g, w, h) {
+  const visibleW = (100 - g.left - g.right) / 100;
+  const visibleH = (100 - g.top - g.bottom) / 100;
+  // The canvas size at which its visible region exactly fills the box.
+  const canvasW = w / visibleW;
+  const canvasH = h / visibleH;
+  b.style.setProperty('--art-w', `${canvasW.toFixed(2)}px`);
+  b.style.setProperty('--art-h', `${canvasH.toFixed(2)}px`);
+  // Offsets are a fraction of the *canvas*, and the canvas is now this size, so
+  // the percentages finally mean what they were measured to mean.
+  b.style.setProperty('--art-left', `${(-(g.left / 100) * canvasW).toFixed(2)}px`);
+  b.style.setProperty('--art-top', `${(-(g.top / 100) * canvasH).toFixed(2)}px`);
+  // -------------------------------------------------------------------------
+  // The text offset is a *third*, separate correction — neither of the crop
+  // numbers above. Those locate the whole drawing; the text wants the white
+  // interior, and the two aren't concentric: 1.png's bat wings hang above its
+  // bubble and dangles a cross below, so the drawing's centre sits well above
+  // the middle of the white area.
+  //
+  // Each axis is scaled by *its own* dimension. `dx` is a fraction of the
+  // drawing's width and `dy` of its height, so multiplying both by `w` — as this
+  // originally did — only worked by accident, while the drawings were nearly
+  // square. Now that the box follows the interior's aspect (1.5–3.4:1), applying
+  // `w` to both would leave the vertical correction wrong by exactly that ratio,
+  // which is what kept multi-line text sitting high in the bubble.
+  // -------------------------------------------------------------------------
+  b.style.setProperty('--text-dx', `${((g.dx || 0) * w).toFixed(2)}px`);
+  b.style.setProperty('--text-dy', `${((g.dy || 0) * h).toFixed(2)}px`);
+}
+
 // The bubble kind currently painted, so a silent action can clear "its own"
 // bubble without swallowing a live rule bubble. See clearActionBubbleIfMine.
 function clearActionBubbleIfMine() {
@@ -239,6 +499,43 @@ function clearActionBubbleIfMine() {
   ctxBubble.classList.remove('fade');
   ctxBubble.dataset.kind = '';
   clearTimeout(ctxBubble._timer);
+  // The artwork has to be dropped too, not just hidden. Leaving `has-art` on
+  // would keep the bubble in its fixed-square geometry, so the next line the
+  // pet says (which may have no box of its own) would come back clipped or
+  // floating in a stale frame. See clearBubbleArt.
+  clearBubbleArt();
+}
+
+// Drop the 文本框 artwork and go back to the CSS card.
+//
+// Both the box attribute and the <img> src are cleared, not just hidden: the
+// bubble's geometry is entirely different between the two modes (a CSS card
+// hugs its text, an image bubble is a fixed-size box), so leaving a stale src
+// would make the next bubble come back the wrong shape. Clearing the src
+// rather than setting a 1×1 placeholder also releases the decoded bitmap —
+// seven 2048×2048 PNGs is tens of MB the renderer would otherwise hold for
+// the life of the process.
+function clearBubbleArt() {
+  if (!ctxBubble) return;
+  ctxBubble.dataset.box = '';
+  ctxBubble.classList.remove('has-art');
+  // Drop the measured size too, not just the class. A stale inline width would
+  // survive the next box change and size that bubble to the *previous* line,
+  // which is exactly the fixed-size behaviour this replaced.
+  ctxBubble.style.width = '';
+  ctxBubble.style.height = '';
+  ctxBubble.style.removeProperty('--art-left');
+  ctxBubble.style.removeProperty('--art-top');
+  ctxBubble.style.removeProperty('--art-w');
+  ctxBubble.style.removeProperty('--art-h');
+  ctxBubble.style.removeProperty('--art-scale');
+  // The interior offset is measured per-box, so a leftover value from the
+  // previous box would shift this bubble's text by a correction meant for a
+  // different drawing.
+  ctxBubble.style.removeProperty('--text-dx');
+  ctxBubble.style.removeProperty('--text-dy');
+  const art = document.getElementById('pet-bubble-art');
+  if (art) art.removeAttribute('src');
 }
 
 function showContextBubble(payload) {
@@ -248,9 +545,39 @@ function showContextBubble(payload) {
     ctxBubble.classList.add('hidden');
     ctxBubble.classList.remove('fade');
     ctxBubble.dataset.kind = '';
+    clearBubbleArt();
     return;
   }
-  ctxBubble.textContent = payload.text;
+
+  // The 文本框 travels with the line it belongs to. Both producers send it on
+  // the same payload (the controller with `pet:action-changed`, the rule engine
+  // with `pet:bubble-changed`), so a box can never end up painted around
+  // somebody else's line. `box: null` — the default, or an id that no longer
+  // resolves on this machine — falls back to the CSS card.
+  //
+  // A no-box payload explicitly clears the artwork rather than leaving the
+  // previous bubble's box in place; otherwise switching an action back to the
+  // default box would leave the old image up around the new text.
+  const box = payload.box || null;
+
+  const textEl = document.getElementById('pet-bubble-text');
+  if (textEl) textEl.textContent = payload.text;
+
+  if (box && box.url) {
+    ctxBubble.dataset.box = box.id || '';
+    const art = document.getElementById('pet-bubble-art');
+    // `src` is only assigned when it differs, so re-showing the same bubble
+    // every second (the rule engine re-asserts its text each tick) doesn't
+    // restart the image decode and flicker the artwork.
+    if (art && art.getAttribute('src') !== box.url) art.setAttribute('src', box.url);
+    // Sized *after* the text is set, because the width comes from the laid-out
+    // text — measuring before it is in the DOM would size the box to the
+    // previous line.
+    applyArtGeometry(box);
+  } else {
+    clearBubbleArt();
+  }
+
   ctxBubble.dataset.kind = payload.kind || '';
   ctxBubble.classList.remove('hidden', 'fade');
   // Self-expiry backstop. 1h is the framework's default duration; the main
@@ -434,7 +761,15 @@ if (M.on) {
     // "my pet decided to say this" from "the 吃饭提醒 fired".
     if ('text' in payload) {
       if (payload.text) {
-        showContextBubble({ text: payload.text, kind: 'action', durationMs: ACTION_TEXT_MS });
+        // `box` rides along: the controller resolves the action's 文本框 to a
+        // file:// URL (or null for the CSS default) and sends it on the same
+        // payload as the line it belongs to.
+        showContextBubble({
+          text: payload.text,
+          kind: 'action',
+          durationMs: ACTION_TEXT_MS,
+          box: payload.box || null,
+        });
       } else {
         // No line for this play. Clear only if the bubble is currently
         // showing an *action* line — a live rule bubble (吃饭提醒) must

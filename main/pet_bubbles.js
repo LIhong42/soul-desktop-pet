@@ -62,6 +62,7 @@
 const db = require('./db');
 const petBubbleTypes = require('./pet_bubble_types');
 const petActionTexts = require('./pet_action_texts');
+const petTextBoxes = require('./pet_text_boxes');
 
 const KINDS = petBubbleTypes.KINDS;
 
@@ -89,6 +90,63 @@ const OPTS_KEY = 'pet_bubbles_enabled';
 // per-intent via `build()`'s returned `durationMs`.
 const DEFAULT_DURATION_MS = 60 * 60_000;
 const REFRESH_MS = 1000;   // tick cadence
+
+// ---------------------------------------------------------------------------
+// 文本框 for rule bubbles
+// ---------------------------------------------------------------------------
+//
+// A rule bubble has no action of its own — 吃饭提醒 belongs to no variant, and
+// the same line also gets mirrored into `default`'s pool (see RUNTIME_TARGET_ACTION
+// below). So it can't read a per-action choice, and it takes a separate
+// user-level one instead.
+//
+// It is stored pet-independently, alongside the enable toggles, for the same
+// reason those are: the reminder is about the user and their clock, not about
+// whichever pet is loaded, so switching pets must not silently restyle their
+// reminders.
+//
+// Deliberately resolved (not stored as a URL): an id that no longer resolves —
+// PNG deleted, config imported from another machine — degrades to the CSS
+// bubble via petTextBoxes.resolve returning null. Same rule as everywhere
+// else: a stale reference costs a fallback, never a broken bubble.
+const BOX_KEY = 'pet_bubbles_box';
+
+// Memoised because `push` runs on every rule tick (1Hz, and a bubble up for an
+// hour means ~3600 pushes) and `db.getSetting` is a live SQL query, not a
+// cached read. The value only changes when the user saves on /settings, which
+// goes through `saveRuleBox` below and re-seeds this — the same pattern
+// pet_action_texts uses for its config blob, and for the same reason.
+let ruleBoxCache = null;
+
+function loadRuleBox() {
+  if (ruleBoxCache !== null) return ruleBoxCache;
+  try {
+    const raw = db.getSetting(BOX_KEY);
+    const s = (typeof raw === 'string' ? raw : '').trim();
+    ruleBoxCache = petTextBoxes.resolve(null, s);
+  } catch (e) {
+    console.error('[pet_bubbles] loadRuleBox failed:', e && e.message ? e.message : e);
+    ruleBoxCache = null;
+  }
+  return ruleBoxCache;
+}
+
+function saveRuleBox(dbRef, id) {
+  const s = String(id == null ? '' : id).trim();
+  dbRef.setSetting(BOX_KEY, s);
+  // Re-seed rather than invalidate-to-null, so the very next push is a cache
+  // hit and already reflects the new choice (the pet shouldn't have to wait a
+  // tick for a restyled bubble).
+  ruleBoxCache = petTextBoxes.resolve(null, s);
+  return s;
+}
+
+// Drop the memoised box so the next `loadRuleBox` re-reads the row. Needed when
+// the DB is swapped underneath us (backup restore) — otherwise the pet would
+// keep painting reminders in the previous database's bubble.
+function invalidateRuleBox() {
+  ruleBoxCache = null;
+}
 
 // ---------------------------------------------------------------------------
 // Built-in rules
@@ -443,7 +501,16 @@ const MANUAL_DURATION_MS = 10 * 60_000;
 function push(payload) {
   lastBroadcastKey = payload.text == null ? '' : `${payload.kind}|${payload.rule}|${payload.text}`;
   if (!broadcastFn) return;
-  try { broadcastFn(payload); }
+  // Stamp the 文本框 onto every bubble that goes out — rule, manual and the
+  // clear alike. Doing it here rather than at each of the three push call
+  // sites is what guarantees a box can't be attached to one kind of bubble and
+  // forgotten on another; there is no path to `broadcastFn` that skips this.
+  //
+  // The clear payload carries a null box too, so the renderer drops the
+  // artwork when the bubble goes rather than leaving it behind.
+  try {
+    broadcastFn({ ...payload, box: payload.text == null ? null : loadRuleBox() });
+  }
   catch (e) { console.error('[pet_bubbles] broadcast failed:', e && e.message ? e.message : e); }
 }
 
@@ -686,11 +753,17 @@ module.exports = {
   emit,
   say,
   clearManual,
+  invalidateRuleBox,
 
   // config / introspection
   loadEnabled,
   saveEnabled,
   describeRules,
+
+  // 文本框 for rule bubbles (pet-independent, like the enable toggles)
+  loadRuleBox,
+  saveRuleBox,
+  invalidateRuleBox,
 
   // 动态插拔 — the runtime lines currently plugged into `default`'s pool,
   // re-exported so the settings page can show them without reaching into

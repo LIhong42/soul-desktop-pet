@@ -147,11 +147,24 @@ function clearRuntime() {
 // Saved config (the user's own bindings)
 // ---------------------------------------------------------------------------
 //
-// Shape: { texts: { [action]: string[] } }
+// Shape: { texts: { [action]: string[] }, boxes: { [action]: string } }
 //
 // An action maps to an **array**, never a single string, because one action
 // can be bound to several lines and we sample among them. Missing action ⇒
 // no texts ⇒ the picker always returns null and the pet stays silent.
+//
+// `boxes` is the 文本框 chosen per action (main/pet_text_boxes.js). It is a
+// **separate map** rather than a field on the text arrays because the two are
+// independent: an action can have five lines and the default box, or one line
+// and a decorated box, or a box with no lines at all (the box would then apply
+// to whatever a reminder line plugs in). Storing the box inside `texts[action]`
+// would force a choice of array-vs-object layout for no benefit.
+//
+// Absent action ⇒ default box. The box is deliberately NOT validated against
+// the folder here: a box id written on another machine must survive a round
+// trip so it comes back when the user is back on the machine that has that
+// PNG. The renderer degrades an unknown id to the CSS bubble (see
+// pet_text_boxes.resolve), so a stale id costs a fallback, not a broken bubble.
 
 // Normalize a caller-supplied action→texts map. Drops non-string / blank
 // entries, trims, and de-dupes within each action while preserving order.
@@ -180,6 +193,22 @@ function normalizeTexts(map) {
   return out;
 }
 
+// Normalize a caller-supplied action→box map. Drops non-string / blank ids and
+// trims, exactly as normalizeTexts does for lines. An all-blank action loses its
+// key so "no box" is always an absent key, matching how `texts` represents "no
+// lines" — the two maps then have the same shape and the UI can treat them alike.
+function normalizeBoxes(map) {
+  const out = {};
+  if (!map || typeof map !== 'object') return out;
+  for (const action of Object.keys(map)) {
+    const a = String(action).trim();
+    if (!a) continue;
+    const b = typeof map[action] === 'string' ? map[action].trim() : '';
+    if (b) out[a] = b;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Read cache
 // ---------------------------------------------------------------------------
@@ -202,14 +231,17 @@ function normalizeTexts(map) {
 const configCache = new Map();
 
 function loadConfig(db, petId) {
-  if (!db || !petId) return { texts: {} };
+  if (!db || !petId) return { texts: {}, boxes: {} };
   const cached = configCache.get(petId);
   if (cached) return cached;
   let raw = null;
-  try { raw = db.getSetting(configKey(petId)); } catch { return { texts: {} }; }
+  try { raw = db.getSetting(configKey(petId)); } catch { return { texts: {}, boxes: {} }; }
   let parsed;
   try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = null; }
-  const cfg = { texts: normalizeTexts(parsed && parsed.texts) };
+  const cfg = {
+    texts: normalizeTexts(parsed && parsed.texts),
+    boxes: normalizeBoxes(parsed && parsed.boxes),
+  };
   configCache.set(petId, cfg);
   return cfg;
 }
@@ -224,7 +256,10 @@ function invalidate(petId) {
 
 function saveConfig(db, petId, cfg) {
   if (!db || !petId) return false;
-  const safe = { texts: normalizeTexts(cfg && cfg.texts) };
+  const safe = {
+    texts: normalizeTexts(cfg && cfg.texts),
+    boxes: normalizeBoxes(cfg && cfg.boxes),
+  };
   try {
     db.setSetting(configKey(petId), JSON.stringify(safe));
     // Re-seed the cache with what we just wrote, so the next pick is a
@@ -317,6 +352,10 @@ function describeActions(db, petId, sources) {
       label: a,
       group: 'variant',
       texts: Array.isArray(cfg.texts[a]) ? cfg.texts[a].slice() : [],
+      // The 文本框 chosen for this action, or '' for the CSS default. Always
+      // present (never undefined) so the settings page can bind a <select>
+      // straight to it without a null check per row.
+      box: (cfg.boxes && typeof cfg.boxes[a] === 'string') ? cfg.boxes[a] : '',
       // What the runtime has temporarily plugged in for this action, so the
       // UI can show it without the user guessing why the pet just said
       // something it wasn't configured to say.
@@ -326,6 +365,10 @@ function describeActions(db, petId, sources) {
   const s = sources || {};
   for (const v of (s.variants || [])) push(v);
   for (const a of Object.keys(cfg.texts)) push(a);
+  // `boxes` too: an action the user gave a text box but no lines still needs
+  // its row, or the box would be unreachable from the UI and could only ever be
+  // set by hand-editing the DB.
+  for (const a of Object.keys(cfg.boxes)) push(a);
   return rows;
 }
 
@@ -343,6 +386,7 @@ module.exports = {
   // saved config
   configKey,
   normalizeTexts,
+  normalizeBoxes,
   loadConfig,
   saveConfig,
   invalidate,

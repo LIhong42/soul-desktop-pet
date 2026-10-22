@@ -23,6 +23,8 @@ const petMoodMod = require('./pet_mood');
 const petActionsConfig = require('./pet_actions_config');
 const petActionTexts = require('./pet_action_texts');
 const petBubbles = require('./pet_bubbles');
+// 文本框 catalog (resources/text_boxes) — scanned, not hard-coded.
+const petTextBoxes = require('./pet_text_boxes');
 const videoFrameSplit = require('./video_frame_split');
 const autostart = require('./autostart');
 const imageBgRemove = require('./image_bg_remove');
@@ -1693,7 +1695,7 @@ function normFreeText(s) {
     const id = resolvePetId(petId);
     const cfg = petActionTexts.loadConfig(db, id);
     if (!id) {
-      return { texts: cfg.texts, actions: [], runtime: [], pet_id: null };
+      return { texts: cfg.texts, boxes: cfg.boxes, actions: [], runtime: [], pet_id: null };
     }
     // Reuse the *same* manifest-filtered variant list the actions-config
     // card uses, so a pet that ships e.g. `pat` shows a `pat` row in both
@@ -1709,9 +1711,17 @@ function normFreeText(s) {
     const variants = petActionsConfig.getAvailableVariants(petRegistry, id);
     return {
       texts: cfg.texts,
+      boxes: cfg.boxes,
       actions: petActionTexts.describeActions(db, id, { variants }),
       // What the bubble engine has plugged into `default` right now.
       runtime: petActionTexts.listRuntime(petBubbles.RUNTIME_TARGET_ACTION),
+      // The 文本框 catalog (resources/text_boxes) — resolved to file:// URLs
+      // here because the renderer can't read the filesystem. The rule-bubble
+      // choice rides along so the whole card renders from this one call: it's
+      // the same concept as a per-action box, just stored pet-independently
+      // because a 吃饭提醒 belongs to no action (see main/pet_bubbles.js).
+      textBoxes: petTextBoxes.list(null),
+      ruleBox: petBubbles.loadRuleBox(),
       pet_id: id,
     };
   });
@@ -1724,8 +1734,18 @@ function normFreeText(s) {
     // blank action keys. No manifest filtering here on purpose — a line
     // bound to a variant the *current* pet doesn't expose must survive so
     // it comes back when the user switches back to the pet that has it.
+    // Same reasoning for `boxes`: a box id is stored verbatim so a PNG the
+    // current install lacks still resolves after the user copies the files
+    // over, and an unknown id degrades to the CSS bubble at render time.
+    //
+    // The rule-bubble box is saved in the same call so the card has one save
+    // button rather than two that can disagree.
     if (!petActionTexts.saveConfig(db, id, cfg || {})) throw new Error('保存失败');
-    return { ok: true, texts: petActionTexts.loadConfig(db, id).texts };
+    if (cfg && Object.prototype.hasOwnProperty.call(cfg, 'ruleBox')) {
+      petBubbles.saveRuleBox(db, cfg.ruleBox);
+    }
+    const saved = petActionTexts.loadConfig(db, id);
+    return { ok: true, texts: saved.texts, boxes: saved.boxes, ruleBox: petBubbles.loadRuleBox() };
   });
 
   // ---- 文本气泡（吃饭提醒 / 休息提醒）----
@@ -2245,6 +2265,11 @@ function normFreeText(s) {
     //    database. Without this the pet would keep quoting lines the user
     //    deleted before the import until the process restarted.
     petActionTexts.invalidate();
+    // Same reasoning for the rule bubbles' 文本框: it is memoised for the same
+    // hot-path reason, and the restore swapped out the row it came from. Left
+    // cached, 吃饭提醒 would keep drawing the box from the *previous* database
+    // until restart.
+    petBubbles.invalidateRuleBox();
 
     db.setSetting('last_import_at', db.nowStr());
     return { canceled: false };
