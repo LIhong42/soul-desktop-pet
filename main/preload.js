@@ -194,8 +194,15 @@ contextBridge.exposeInMainWorld('mp', {
   //   splitVideo({ fps, format }) → { canceled } | { canceled:false, path, frames, bytes, jobId }
   //   cancel({ jobId })           → { ok }
   //   revealInFolder(path)        → bool; opens OS file manager at path
+  //
+  // removeImageBackground backs the "transparent PNG" tool. It reuses the
+  // same `tools:cancel` + `tools:progress` channel:
+  //   removeImageBackground({ tolerance, softness })
+  //     → { canceled } | { canceled:false, path, width, height, bytes, transparentRatio, jobId }
+  // tolerance is 'strict'|'normal'|'loose'; softness is 0-4.
   tools: {
     splitVideo:     (opts) => ipcRenderer.invoke('tools:split_video_to_frames', opts || {}),
+    removeImageBackground: (opts) => ipcRenderer.invoke('tools:remove_image_background', opts || {}),
     cancel:         (payload) => ipcRenderer.invoke('tools:cancel', payload || {}),
     revealInFolder: (path) => ipcRenderer.invoke('tools:reveal_in_folder', path),
   },

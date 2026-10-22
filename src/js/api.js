@@ -169,6 +169,7 @@ export const api = {
   // raw video bytes never have to round-trip through IPC.
   tools: {
     splitVideo:     (opts) => M.tools.splitVideo(opts || {}),
+    removeImageBackground: (opts) => M.tools.removeImageBackground(opts || {}),
     cancel:         (payload) => M.tools.cancel(payload || {}),
     revealInFolder: (path) => M.tools.revealInFolder(path),
   },

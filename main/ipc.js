@@ -25,6 +25,7 @@ const petActionTexts = require('./pet_action_texts');
 const petBubbles = require('./pet_bubbles');
 const videoFrameSplit = require('./video_frame_split');
 const autostart = require('./autostart');
+const imageBgRemove = require('./image_bg_remove');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
 // `export:cancel`. The value is a mutable record: { killed, outPath? }.
@@ -2627,6 +2628,87 @@ function normFreeText(s) {
     } catch (e) {
       console.error('[tools] reveal_in_folder failed:', e);
       return false;
+    }
+  });
+
+  // ---- Tools page: image → transparent PNG --------------------------------
+  //
+  //   tools:remove_image_background — open + save dialogs → flood fill → PNG
+  //
+  // Shares the `activeToolsJobs` map, `tools:cancel` handler, and
+  // `tools:progress` channel with the frame-splitter above: both are
+  // cancellable, both report phase/percent, and neither should push image
+  // bytes through IPC (a 40 MPix source is ~160 MB of RGBA). The decode /
+  // flood-fill / re-encode pipeline lives in main/image_bg_remove.js.
+  ipcMain.handle('tools:remove_image_background', async (_e, payload = {}) => {
+    // tolerance is a named preset rather than a raw 0-255 so the renderer
+    // can't ask for a value the module has no tuning for. softness is the
+    // edge-feathering ring count, 0-4.
+    const tolerance = imageBgRemove.toleranceFor(payload && payload.tolerance);
+    const softnessRaw = Number(payload && payload.softness);
+    const softness = Number.isFinite(softnessRaw) ? Math.max(0, Math.min(4, Math.round(softnessRaw))) : 0;
+
+    const pick = await dialog.showOpenDialog(winMain, {
+      title: '选择图片',
+      properties: ['openFile'],
+      filters: [
+        { name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'webp', 'gif', 'tif', 'tiff'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    });
+    if (pick.canceled || !pick.filePaths || !pick.filePaths.length) {
+      return { canceled: true };
+    }
+    const inputPath = pick.filePaths[0];
+
+    // Default the output name to <source>-transparent.png next to the
+    // user's save location, so an accidental overwrite of the source is
+    // at least an unlikely default.
+    const stamp = backupStamp();
+    const base = path.basename(inputPath, path.extname(inputPath));
+    const defaultName = `${base}-transparent-${stamp}.png`;
+    const save = await dialog.showSaveDialog(winMain, {
+      title: '保存透明背景 PNG',
+      defaultPath: defaultName,
+      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+    });
+    if (save.canceled || !save.filePath) {
+      return { canceled: true };
+    }
+    const outPath = save.filePath;
+
+    const jobId = `bgremove-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const job = { killed: false };
+    activeToolsJobs.set(jobId, job);
+
+    try {
+      const result = await imageBgRemove.removeBackground({
+        inputPath,
+        outPath,
+        tolerance,
+        softness,
+        cancelCheck: () => job.killed,
+        progressCb: (info) => {
+          if (job.killed) return;
+          pushToolsProgress(jobId, info.phase, info.percent, info.note);
+        },
+      });
+      return {
+        canceled: false,
+        path: outPath,
+        width: result.width,
+        height: result.height,
+        bytes: result.bytes,
+        transparentRatio: result.transparentRatio,
+        jobId,
+      };
+    } catch (err) {
+      if (job.killed || (err && err.killed)) {
+        return { canceled: true, jobId };
+      }
+      throw err;
+    } finally {
+      activeToolsJobs.delete(jobId);
     }
   });
 
