@@ -15,6 +15,12 @@
 
 const { screen } = require('electron');
 
+// 动作 → 文本绑定。Loaded lazily to avoid a require cycle at module load:
+// pet_action_texts has no imports back into the controller, but keeping the
+// dependency one-way makes the "bubbles never touch the animation path"
+// invariant easier to see. See main/pet_action_texts.js.
+const petActionTexts = require('./pet_action_texts');
+
 const TICK_MS = 100;
 
 // Render height is fixed; width is computed from the active pet's
@@ -38,17 +44,24 @@ const BUBBLE_SIDE_ROOM_PX = 70;
 
 // The window is deliberately TALLER than the sprite, and the sprite sits at
 // the bottom of it. All three bubbles (reminder / bond / contextual) are
-// positioned above the sprite with `bottom: calc(100% - 4px)`, so when the
-// window was exactly as tall as the pet they rendered above y=0 and were
-// clipped away by the body's `overflow: hidden` — a single-line bubble lost
-// its top few pixels, and a wrapped one lost most of itself.
+// anchored to the sprite's TOP edge with `bottom: var(--sprite-h)`, so they
+// draw into the headroom above the pet. When the window was exactly as tall
+// as the pet they rendered above y=0 and were clipped away by the body's
+// `overflow: hidden` — a single-line bubble lost its top few pixels, and a
+// wrapped one lost most of itself.
+//
+// The gap between bubble and pet is the tail alone (5px): anchoring at the
+// sprite's top edge is what keeps the card clear of the character's head.
+// An earlier `- 4px` / `- 6px` tucked the card down onto the sprite box,
+// which read as covering the pet.
 //
 // This headroom is the space those bubbles actually draw into. The trade-off
 // is a transparent band above the pet: the window reports a taller hit box
 // than the visible character, which is why the sprite keeps
 // `pointer-events: auto` and the headroom stays `pointer-events: none`
-// (see --size-h usage in src/css/pet.css). Must stay in sync with
-// BUBBLE_HEADROOM in pet.css, which pins the sprite to the bottom of the box.
+// (see --size-h usage in src/css/pet.css). Must stay in sync with the bubble
+// `bottom` / `max-height` rules in pet.css, which pin the sprite to the
+// bottom of the box and cap bubbles at the headroom.
 const BUBBLE_HEADROOM_PX = 120;
 
 // ---- Movement profiles ----
@@ -547,6 +560,7 @@ class PetController {
         direction: eprof.direction,
         oneShotMs: Math.max(durationMs, ms || 1500),
         loop: false,        // play the walk/run frames exactly once
+        text: this._pickActionText(effective),
       });
       return;
     }
@@ -590,6 +604,7 @@ class PetController {
         direction: this.actionDirection > 0 ? 'right' : 'left',
         oneShotMs,
         loop: false,        // play cozy / idle-variant frames exactly once
+        text: this._pickActionText(variant),
       });
     }
   }
@@ -657,6 +672,25 @@ class PetController {
     return total > 0 ? total : FALLBACK;
   }
 
+  // Pick a speech line for `action`, or null when the pet should stay
+  // silent. The pool always contains an explicit "no text" candidate, so
+  // this returns null even for an action the user bound lines to — that's
+  // the intended behaviour, not a fallback (see pet_action_texts.js).
+  //
+  // Best-effort by design: a corrupt config row or a DB hiccup must never
+  // stop the animation path, so any failure degrades to "the pet says
+  // nothing", which is always a valid outcome.
+  _pickActionText(action) {
+    if (!this.db || !this.petId) return null;
+    try {
+      const cfg = petActionTexts.loadConfig(this.db, this.petId);
+      return petActionTexts.pickText(action, cfg.texts);
+    } catch (e) {
+      console.error('[pet_controller] _pickActionText failed:', e && e.message ? e.message : e);
+      return null;
+    }
+  }
+
   broadcastAction() {
     if (!this.win || this.win.isDestroyed()) return;
     // Resolve the variant name through currentVariantName so the default-
@@ -679,6 +713,7 @@ class PetController {
       petId: this.petId,
       action,
       direction: this.actionDirection > 0 ? 'right' : 'left',
+      text: this._pickActionText(action),
     });
   }
 

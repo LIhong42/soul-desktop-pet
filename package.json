@@ -10,6 +10,7 @@
     "dev": "node scripts/run-electron.js . --dev",
     "doctor": "node scripts/doctor.js",
     "test:bubbles": "node scripts/smoke-bubbles.js",
+    "test:action-texts": "node scripts/smoke-action-texts.js",
     "install:bin": "node scripts/install-electron-bin.js",
     "postinstall": "node scripts/install.js",
     "prebuild": "node scripts/hoist-call-bind-helpers.js && node scripts/prebuild-extract-winCodeSign.js",

@@ -120,6 +120,12 @@ export const api = {
       save:            (cfg) => M.pet.actionsConfig?.save?.(cfg || {}),
       getLoopVariants: ()    => M.pet.actionsConfig?.getLoopVariants?.(),
     },
+    // 动作 → 文本绑定. The pet controller calls the same picker every time
+    // it starts an action; /settings edits the pool it picks from.
+    actionTexts: {
+      get:  ()    => M.pet.actionTexts?.get?.() || Promise.resolve({ texts: {}, actions: [], runtime: [] }),
+      save: (cfg) => M.pet.actionTexts?.save?.(cfg || {}),
+    },
   },
   settings: {
     get: (k) => M.settings.get(k),

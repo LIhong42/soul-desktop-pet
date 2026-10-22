@@ -65,6 +65,14 @@ async function render() {
     </div>
 
     <div class="card">
+      <h2>动作文本</h2>
+      <p class="meta">给桌宠的每个动作绑定"它想说的话"。播放该动作时会从绑定的多条文本里<strong>随机挑一条</strong>展示；<strong>"不展示文本"始终是其中一项</strong>，所以即使绑定了文本，这个动作也可能一句话都不说。默认不绑定任何文本。</p>
+      <div id="pet-action-texts-card-body">
+        <div class="empty">载入中…</div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>文本气泡</h2>
       <p class="meta">桌宠会根据条件主动说话，气泡浮在桌宠上方，与动作播放互不影响。每条规则都可以单独关闭。</p>
       <div id="pet-bubbles-card-body">
@@ -240,7 +248,224 @@ async function render() {
   // validates + filters against the manifest, so the renderer just sends
   // raw form state.
   await renderPetActionsCard(currentPetId);
+  await renderActionTextsCard();
   await renderBubblesCard();
+}
+
+// ---------------------------------------------------------------------------
+// 动作文本卡片 (main/pet_action_texts.js)
+// ---------------------------------------------------------------------------
+//
+// One row per action the active pet can play, each holding the list of lines
+// bound to it. The rows come from the main process (which unions the pet's
+// own manifest variants with anything already bound), so this file stays a
+// pure editor over a payload it doesn't interpret.
+//
+// Note there are deliberately no rows for 单击桌宠 or the 右击菜单 · 摸一下 /
+// 拍头 / 喂食 entries: those are the *user's* actions, not the pet's. When you
+// click the pet it resolves to some variant, and that variant is what picks
+// and shows the text — so that's the row you bind to.
+//
+// `_actionTextsForm` is the working copy, in exactly the shape the IPC
+// persists: `{ texts: { action: [lines] } }`. Chip add/remove mutate it in
+// memory and re-render locally; only 保存 hits the disk.
+//
+// One delegated listener on the list container handles both buttons. The
+// alternative — rebinding per row after every re-render — is the same amount
+// of code and has to remember to rebind; delegation can't drift because
+// there is nothing to re-bind.
+let _actionTextsForm = null;
+// Row skeleton (labels + ordering). Only changes when the active pet does,
+// so it's kept at module scope and survives the in-memory re-renders that
+// chip edits trigger.
+let _actionTextsRows = null;
+
+async function renderActionTextsCard() {
+  const body = document.getElementById('pet-action-texts-card-body');
+  if (!body) return;
+  if (!api.pet || !api.pet.actionTexts) {
+    body.innerHTML = `<div class="empty">当前版本不支持动作文本配置。</div>`;
+    return;
+  }
+  let snapshot;
+  try {
+    snapshot = await api.pet.actionTexts.get();
+  } catch (e) {
+    body.innerHTML = `<div class="empty">读取失败：${escapeHtml((e && e.message) || String(e))}</div>`;
+    return;
+  }
+  _actionTextsRows = (snapshot && snapshot.actions) || [];
+  // Deep-ish copy: each action's list is cloned so chip edits can't mutate
+  // the row skeleton's `texts` array in place.
+  const saved = (snapshot && snapshot.texts) || {};
+  const formTexts = {};
+  for (const k of Object.keys(saved)) {
+    formTexts[k] = Array.isArray(saved[k]) ? saved[k].slice() : [];
+  }
+  _actionTextsForm = { texts: formTexts };
+
+  if (_actionTextsRows.length === 0) {
+    body.innerHTML = `<div class="empty">当前桌宠没有可配置文本的动作。</div>`;
+    return;
+  }
+
+  // Lines currently plugged in by a live rule bubble. Surfacing them here
+  // makes the plug/unplug visible: while 吃饭提醒 is up the line appears
+  // under "当前插播", and it drops off when the bubble ends — otherwise the
+  // behaviour would look like the pet inventing text the user never wrote.
+  const runtimeLines = ((snapshot && snapshot.runtime) || []).map((r) => r.text).filter(Boolean);
+
+  body.innerHTML = `
+    ${runtimeLines.length ? `
+      <p class="meta" style="margin:10px 0 0;">
+        当前插播（来自文本气泡规则，气泡结束后自动移除）：
+        ${runtimeLines.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join(' ')}
+      </p>` : ''}
+    <div class="action-texts-list" id="action-texts-list">
+      ${_actionTextsRows.map(renderActionTextsRow).join('')}
+    </div>
+    <div class="row" style="margin-top:14px; gap:8px;">
+      <button class="btn" id="action-texts-save">保存</button>
+      <button class="btn secondary" id="action-texts-reset">清空全部文本</button>
+      <span class="meta" id="action-texts-status" style="margin-left:8px;"></span>
+    </div>
+  `;
+
+  wireActionTextsList(body);
+
+  document.getElementById('action-texts-reset').onclick = async () => {
+    if (!confirm('确认清空所有动作的绑定文本？')) return;
+    _actionTextsForm = { texts: {} };
+    rerenderActionTextsList();
+  };
+  document.getElementById('action-texts-save').onclick = async () => {
+    const status = document.getElementById('action-texts-status');
+    const list = document.getElementById('action-texts-list');
+    // Absorb any text the user typed but didn't press Enter on. Same reason
+    // as the actions-config card's DOM read: relying on the add-button alone
+    // silently drops a line the user believed they saved.
+    for (const input of list.querySelectorAll('[data-text-input]')) {
+      const action = input.getAttribute('data-text-input');
+      addActionText(action, input.value);
+    }
+    try {
+      const r = await api.pet.actionTexts.save(_actionTextsForm);
+      if (r && r.texts) {
+        const next = {};
+        for (const k of Object.keys(r.texts)) next[k] = (r.texts[k] || []).slice();
+        _actionTextsForm = { texts: next };
+      }
+      if (status) status.textContent = '已保存 · 改动会立即生效';
+      toast('动作文本已保存');
+      rerenderActionTextsList();
+    } catch (e) {
+      if (status) status.textContent = '保存失败';
+      toast('保存失败：' + ((e && e.message) || e));
+    }
+  };
+}
+
+// A single action row: the action's name on the left, its bound lines as
+// removable chips on the right, with an always-present add-input beneath.
+// An action with nothing bound renders the same shell minus the chip list,
+// so every action is visible in its "未绑定" state — the user can see what
+// they *haven't* configured, not just what they have.
+function renderActionTextsRow(a) {
+  const bound = (_actionTextsForm && _actionTextsForm.texts[a.action]) || a.texts || [];
+  const lines = Array.isArray(bound) ? bound : [];
+  return `
+    <div class="action-texts-row">
+      <div class="action-texts-label" title="${escapeHtml(a.action)}">${escapeHtml(a.label)}</div>
+      <div class="action-texts-body">
+        ${lines.length ? `
+          <div class="action-texts-chips">
+            ${lines.map((t, i) => `
+              <span class="action-texts-chip">
+                <span class="action-texts-chip-text">${escapeHtml(t)}</span>
+                <button class="action-texts-chip-x" data-text-remove="${escapeHtml(a.action)}" data-text-idx="${i}" title="移除">×</button>
+              </span>
+            `).join('')}
+          </div>`
+        : `<div class="meta">未绑定任何文本</div>`}
+        <div class="action-texts-add">
+          <input type="text" class="action-texts-input" data-text-input="${escapeHtml(a.action)}"
+                 placeholder="输入一条文本，回车或点 + 添加" maxlength="80"/>
+          <button class="btn secondary" data-text-add="${escapeHtml(a.action)}">+</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// One delegated listener for both chip buttons, plus Enter-to-add on the
+// inputs. Bound once per card render; survives every local re-render
+// because the container node itself is replaced only by a full card render.
+function wireActionTextsList(body) {
+  const list = document.getElementById('action-texts-list');
+  if (!list) return;
+
+  list.onclick = (e) => {
+    const addBtn = e.target.closest('[data-text-add]');
+    if (addBtn) {
+      const action = addBtn.getAttribute('data-text-add');
+      const input = list.querySelector(`[data-text-input="${CSS.escape(action)}"]`);
+      if (!addActionText(action, input ? input.value : '')) return;
+      if (input) input.value = '';
+      rerenderActionTextsList();
+      return;
+    }
+    const rmBtn = e.target.closest('[data-text-remove]');
+    if (rmBtn) {
+      const action = rmBtn.getAttribute('data-text-remove');
+      const idx = Number(rmBtn.getAttribute('data-text-idx'));
+      const lines = (_actionTextsForm.texts[action] || []).slice();
+      lines.splice(idx, 1);
+      // Drop the key entirely when the list empties, so "no lines" is
+      // represented by an absent key rather than an empty array the main
+      // side would have to special-case.
+      if (lines.length > 0) _actionTextsForm.texts[action] = lines;
+      else delete _actionTextsForm.texts[action];
+      rerenderActionTextsList();
+    }
+  };
+
+  // Enter submits the row it's in. Without this, "回车添加" (which the
+  // placeholder promises) would silently insert a newline-ish nothing.
+  list.onkeydown = (e) => {
+    if (e.key !== 'Enter') return;
+    const input = e.target.closest('[data-text-input]');
+    if (!input) return;
+    e.preventDefault();
+    const action = input.getAttribute('data-text-input');
+    if (!addActionText(action, input.value)) return;
+    input.value = '';
+    rerenderActionTextsList();
+  };
+}
+
+// Mutating helper shared by the add button, Enter, and the pre-save DOM
+// sweep — so all three apply identical trimming and de-duplication. Returns
+// true when a line was actually added, so callers can skip the re-render
+// (and the "已存在" toast already fired inside).
+function addActionText(action, raw) {
+  const line = String(raw == null ? '' : raw).trim();
+  if (!line) return false;
+  const list = _actionTextsForm.texts[action] || [];
+  if (list.includes(line)) {
+    toast('该文本已存在');
+    return false;
+  }
+  list.push(line);
+  _actionTextsForm.texts[action] = list;
+  return true;
+}
+
+// Repaint the row list from the in-memory form. No IPC round-trip, so
+// chip edits feel instant; 保存 is the only thing that touches disk.
+function rerenderActionTextsList() {
+  const list = document.getElementById('action-texts-list');
+  if (!list || !_actionTextsRows) return;
+  list.innerHTML = _actionTextsRows.map(renderActionTextsRow).join('');
 }
 
 // ---------------------------------------------------------------------------

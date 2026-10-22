@@ -61,8 +61,16 @@
 
 const db = require('./db');
 const petBubbleTypes = require('./pet_bubble_types');
+const petActionTexts = require('./pet_action_texts');
 
 const KINDS = petBubbleTypes.KINDS;
+
+// Which action a rule's line gets plugged into. `default` is the pet's idle
+// animation, so while a 吃饭提醒 / 休息提醒 bubble is up the pet can also say
+// the line from its normal idle action — the "动态插拔" behaviour the user
+// asked for. See main/pet_action_texts.js for why this is a runtime pool
+// rather than a copy into the saved config.
+const RUNTIME_TARGET_ACTION = 'default';
 
 // The one IPC channel the pet window listens on. Both "bubble appeared" and
 // "bubble gone" ride the same channel: `text: null` means clear. One channel
@@ -439,6 +447,66 @@ function push(payload) {
   catch (e) { console.error('[pet_bubbles] broadcast failed:', e && e.message ? e.message : e); }
 }
 
+// ---------------------------------------------------------------------------
+// 动态插拔 — mirror the live rule line into the `default` action's pool
+// ---------------------------------------------------------------------------
+//
+// The currently-winning rule's text is added to `default`'s candidate pool
+// for exactly as long as that rule's bubble is on screen, then removed. We
+// derive both the add and the remove from the same tick result rather than
+// hooking per-rule onStart/onEnd, because:
+//
+//   * the "which rule is showing" decision is already made here (priority
+//     order + enable toggles), so mirroring it can't disagree with what the
+//     user actually sees;
+//   * a rule that *stops* being the winner (because the user fed the pet and
+//     吃饭提醒 dropped out) leaves no onEnd hook to fire — there's no
+//     "bubble disappeared" event. Diffing the winner set per tick is the only
+//     place that reliably notices.
+//
+// `runtimePlugged` holds what we last added, so the next tick can remove
+// exactly those entries and no others — two rules can carry the same line
+// text ("坐太久了" in two nudges) and we must not yank the other's copy.
+let runtimePlugged = [];   // [{ text, ttlMs }]
+
+function plugRuntime(text, ttlMs) {
+  if (!text) return;
+  petActionTexts.enqueueRuntime(RUNTIME_TARGET_ACTION, text, ttlMs);
+  runtimePlugged.push({ text, ttlMs: Number(ttlMs) || 0 });
+}
+
+// Reconcile the runtime pool with what's on screen right now. `text` is the
+// winning rule's line (null when nothing is showing). Returns true when the
+// `default` action gained or lost a line, which the caller uses to force a
+// re-pick of the action's speech bubble.
+function syncRuntime(text, ttlMs) {
+  const had = runtimePlugged.length > 0;
+  // Remove everything we plugged on a previous tick, then re-add the current
+  // winner. Simpler (and safer) than trying to diff: the pool is at most a
+  // couple of entries, and a full reset can't strand a line we forgot about.
+  for (const old of runtimePlugged) {
+    petActionTexts.dequeueRuntime(RUNTIME_TARGET_ACTION, old.text);
+  }
+  runtimePlugged = [];
+  if (text) {
+    // The authoritative removal happens on the *next* tick once the rule
+    // stops winning; this ttl only matters if the app is killed mid-bubble,
+    // in which case the in-memory pool dies with it anyway.
+    plugRuntime(text, ttlMs);
+  }
+  return had !== (text != null && text !== '');
+}
+
+// Clear the pool on stop() so a line can't outlive the process that
+// produced it (relevant to the smoke tests, which start/stop repeatedly).
+function resetRuntime() {
+  for (const old of runtimePlugged) {
+    petActionTexts.dequeueRuntime(RUNTIME_TARGET_ACTION, old.text);
+  }
+  runtimePlugged = [];
+  petActionTexts.clearRuntime();
+}
+
 // Show `text` in the bubble slot, overriding the rule engine until it
 // expires. Called from the right-click menu's "说句话" item.
 //
@@ -515,6 +583,13 @@ function tick() {
     payload = { text: intent.text, kind: rule.kind, rule: rule.name };
   }
 
+  // Mirror the live rule line into the `default` action's speech pool for
+  // the duration of this bubble (动态插拔). When the winning rule changes —
+  // or stops winning entirely, e.g. after the user feeds the pet — this
+  // removes the stale line on the very next tick.
+  syncRuntime(payload.text, picked ? (Number.isFinite(picked.intent.durationMs)
+    ? picked.intent.durationMs : DEFAULT_DURATION_MS) : 0);
+
   if (snapshot.dirty || state.dirty) saveState(db, state);
 
   // Broadcast only on a real change. A bubble sitting on screen for an hour
@@ -567,6 +642,10 @@ function stop() {
   if (warmupTimer) { clearTimeout(warmupTimer); warmupTimer = null; }
   lastBroadcastKey = null;
   manual = null;
+  // Drop the plugged-in rule lines too, so a stop()/start() cycle (or the
+  // smoke tests) can't leave a 吃饭提醒 line stranded in the `default`
+  // action's pool with no rule behind it to remove it.
+  resetRuntime();
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +676,7 @@ module.exports = {
   REFRESH_MS,
   BUILTIN_RULES,
   KINDS,
+  RUNTIME_TARGET_ACTION,
 
   // lifecycle
   start,
@@ -612,6 +692,11 @@ module.exports = {
   saveEnabled,
   describeRules,
 
+  // 动态插拔 — the runtime lines currently plugged into `default`'s pool,
+  // re-exported so the settings page can show them without reaching into
+  // pet_action_texts directly.
+  listRuntime: petActionTexts.listRuntime,
+
   // internals, exported for tests
   _internals: {
     loadState,
@@ -622,6 +707,8 @@ module.exports = {
     currentMealWindow,
     dayKeyOf,
     maybeRunOnStart,
+    syncRuntime,
+    resetRuntime,
     ORDERED_RULES,
   },
 };

@@ -1466,6 +1466,102 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   border-radius: 4px;
 }
 
+/* ---- /settings "动作文本" 卡片 ---------------------------------- */
+/* Per-action list of the lines the pet may say while playing it. A line
+   is a removable chip; the add-input sits under the chips so the row
+   grows downward as the user binds more text. Rows with nothing bound
+   still render (showing "未绑定任何文本") — the user needs to see which
+   actions are silent, not only which ones they've already filled in. */
+.action-texts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.action-texts-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(240px, 2.4fr);
+  align-items: start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.action-texts-row:hover { border-color: var(--accent); }
+.action-texts-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.action-texts-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.action-texts-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.action-texts-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.action-texts-chip-text {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.action-texts-chip-x {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-soft, var(--text));
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.action-texts-chip-x:hover {
+  background: var(--danger-soft, rgba(220, 53, 69, 0.12));
+  color: var(--danger, #dc3545);
+}
+.action-texts-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.action-texts-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.action-texts-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .chip.chip-selected {
   background: var(--accent);
   color: #fff;

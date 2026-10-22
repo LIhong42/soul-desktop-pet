@@ -140,9 +140,9 @@ html, body {
 /* ---- Reminder speech bubble (above sprite) ---- */
 .reminder-bubble {
   position: absolute;
-  /* Sprite top edge, not the root's bottom — see .pet-bubble for why a
-     percentage would resolve against the taller window box. The existing
-     margin-bottom below provides the gap from the pet. */
+  /* Sprite TOP edge — see .pet-bubble for why a percentage would resolve
+     against the taller window box. Same anchor as the other two bubbles;
+     the margin-bottom below is the gap between the bubble and the pet. */
   bottom: var(--sprite-h);
   left: 50%;
   transform: translateX(-50%);
@@ -205,9 +205,14 @@ html, body {
    produces a soft line ("周末好~", "今天的你超棒", etc.). */
 .bond-bubble {
   position: absolute;
-  /* Sprite top edge — see .pet-bubble for why a percentage bottom would
-     resolve against the taller window box and push this too high. */
-  bottom: calc(var(--sprite-h) - 4px);
+  /* Sprite TOP edge — the same anchor the other two bubbles use, so a
+     simultaneous burst stays in one column instead of stacking into the
+     pet. The previous `- 4px` tucked the card 4px down over the sprite's
+     box, which reads as covering the character (the sprite PNG has a lot of
+     transparent padding up top, so the overlap is visible). See
+     .pet-bubble for why a percentage bottom would resolve against the
+     taller window box and push this too high. */
+  bottom: var(--sprite-h);
   left: 50%;
   transform: translateX(-50%);
   /* Flat tint rather than the old diagonal gradient: a gradient at this size
@@ -279,7 +284,11 @@ html, body {
    desktop. Colors per-kind live in the accent block below. */
 .pet-bubble {
   position: absolute;
-  bottom: calc(var(--sprite-h) - 6px);
+  /* Sprite TOP edge, not the root's bottom — see the geometry note in this
+     rule's comment block below. The old `- 6px` let the card dip onto the
+     sprite's box; at the sprite's top edge the gap is the tail (5px) plus
+     nothing else, so the pet's head stays clear. */
+  bottom: var(--sprite-h);
   left: 50%;
   transform: translateX(-50%);
   font: 500 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -355,6 +364,18 @@ html, body {
   border: 1px solid #e3e8ee;
 }
 .pet-bubble[data-kind="manual"]::after { border-top-color: #ffffff; }
+
+/* A line the pet picked for itself, from the texts the user bound to this
+   action (main/pet_action_texts.js). Cooler and flatter than the two
+   reminder kinds above on purpose: the system nags (warm meal / green
+   break), the pet just chimes in. A light blue-grey keeps it clearly
+   "involuntary chatter" rather than another notification. */
+.pet-bubble[data-kind="action"] {
+  background: #f2f5fa;
+  color: #3c4a5e;
+  border: 1px solid #dde5f0;
+}
+.pet-bubble[data-kind="action"]::after { border-top-color: #f2f5fa; }
 
 /* ---- Particles (hearts / sparkles / food / etc.) ----
    The main process emits `pet:particle { char, x?, y? }` on cozy

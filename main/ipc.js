@@ -21,6 +21,7 @@ const bondEngine = require('./bond_engine');
 const cozyEngine = require('./cozy_engine');
 const petMoodMod = require('./pet_mood');
 const petActionsConfig = require('./pet_actions_config');
+const petActionTexts = require('./pet_action_texts');
 const petBubbles = require('./pet_bubbles');
 const videoFrameSplit = require('./video_frame_split');
 const autostart = require('./autostart');
@@ -1671,6 +1672,61 @@ function normFreeText(s) {
     return { variants: filtered.loop_variants };
   });
 
+  // ---- 动作 → 文本绑定 ---------------------------------------------
+  //
+  // `get` returns one row per action the user could plausibly bind a line
+  // to, so /settings can render the whole editor from a single call:
+  //   * `actions` — the character variants the active pet's manifest
+  //     declares, plus the trigger ids and right-click cozy actions,
+  //     plus any action that already carries saved texts (so a binding
+  //     survives a pet switch instead of silently disappearing).
+  //   * `runtime` — the lines currently plugged into `default` by a live
+  //     吃饭提醒 / 休息提醒 bubble. Surfaced so the UI can show that the
+  //     plug/unplug is happening rather than looking like a bug.
+  //
+  // `save` takes the whole { texts: { action: [lines] } } map and replaces
+  // it — a full replace rather than a merge, so removing a line in the UI
+  // actually removes it from disk (a merge would make deletions
+  // impossible without a separate delete verb).
+  ipcMain.handle('pet:action_texts:get', (_e, petId) => {
+    const id = resolvePetId(petId);
+    const cfg = petActionTexts.loadConfig(db, id);
+    if (!id) {
+      return { texts: cfg.texts, actions: [], runtime: [], pet_id: null };
+    }
+    // Reuse the *same* manifest-filtered variant list the actions-config
+    // card uses, so a pet that ships e.g. `pat` shows a `pat` row in both
+    // editors. Building it here from the same call the other card makes
+    // keeps the two dropdowns in lockstep without duplicating the
+    // filtering policy.
+    //
+    // Only the character's OWN animations get a row. TRIGGER_DEFS (单击桌宠)
+    // and EFFECT_BINDINGS (右击菜单 · 摸一下/拍头/喂食…) are *user*
+    // interactions, not things the pet performs, so there's no line to
+    // attach to them — the right-click menu already owns its own wording.
+    // Feeding those ids in here is what used to produce those rows.
+    const variants = petActionsConfig.getAvailableVariants(petRegistry, id);
+    return {
+      texts: cfg.texts,
+      actions: petActionTexts.describeActions(db, id, { variants }),
+      // What the bubble engine has plugged into `default` right now.
+      runtime: petActionTexts.listRuntime(petBubbles.RUNTIME_TARGET_ACTION),
+      pet_id: id,
+    };
+  });
+
+  ipcMain.handle('pet:action_texts:save', (_e, petId, cfg) => {
+    const id = resolvePetId(petId);
+    if (!id) throw new Error('未选择桌宠');
+    // `normalizeTexts` inside saveConfig does the validation: drops
+    // non-string / blank lines, de-dupes within an action, and rejects
+    // blank action keys. No manifest filtering here on purpose — a line
+    // bound to a variant the *current* pet doesn't expose must survive so
+    // it comes back when the user switches back to the pet that has it.
+    if (!petActionTexts.saveConfig(db, id, cfg || {})) throw new Error('保存失败');
+    return { ok: true, texts: petActionTexts.loadConfig(db, id).texts };
+  });
+
   // ---- 文本气泡（吃饭提醒 / 休息提醒）----
   //
   // The rule set lives entirely in main/pet_bubbles.js. These handlers only
@@ -2175,6 +2231,12 @@ function normFreeText(s) {
     if (queue && typeof queue.clear === 'function') {
       queue.clear();
     }
+
+    // 6) Drop the action-texts cache. The restore swapped the whole DB file,
+    //    so the memoised `pet_action_texts:<petId>` blobs belong to the old
+    //    database. Without this the pet would keep quoting lines the user
+    //    deleted before the import until the process restarted.
+    petActionTexts.invalidate();
 
     db.setSetting('last_import_at', db.nowStr());
     return { canceled: false };

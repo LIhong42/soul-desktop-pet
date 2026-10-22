@@ -221,6 +221,26 @@ function clearReminderBubble() {
 // before the next tick that would clear it).
 //
 // The payload is `{ text, kind, rule }`; `text: null` means "clear".
+//
+// Two producers share this one slot:
+//   * the rule engine (吃饭提醒 / 休息提醒 / 说句话), via `pet:bubble-changed`
+//   * the action picker (动作绑定的文本), via the `text` field on
+//     `pet:action-changed`
+// They coexist because the second only ever *adds* to the same bubble and
+// the rule engine re-asserts its own text on every tick, so whichever is
+// showing gets refreshed rather than flickering out.
+const ACTION_TEXT_MS = 6_000;
+
+// The bubble kind currently painted, so a silent action can clear "its own"
+// bubble without swallowing a live rule bubble. See clearActionBubbleIfMine.
+function clearActionBubbleIfMine() {
+  if (!ctxBubble || ctxBubble.dataset.kind !== 'action') return;
+  ctxBubble.classList.add('hidden');
+  ctxBubble.classList.remove('fade');
+  ctxBubble.dataset.kind = '';
+  clearTimeout(ctxBubble._timer);
+}
+
 function showContextBubble(payload) {
   if (!ctxBubble) return;
   clearTimeout(ctxBubble._timer);
@@ -401,6 +421,27 @@ if (M.on) {
     if (payload.petId && payload.petId !== currentPetId) {
       currentPetId = payload.petId;
       sprite.dataset.pet = currentPetId;
+    }
+    // 动作自带文本 (main/pet_action_texts.js). The controller sends one
+    // line with every action it starts, already randomly chosen from the
+    // user's bound texts — or `null`, which is a real outcome and happens
+    // even for an action with texts bound ("不展示文本" is always one of
+    // the candidates). Showing it here, in the same bubble slot the rule
+    // engine uses, means an action line and a reminder line never fight
+    // over two different cards.
+    //
+    // `kind: 'action'` gets its own accent in pet.css so the user can tell
+    // "my pet decided to say this" from "the 吃饭提醒 fired".
+    if ('text' in payload) {
+      if (payload.text) {
+        showContextBubble({ text: payload.text, kind: 'action', durationMs: ACTION_TEXT_MS });
+      } else {
+        // No line for this play. Clear only if the bubble is currently
+        // showing an *action* line — a live rule bubble (吃饭提醒) must
+        // survive an action that happened to roll silence, or the pet
+        // would flicker its reminder away mid-hour.
+        clearActionBubbleIfMine();
+      }
     }
     if (payload.oneShotMs && payload.action) {
       // One-shot: play the requested action for `oneShotMs` then notify

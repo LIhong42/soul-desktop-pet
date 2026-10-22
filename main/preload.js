@@ -123,6 +123,14 @@ contextBridge.exposeInMainWorld('mp', {
       save:            (cfg) => ipcRenderer.invoke('pet:actions_config:save', null, cfg || {}),
       getLoopVariants: ()    => ipcRenderer.invoke('pet:loop_variants:get'),
     },
+    // 动作 → 文本绑定 (per-pet). `get()` returns
+    // { texts, actions: [{action, label, texts, runtime}], runtime, pet_id }
+    // so the settings page builds the whole editor from one call;
+    // `save({texts})` replaces the map wholesale.
+    actionTexts: {
+      get:  ()    => ipcRenderer.invoke('pet:action_texts:get'),
+      save: (cfg) => ipcRenderer.invoke('pet:action_texts:save', null, cfg || {}),
+    },
   },
   settings: {
     get: (k) => ipcRenderer.invoke('settings:get', k),
