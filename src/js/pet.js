@@ -284,6 +284,23 @@ const ART_MAX_GROW_STEPS = 6;
 // direction, since it wraps a line early rather than overflowing the white area.
 const ART_CHAR_W = 13;
 
+// Characters of slack to leave on every line.
+//
+// Sizing a line to exactly fill the interior leaves the first and last glyph
+// hard against the drawn frame, and that is where the decoration is: 5.png's
+// end-caps and 7.png's lace trim sit along the very edge of the white area, so
+// a line sized to the full interior width overlaps them and the glyphs collide
+// with the artwork. The interior measurement walks out from the centre and stops
+// at the first *non-white* pixel, so it measures the frame line itself rather
+// than a clear space inside it — meaning "fits the interior" and "fits between
+// the decoration" are not the same width.
+//
+// Two characters is about 26px, which clears the frame stroke plus a little
+// breathing room on each side. It costs one extra wrapped line on a long line,
+// which the proportional growth below absorbs without changing the bubble's
+// shape.
+const ART_LINE_SLACK = 2;
+
 // One line's height, from the 13px/1.5 font the bubble uses. Only needed when
 // there's no layout to measure (see the fallback in applyArtGeometry); the
 // wrapped-height calculation prefers the DOM's own height whenever it exists.
@@ -377,6 +394,10 @@ function applyArtGeometry(box) {
 
   let lines = 1;
   let finalW;
+  // Width of the widest line the box has to hold, *without* the slack — the
+  // measured one on the layout path, the estimate on the fallback. Kept under
+  // one name so the slack floor below is applied identically either way.
+  let lineW;
 
   if (textW > 0 && textH > 0) {
     // The node reports its own padding, so the block height is a whole number of
@@ -386,14 +407,25 @@ function applyArtGeometry(box) {
     lines = Math.max(1, Math.round(textH / ART_LINE_H));
     // Hug the rendered text horizontally, plus the node's own padding — the
     // padding is not in the range's rects but is part of what the box must hold.
-    finalW = Math.max(ART_MIN_W, Math.min(ART_MAX_W, Math.round(textW + padBox)));
+    //
+    // `textW` is the widest *line as rendered*, so it never exceeds what already
+    // fits. The slack is subtracted per character rather than as a flat width so
+    // it scales with the line: what matters is that the first and last glyphs sit
+    // clear of the frame, and that distance is measured in characters.
+    const slackPx = ART_LINE_SLACK * ART_CHAR_W;
+    lineW = textW;
+    finalW = Math.max(ART_MIN_W, Math.min(ART_MAX_W, Math.round(textW + padBox + slackPx)));
   } else {
     // No layout available (hidden ancestor, or a non-rendering environment such
     // as a headless test). Scale by the text's character count, which is all we
     // can know here and is far better than a fixed box.
     const estW = Math.max(ART_MIN_W, Math.min(ART_MAX_W, padBox + raw.length * ART_CHAR_W));
     finalW = estW;
-    const charsPerLine = Math.max(1, Math.floor((estW - padBox) / ART_CHAR_W));
+    lineW = Math.min(raw.length, ART_MAX_GROW_STEPS * ART_MAX_W) * ART_CHAR_W;
+    // The same `ART_LINE_SLACK` the measured path applies, for the same reason:
+    // a line sized to the exact interior width puts its outermost glyphs on the
+    // frame, where some of these drawings carry decoration.
+    const charsPerLine = Math.max(1, Math.floor((estW - padBox) / ART_CHAR_W) - ART_LINE_SLACK);
     lines = Math.max(1, Math.ceil(raw.length / charsPerLine));
   }
 
@@ -419,7 +451,22 @@ function applyArtGeometry(box) {
     if (h2 / ART_LINE_H >= lines) break;
     grow++;
   }
-  finalW = Math.max(ART_MIN_W, Math.min(ART_MAX_W * grow, Math.round(finalW * grow)));
+
+  // Scaling `finalW` up carries the slack up with it — and where the width cap
+  // is the binding constraint, it cancels the slack out exactly, leaving the
+  // outermost glyphs hard against the frame. That is the collision ART_LINE_SLACK
+  // exists to prevent, reintroduced by the growth that was meant to absorb it.
+  //
+  // So re-assert the slack on the scaled width rather than trusting the scaled
+  // one: a line is only ever allowed to fill its box down to the slack. This is
+  // what lets the guarantee hold at every line length — the bubble grows to keep
+  // holding `lines`, and it keeps its clearance while it grows. Beyond
+  // ART_MAX_W * ART_MAX_GROW_STEPS the text no longer fits at the slack, and
+  // ART_TEXT_FLOOR below takes over rather than clipping it.
+  finalW = Math.round(finalW * grow);
+  const slackPx = ART_LINE_SLACK * ART_CHAR_W;
+  const floorW = Math.max(ART_MIN_W, Math.round(lineW + padBox + slackPx));
+  finalW = Math.max(ART_MIN_W, Math.min(ART_MAX_W * ART_MAX_GROW_STEPS, Math.max(finalW, floorW)));
 
   // Height from the interior aspect, so the white area is filled exactly and the
   // text sits centred in it. `grow` has already reserved the room for `lines`,

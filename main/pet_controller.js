@@ -51,10 +51,15 @@ const PET_RENDER_MIN_WIDTH = 48;
 // the pet — ~165px for the shipped 2160×2880 sprite, which fits barely 13
 // CJK characters per line and forced every bubble to wrap awkwardly.
 //
+// Trade-off: this value was 70 before the 25px setting. At 25 the window is
+// 215px wide, so a bubble lays out at ~165px of text — roughly 14 CJK
+// characters per line. Wider bubbles than that wrap sooner, and the window
+// gives up the click-through margin it used to have around the pet.
+//
 // The extra width is transparent and `pointer-events: none` (only
 // .pet-sprite is clickable), so the wider hit box doesn't steal clicks from
 // whatever is behind the pet.
-const BUBBLE_SIDE_ROOM_PX = 70;
+const BUBBLE_SIDE_ROOM_PX = 25;
 
 // The window is deliberately TALLER than the sprite, and the sprite sits at
 // the bottom of it. All three bubbles (reminder / bond / contextual) are
@@ -76,7 +81,13 @@ const BUBBLE_SIDE_ROOM_PX = 70;
 // (see --size-h usage in src/css/pet.css). Must stay in sync with the bubble
 // `bottom` / `max-height` rules in pet.css, which pin the sprite to the
 // bottom of the box and cap bubbles at the headroom.
-const BUBBLE_HEADROOM_PX = 120;
+//
+// At 100px this is exactly the cap every bubble renders against
+// (`max-height: calc(var(--size-h) - var(--sprite-h))`), and the bubble font
+// is 13px/1.5 — a 19.5px line — so a bubble fits ~5 lines. This value was 120
+// before the 25px side-room / 60px headroom pass, which allowed ~6. Longer
+// text is clipped, not scrolled (pet.css sets `overflow: hidden` deliberately).
+const BUBBLE_HEADROOM_PX = 100;
 
 // ---- Movement profiles ----
 //

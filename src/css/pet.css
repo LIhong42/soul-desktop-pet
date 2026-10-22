@@ -271,7 +271,8 @@ html, body {
      - `bottom` is anchored to --sprite-h, NOT a percentage. These bubbles are
        children of .pet-root, whose height is the whole window
        (--size-h = sprite + bubble headroom), so `bottom: 100%` resolves
-       against 340px and pushes the bubble ~116px above the window.
+       against the full window height and pushes the bubble a whole sprite
+       height above the window.
      - `max-width` is the WINDOW width. The window is wider than the pet by
        BUBBLE_SIDE_ROOM_PX so a 2160×2880 sprite (165px wide) still has room
        for a readable bubble; a bubble wider than that gets cropped sideways

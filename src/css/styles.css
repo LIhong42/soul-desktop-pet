@@ -1510,7 +1510,32 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   align-items: center;
   gap: 8px;
 }
+/* ---------------------------------------------------------------------------
+   文本框 picker
+   ---------------------------------------------------------------------------
+   Self-drawn rather than a native <select>, because a <select> renders its own
+   option list and offers no way to put an image in an option — the user could
+   only ever see a filename and pick blind. These rules draw both the trigger
+   (current choice, as a thumbnail) and the panel (every option, as a grid of
+   thumbnails). */
+
+/* Positioning context for the panel: the trigger is the flow element, the panel
+   is absolutely positioned against this. `position: relative` on the wrap is
+   also what keeps the panel from being clipped by a card with overflow set. */
+.action-texts-boxwrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The trigger. A button rather than a <select> so it can show artwork; the
+   default button chrome is dropped and rebuilt from the card's own tokens so
+   it reads as a form control, not a UI action. */
 .action-texts-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font: inherit;
   font-size: 13px;
   padding: 4px 8px;
@@ -1518,46 +1543,184 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   border-radius: 6px;
   background: var(--bg);
   color: var(--text);
-  max-width: 220px;
+  cursor: pointer;
+  max-width: 260px;
 }
-.action-texts-box:focus {
-  outline: none;
+.action-texts-box:hover {
   border-color: var(--accent);
 }
-/* <select> + preview thumbnail. Inline-flex so the thumbnail sits flush against
-   whichever side of the select the browser renders it on. */
-.action-texts-boxwrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.action-texts-box:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
-/* The preview frame stands in for the bubble; the canvas is overscaled inside
-   it and offset so the drawn bubble fills the frame.
+.action-texts-box-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.action-texts-box-caret {
+  font-size: 10px;
+  opacity: 0.6;
+  flex: none;
+}
+
+/* One bubble thumbnail: the frame stands in for the bubble and the canvas is
+   overscaled inside it, then pulled back by the canvas's measured transparent
+   margins so the drawn bubble's own edge lands on the frame's edge.
 
    This mirrors the pet window's crop exactly (see .pet-bubble.has-art in
-   pet.css): the canvas is drawn at `k × frame` and pulled back by the canvas's
-   transparent margins, which lands the bubble's own edge on the frame's edge.
-   `transform-origin: top left` plus a negated offset is what makes that exact
-   rather than approximate — centring with translate() would only line up if the
-   margins were symmetric, and they aren't (3.png's tail sits bottom-left). */
-.action-texts-boxprev {
+   pet.css): `transform-origin: top left` plus a negated offset is what makes it
+   exact rather than approximate — centring with translate() would only line up
+   if the margins were symmetric, and they aren't (3.png's tail sits
+   bottom-left).
+
+   Sized from `--thumb-w` / `--thumb-ar` so a 2.45:1 bubble reads as a wide
+   sliver and a 1.5:1 one as a stubbier box, instead of every option being
+   cropped to the same square and losing the proportion that distinguishes
+   them. The width is capped in JS for the same reason. */
+.action-texts-thumb {
   position: relative;
   display: inline-block;
-  width: 64px;
-  height: 42px;
+  flex: none;
+  width: var(--thumb-w, 62%);
+  aspect-ratio: var(--thumb-ar, 1.6);
   overflow: hidden;
   vertical-align: middle;
 }
-.action-texts-boxprev > img {
+/* Sized per axis so the whole drawing fits inside the frame.
+   `--prev-wv`/`--prev-wh` are the two independent scales: the canvas is square
+   but the frame is the drawing's aspect, so one shared percentage would squash
+   it and `overflow: hidden` would slice the decoration off (3.png's speech tail
+   went missing this way). `--prev-w` is the smaller of the two, so whichever
+   axis is tighter is the one that decides the fit. */
+.action-texts-thumb > img {
   position: absolute;
-  width: var(--prev-w, 125%);
-  height: var(--prev-w, 125%);
+  width: var(--prev-wv, 125%);
+  height: var(--prev-wh, 125%);
   max-width: none;
   left: calc(var(--prev-left, 10%) * -1);
   top: calc(var(--prev-top, 25%) * -1);
   transform-origin: top left;
   object-fit: fill;
   pointer-events: none;
+}
+/* The CSS-drawn bubble, so "默认" is a picture too rather than the one option
+   the user has to imagine. Deliberately crude — it reads as "a plain rounded
+   box with a tail", which is exactly what the pet draws. */
+.action-texts-thumb-default {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 62%;
+  aspect-ratio: 1.6;
+  border-radius: 10px;
+  background: #fff;
+  border: 1.5px solid #cfd4da;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  position: relative;
+}
+/* The tail. A CSS triangle under the box, matching the ::after the pet draws. */
+.action-texts-thumb-default::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 22%;
+  border: 5px solid transparent;
+  border-top-color: #cfd4da;
+}
+/* Stands in for a thumbnail that can't be drawn (an id whose PNG is gone). */
+.action-texts-thumb-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1.6;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+/* The panel. Absolutely positioned over the card so it doesn't reflow the row
+   it belongs to, and scrollable because a pet with many text boxes would
+   otherwise run off the bottom of the window. */
+.action-texts-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  /* Shown only while its picker is open. `data-open` is the single source of
+     truth for that state — the `hidden` attribute is kept in sync by the JS for
+     assistive tech, but styling off it wouldn't work: `display: grid` is an
+     author rule and beats the UA's `[hidden] { display: none }`, which is how
+     every panel ended up rendered open at once, stacked over each other. */
+  display: none;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  min-width: 300px;
+  max-width: 420px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.action-texts-boxwrap[data-open] .action-texts-panel {
+  display: grid;
+}
+/* `data-drop=up` is set by openTextBoxPanel when the panel would overflow the
+   bottom of the window and there's more room above. */
+.action-texts-boxwrap[data-drop='up'] .action-texts-panel {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+/* One option. A button so it's keyboard-reachable and announces as an option;
+   the checkered background behind each thumbnail is what shows the bubble's
+   transparent margin is being cropped away. */
+.action-texts-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.action-texts-cell:hover {
+  background: rgba(127, 127, 127, 0.08);
+  border-color: var(--border);
+}
+.action-texts-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.action-texts-cell.is-on {
+  border-color: var(--accent);
+  background: rgba(127, 127, 127, 0.12);
+}
+/* An id whose artwork is missing: shown so the user can see what's stored, not
+   selectable, and greyed so it doesn't read as a live choice. */
+.action-texts-cell.is-orphan {
+  cursor: default;
+  opacity: 0.65;
+}
+.action-texts-cell.is-orphan:hover {
+  background: transparent;
+  border-color: transparent;
+}
+.action-texts-cell-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .action-texts-chips {
   display: flex;

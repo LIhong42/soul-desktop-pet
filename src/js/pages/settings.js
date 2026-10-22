@@ -285,51 +285,127 @@ let _actionTextsRows = null;
 // per-row dropdown and the rule-bubble dropdown build off it.
 let _textBoxes = [];
 
-// One <select> over the catalog, with the CSS-drawn bubble as the first option.
+// One cell of the picker: the bubble artwork, cropped and scaled to fit.
 //
-// `value` is the currently-selected id ('' = default). A selected id that
-// isn't in the catalog — the PNG was deleted, or the config came from another
-// machine — is added as an extra option marked unavailable, so the dropdown
-// shows the honest stored value instead of silently snapping to 默认 and
-// making the user think their choice was never saved. Saving without touching
-// it keeps the id, so dropping the PNG back in restores the bubble.
-function renderTextBoxSelect(name, value) {
-  const sel = (v) => String(v || '') === String(value || '') ? ' selected' : '';
-  const orphans = (value && !_textBoxes.some((b) => b.id === value))
-    ? `<option value="${escapeHtml(value)}"${sel(value)} selected>${escapeHtml(value)}（当前不可用）</option>`
-    : '';
-  return `<span class="action-texts-boxwrap">
-      <select class="action-texts-box" data-box-select="${escapeHtml(name)}">
-        <option value=""${sel('')}>默认</option>
-        ${orphans}
-        ${_textBoxes.map((b) => `
-          <option value="${escapeHtml(b.id)}"${sel(b.id)}>${escapeHtml(b.label)}</option>
-        `).join('')}
-      </select>
-      ${renderTextBoxPreview(value)}
+// The geometry behind this is the same one the pet window uses (see
+// main/pet_text_boxes.js and .pet-bubble.has-art in pet.css): the 2048×2048
+// canvas has the bubble in a middle band with 4–19% transparent margin on each
+// side and 23–33% above/below, so the raw canvas is mostly empty. `geom` rides
+// in the payload because the crop needs those margins.
+//
+// Deliberately just the frame, with no sample text laid over it. The point of
+// the grid is to let the user compare the *artwork* — a comic burst against a
+// plain rounded box — and overlaying a line of text on every one of them put a
+// repeated string across all seven and made the harder-to-read art (3's heavy
+// black frame, 7's lace trim) harder still to judge. The bubble's own white
+// interior already shows where text will go.
+function renderTextBoxThumb(box) {
+  const g = box.geom || {};
+  const visW = 100 - (g.left || 10) - (g.right || 10);
+  const visH = 100 - (g.top || 25) - (g.bottom || 25);
+  // A drawn bubble with no measurement gets the conservative fallback aspect
+  // rather than being squashed into a square it probably doesn't have.
+  const aspect = Number.isFinite(g.aspect) && g.aspect > 0 ? g.aspect : 1.6;
+
+  // Scale by the *smaller* visible fraction, so the whole drawing fits.
+  //
+  // Scaling by the larger one (as the pet window does, where the box is sized
+  // to the text and the overflow is allowed to hang outside) fills the frame on
+  // that axis and overflows the other, and `overflow: hidden` then cuts the
+  // decoration off: 3.png's speech tail and 2.png's bottom-left corner were
+  // sliced off mid-shape, so the user was picking a cropped picture of a bubble.
+  //
+  // Both axes must be expressed as percentages of their own dimension for the
+  // image to keep the drawing's proportions — hence two variables rather than
+  // one, unlike the pet where the box and the canvas are sized independently.
+  const kW = (100 / visW) * 100;
+  const kH = (100 / visH) * 100;
+
+  // The crop offsets have to be scaled by the same factor as the axis they
+  // apply to. A margin is a fraction of the *canvas*, but `left`/`top` resolve
+  // against the *frame*, and one canvas unit is now kW/100 (or kH/100) frame
+  // units — so the same 18.95% of canvas is 26.2% of a frame the image is 138%
+  // of. Feeding the raw margin in slides the image off-centre and pushes the
+  // drawing out of the crop box: bubble 3 lost its tail to the top edge.
+  const offX = ((g.left || 10) * kW) / 100;
+  const offY = ((g.top || 25) * kH) / 100;
+
+  // Fit inside the cell with a little breathing room, so a bubble whose drawing
+  // is nearly as wide as the cell (5.png is 90% of its canvas) doesn't sit flush
+  // against the cell edge and read as cut off. Sized off the smaller of the two
+  // scales — whichever axis is tighter is what decides the fit.
+  const k = Math.min(kW, kH) * 0.94;
+
+  // Cap the width: 5.png is a 2.45:1 sliver, and at an uncapped cell width it
+  // renders as a hairline the user can't tell apart from the box outline.
+  const w = Math.min(100, 62 * aspect);
+  return `<span class="action-texts-thumb"
+      style="--prev-w:${k}%;--prev-wv:${kW}%;--prev-wh:${kH}%;
+             --prev-left:${offX}%;--prev-top:${offY}%;
+             --thumb-w:${w}%;--thumb-ar:${aspect}">
+      <img alt="" draggable="false" src="${escapeHtml(box.url)}">
     </span>`;
 }
 
-// A thumbnail of the chosen bubble, cropped to the drawn bubble exactly the way
-// the pet window crops it (same `geom`, same scale — see main/pet_text_boxes.js).
+// The CSS-drawn bubble, rendered the way the pet renders it when no text box
+// is chosen — so "默认" is a *picture* too, rather than the one option in the
+// list the user has to imagine.
+function renderDefaultThumb() {
+  return `<span class="action-texts-thumb action-texts-thumb-default"></span>`;
+}
+
+// The whole picker: a button showing the current choice by name, plus the
+// popover grid of every option drawn as its bubble.
 //
-// Without this the dropdown is a list of bare numbers, so picking one is a
-// guess; the art is 2048×2048 with a bubble in the middle, so showing the raw
-// canvas would show mostly empty space. The scale/offset here are the same
-// arithmetic the renderer applies, which is why `geom` travels in the payload.
-function renderTextBoxPreview(value) {
-  const hit = _textBoxes.find((b) => b.id === value);
-  if (!hit || !hit.geom) return '';
-  const g = hit.geom;
-  const visW = 100 - g.left - g.right;
-  const visH = 100 - g.top - g.bottom;
-  const k = 100 / Math.max(visW, visH);
-  // The preview frame is the bubble; the canvas is overscaled inside it and
-  // offset so the drawn bubble lands in the frame — the same arithmetic the
-  // pet window applies, which is why `geom` rides in the payload.
-  return `<span class="action-texts-boxprev"
-      style="--prev-w:${k}%;--prev-left:${g.left}%;--prev-top:${g.top}%">
-      <img alt="" draggable="false" src="${escapeHtml(hit.url)}">
+// This replaced a native <select>. A <select> renders its own option list and
+// offers no hook to put an image in an option, so the only thing it could show
+// was a list of bare filenames — the user had to pick a number and go find out
+// what it looked like. Self-drawing the trigger and the panel is what makes
+// every style previewable before it's chosen.
+//
+// `name` is the form key ('rule' for the reminder bubbles, else the action).
+// `value` is the currently-selected id ('' = default). An id that isn't in the
+// catalog — the PNG was deleted, or the config came from another machine — gets
+// its own cell marked unavailable rather than silently snapping to 默认, which
+// would read as "my choice was never saved". Saving without touching it keeps
+// the id, so dropping the PNG back in restores the bubble.
+function renderTextBoxSelect(name, value) {
+  const cur = String(value == null ? '' : value);
+  const hit = _textBoxes.find((b) => b.id === cur);
+  const orphan = cur && !hit;
+  const triggerName = hit ? hit.label : (orphan ? `${cur}（当前不可用）` : '默认');
+
+  const cells = [
+    `<button type="button" class="action-texts-cell${cur === '' ? ' is-on' : ''}"
+        data-box-pick="" role="option" aria-selected="${cur === ''}">
+      ${renderDefaultThumb()}<span class="action-texts-cell-name">默认</span>
+    </button>`,
+    ..._textBoxes.map((b) => `
+      <button type="button" class="action-texts-cell${b.id === cur ? ' is-on' : ''}"
+          data-box-pick="${escapeHtml(b.id)}" role="option" aria-selected="${b.id === cur}">
+        ${renderTextBoxThumb(b)}<span class="action-texts-cell-name">${escapeHtml(b.label)}</span>
+      </button>`),
+    ...(orphan ? [`<button type="button" class="action-texts-cell is-on is-orphan"
+        data-box-pick="${escapeHtml(cur)}" role="option" aria-selected="true">
+      <span class="action-texts-thumb"><span class="action-texts-thumb-missing">?</span></span>
+      <span class="action-texts-cell-name">${escapeHtml(cur)}（当前不可用）</span>
+    </button>`] : []),
+  ].join('');
+
+  // Collapsed, this is just a dropdown with the chosen name — no artwork. A
+  // thumbnail here would put seven bubble images into a list of action rows,
+  // where the row's job is to say *which* box is set, not to show it again; the
+  // panel is where the pictures belong, one click away. It also keeps the rows
+  // a uniform height instead of alternating tall-with-image / short-without.
+  return `<span class="action-texts-boxwrap" data-box-name="${escapeHtml(name)}">
+      <button type="button" class="action-texts-box" data-box-toggle="1"
+          aria-haspopup="listbox" aria-expanded="false">
+        <span class="action-texts-box-name">${escapeHtml(triggerName)}</span>
+        <span class="action-texts-box-caret" aria-hidden="true">▾</span>
+      </button>
+      <span class="action-texts-panel" data-box-panel hidden role="listbox">
+        ${cells}
+      </span>
     </span>`;
 }
 
@@ -357,16 +433,28 @@ async function renderActionTextsCard() {
   }
   // 文本框 catalog + the two selections that go with it. `textBoxes` is the
   // list main/pet_text_boxes.js scanned out of resources/text_boxes; it's empty
-  // on an install with no art, in which case every dropdown below is disabled
-  // and the feature is simply absent rather than broken.
-  _textBoxes = (snapshot && snapshot.texts !== undefined && snapshot.textBoxes) || [];
+  // on an install with no art, in which case the picker is simply absent rather
+  // than broken.
+  _textBoxes = (Array.isArray(snapshot && snapshot.textBoxes) ? snapshot.textBoxes : [])
+    // The catalog is only ever consumed as `{id, label, url, geom}`; anything
+    // else would render as "[object Object]" in the grid rather than failing
+    // visibly here.
+    .filter((b) => b && typeof b.id === 'string' && b.id);
+  // `ruleBox` arrives **resolved**, not as a bare id: main/pet_bubbles.js
+  // loadRuleBox returns `petTextBoxes.resolve(...)` — `{ id, url, geom }` or
+  // null. Everything below works in ids (that's what gets persisted, and what
+  // the catalog is keyed by), so unwrap it here. Passing the object straight
+  // through is what produced a phantom "（当前不可用）" option labelled
+  // "[object Object]" and, on save, a stored id of "[object Object]".
+  const ruleRaw = snapshot && snapshot.ruleBox;
+  const ruleId = (ruleRaw && typeof ruleRaw === 'object') ? (ruleRaw.id || '') : (ruleRaw || '');
   const formBoxes = {};
   for (const k of Object.keys((snapshot && snapshot.boxes) || {})) {
     formBoxes[k] = String((snapshot.boxes[k]) || '');
   }
   // The 吃饭提醒 / 休息提醒 box is a single user-level choice, kept here as a
   // scalar on the same form so the card has one save button.
-  _actionTextsForm = { texts: formTexts, boxes: formBoxes, ruleBox: (snapshot && snapshot.ruleBox) || '' };
+  _actionTextsForm = { texts: formTexts, boxes: formBoxes, ruleBox: ruleId };
 
   if (_actionTextsRows.length === 0) {
     body.innerHTML = `<div class="empty">当前桌宠没有可配置文本的动作。</div>`;
@@ -427,16 +515,22 @@ async function renderActionTextsCard() {
         for (const k of Object.keys(r.texts)) next[k] = (r.texts[k] || []).slice();
         const nextBoxes = {};
         for (const k of Object.keys(r.boxes || {})) nextBoxes[k] = r.boxes[k];
+        // `ruleBox` comes back resolved (`{id, url, geom}`) or null, matching
+        // the get() payload — unwrap it the same way the initial render does,
+        // or the form would hold an object and the picker would label it
+        // "[object Object]" on the very next repaint.
+        //
+        // A null ruleBox means "the stored id doesn't resolve on this machine".
+        // Keep showing the id we asked for so the unavailable cell explains
+        // itself instead of silently reverting to 默认.
+        const savedRule = (r.ruleBox && typeof r.ruleBox === 'object') ? r.ruleBox.id : r.ruleBox;
         // Rebase the form on what the main side actually stored, not on what
         // we asked for: normalizeBoxes drops blanks, so a form still holding
         // them would drift from the DB and re-add them on the next save.
         _actionTextsForm = {
           texts: next,
           boxes: nextBoxes,
-          // A null ruleBox means "the stored id doesn't resolve on this
-          // machine". Keep showing the real id so the orphan option in the
-          // dropdown explains itself instead of silently reverting to 默认.
-          ruleBox: (r.ruleBox && r.ruleBox.id) || _actionTextsForm.ruleBox || '',
+          ruleBox: savedRule || _actionTextsForm.ruleBox || '',
         };
       }
       if (status) status.textContent = '已保存 · 改动会立即生效';
@@ -532,34 +626,147 @@ function wireActionTextsList(body) {
     rerenderActionTextsList();
   };
 
-  // 文本框 dropdowns. Bound on `change` rather than `click` because a <select>
-  // fires click on the opening and each option; `change` fires once, with the
-  // final value.
+  // 文本框 picker. Bound on `click` rather than `change` because these are
+  // buttons, not a <select> — there is no change event to wait for.
   //
-  // Mutates the form but does NOT re-render the list: the dropdown is already
+  // Mutates the form but does NOT re-render the list: the picker is already
   // showing the chosen value, and replacing the rows mid-interaction would
-  // collapse the menu under the cursor. The row repaints on the next chip edit.
-  list.onchange = (e) => {
-    const sel = e.target.closest('[data-box-select]');
-    if (!sel) return;
-    setTextBox(sel.getAttribute('data-box-select'), sel.value);
+  // collapse the panel under the cursor. The row repaints on the next chip edit.
+  //
+  // The rule-bubble picker lives outside the list container (it's in the card
+  // header), so the handlers below are bound on `body` — the one node that
+  // contains both — rather than being split across two roots.
+  wireTextBoxPickers(body);
+}
+
+// ---------------------------------------------------------------------------
+// 文本框 picker behaviour
+// ---------------------------------------------------------------------------
+//
+// Three concerns, all delegated off `root` so they survive the card's
+// innerHTML re-renders: which picker is open, closing it when the user moves
+// away, and applying a pick.
+//
+// The panel is a popover, not a listbox the browser positions: the grid has to
+// lay out in document flow to size its cells from the bubble art, and the card
+// is narrow enough that the panel has to be able to flip below the trigger near
+// the bottom of the window.
+function wireTextBoxPickers(root) {
+  closeTextBoxPanels();
+
+  root.onclick = (e) => {
+    const toggle = e.target.closest('[data-box-toggle]');
+    if (toggle) {
+      const wrap = toggle.closest('.action-texts-boxwrap');
+      if (!wrap) return;
+      // Re-clicking the open trigger closes it. Handled here rather than by
+      // falling through to the outside-click close below, because that close
+      // would run *and* this handler would then reopen the panel.
+      if (wrap.hasAttribute('data-open')) { closeTextBoxPanels(); return; }
+      openTextBoxPanel(wrap);
+      return;
+    }
+
+    const cell = e.target.closest('[data-box-pick]');
+    if (cell) {
+      const wrap = cell.closest('.action-texts-boxwrap');
+      if (!wrap) return;
+      // An unavailable cell is displayed, not selectable: it stands for an id
+      // whose PNG is gone. Clicking it would keep the id (harmless — the pet
+      // degrades to the CSS bubble) but silently repainting the trigger with a
+      // real thumbnail would imply the art is back.
+      if (cell.classList.contains('is-orphan')) { closeTextBoxPanels(); return; }
+      setTextBox(wrap.getAttribute('data-box-name'), cell.getAttribute('data-box-pick'));
+      // Repaint just this picker rather than the whole card: a full re-render
+      // would tear down the panel under the cursor mid-click.
+      paintTextBoxPicker(wrap);
+      closeTextBoxPanels();
+      return;
+    }
+
+    // A click anywhere else closes whatever is open.
+    closeTextBoxPanels();
   };
 
-  // The rule-bubble dropdown lives outside the list container (it's the card
-  // header), so it needs its own listener rather than riding the delegation
-  // above.
-  const ruleSel = body.querySelector('[data-box-select="rule"]');
-  if (ruleSel) {
-    ruleSel.onchange = () => { _actionTextsForm.ruleBox = ruleSel.value; };
+  // Escape closes, matching what a popover is expected to do. Bound on the
+  // document rather than `root` because the open panel may be anywhere in the
+  // card, and the key can land anywhere.
+  if (!_textBoxEscBound) {
+    _textBoxEscBound = true;
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeTextBoxPanels();
+    });
   }
+}
+
+// Bound-once guard for the Escape listener; see wireTextBoxPickers.
+let _textBoxEscBound = false;
+
+function openTextBoxPanel(wrap) {
+  // One panel at a time: opening a second closes the first, so two pickers
+  // never overlap over the card (and over each other's triggers).
+  closeTextBoxPanels();
+  wrap.setAttribute('data-open', '');
+  const toggle = wrap.querySelector('[data-box-toggle]');
+  if (toggle) toggle.setAttribute('aria-expanded', 'true');
+  const panel = wrap.querySelector('[data-box-panel]');
+  if (panel) panel.hidden = false;
+  // Flip below the trigger when there isn't room above. Measured after the
+  // panel is visible — otherwise it has no height to compare against.
+  if (panel) {
+    const pRect = panel.getBoundingClientRect();
+    const tRect = (toggle || wrap).getBoundingClientRect();
+    if (pRect.height && tRect.bottom + pRect.height > window.innerHeight - 8 && tRect.top > pRect.height) {
+      wrap.setAttribute('data-drop', 'up');
+    }
+  }
+}
+
+function closeTextBoxPanels() {
+  document.querySelectorAll('.action-texts-boxwrap[data-open]').forEach((w) => {
+    w.removeAttribute('data-open');
+    w.removeAttribute('data-drop');
+    const t = w.querySelector('[data-box-toggle]');
+    if (t) t.setAttribute('aria-expanded', 'false');
+    const p = w.querySelector('[data-box-panel]');
+    if (p) p.hidden = true;
+  });
+}
+
+// Repaint one picker to reflect a new choice, without touching the rest of the
+// card. Only the cheap parts are updated in place: the trigger's thumbnail and
+// name, plus the `is-on` marks in the grid. Re-rendering the whole grid would
+// re-fetch every PNG, which is the one thing the previews made expensive.
+function paintTextBoxPicker(wrap) {
+  const name = wrap.getAttribute('data-box-name');
+  const value = name === 'rule'
+    ? (_actionTextsForm ? _actionTextsForm.ruleBox : '')
+    : (_actionTextsForm && _actionTextsForm.boxes ? (_actionTextsForm.boxes[name] || '') : '');
+  const cur = String(value == null ? '' : value);
+  const hit = _textBoxes.find((b) => b.id === cur);
+  const orphan = cur && !hit;
+
+  const toggle = wrap.querySelector('[data-box-toggle]');
+  const label = toggle && toggle.querySelector('.action-texts-box-name');
+  if (label) {
+    label.textContent = hit ? hit.label : (orphan ? `${cur}（当前不可用）` : '默认');
+  }
+  // Only the label and the grid's highlight change: the collapsed trigger
+  // carries no artwork to swap (see renderTextBoxSelect).
+
+  wrap.querySelectorAll('[data-box-pick]').forEach((c) => {
+    const on = String(c.getAttribute('data-box-pick') || '') === cur;
+    c.classList.toggle('is-on', on);
+    c.setAttribute('aria-selected', String(on));
+  });
 }
 
 // Record a 文本框 choice into the in-memory form. An empty value deletes the
 // key rather than storing '', so "默认" and "never set" are the same state —
 // matching how an emptied text list is stored.
 function setTextBox(name, value) {
-  if (!_actionTextsForm) return;
-  const id = String(value || '');
+  if (!_actionTextsForm || !name) return;
+  const id = String(value == null ? '' : value);
   if (name === 'rule') { _actionTextsForm.ruleBox = id; return; }
   if (id) _actionTextsForm.boxes[name] = id;
   else delete _actionTextsForm.boxes[name];

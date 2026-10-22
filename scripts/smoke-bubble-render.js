@@ -117,17 +117,31 @@ function bootWithLayout(measure, boxId = '1') {
       const s = text.textContent || '';
       const h = measure(s).height;
       const lines = Math.max(1, Math.round(h / 20));
-      const perLine = Math.max(1, Math.ceil([...s].length / lines));
       // One rect per line, so the widest line sets the natural width — which is
       // exactly what a wrapped block reports.
       const rects = [];
       for (let i = 0; i < lines; i++) {
-        const n = Math.min(perLine, [...s].length - i * perLine);
-        rects.push({ width: Math.max(0, n) * 13, height: 20, top: i * 20, left: 0, right: n * 13, bottom: i * 20 + 20 });
+        const n = wrappedWidth(s, lines, i);
+        rects.push({ width: n, height: 20, top: i * 20, left: 0, right: n, bottom: i * 20 + 20 });
       }
       return rects;
     },
   });
+
+  // Width of line `i` of `s` when it has been wrapped into `lines` lines.
+  //
+  // Lines are filled greedily, the way a browser breaks CJK text — every line
+  // but the last holds the same number of characters, and only the remainder
+  // spills onto the final line. Deriving this from `lines` (rather than assuming
+  // a fixed capacity) is what lets the harness model wrapping as a feedback
+  // loop: the wider box the code picks admits fewer lines, and the line width
+  // the Range reports shrinks with it. A hard-coded capacity per paint would
+  // instead let the stub contradict whatever width the code had just chosen.
+  const wrappedWidth = (s, lines, i) => {
+    const chars = [...s].length;
+    const perLine = Math.max(1, Math.ceil(chars / lines));
+    return Math.max(0, Math.min(perLine, chars - i * perLine)) * 13;
+  };
   const paintWithBox = (payload) => w.paint({
     durationMs: 100, kind: 'action',
     box: require(path.join(ROOT, 'main', 'pet_text_boxes.js')).resolve(null, boxId),
@@ -321,6 +335,60 @@ check('the bubble is sized from the text, not a fixed square', () => {
     // element must carry a concrete size rather than the old fixed 168px.
     assert.ok(!/168px/.test(shortW), `must not be the old fixed size: ${shortW}`);
   } finally { w.close(); }
+});
+
+check('every line leaves clearance for the frame decoration', () => {
+  // A line sized to exactly fill the interior puts its outermost glyphs hard
+  // against the drawn frame — 0px of clearance — and that is precisely where
+  // several of these drawings carry decoration (5.png's end-caps, 7.png's lace
+  // trim), so the text overlapped the artwork.
+  //
+  // The interior measurement stops at the first non-white pixel, i.e. at the
+  // frame stroke itself, so "fits the interior" and "fits inside the decoration"
+  // are different widths. ART_LINE_SLACK buys the difference, in characters.
+  //
+  // What has to hold is not "the box is N px wider than the ink" but "a line
+  // laid out at this box's width still has the slack beside it". Those differ:
+  // once the text wraps, the widest *line* is shorter than the whole string, and
+  // comparing against the whole string is what silently reintroduces the
+  // collision. So the check re-derives the wrap at the final width and asks for
+  // clearance around the resulting full line.
+  //
+  // The stub feeds the chosen width back in as the next paint's capacity, which
+  // is what makes this a loop rather than a fixed guess: a box too narrow to
+  // hold its line plus slack reports more lines, the code grows it, and the
+  // widths are re-derived until they agree.
+  const CHAR_W = 13, PAD = 28, LINE_H = 20, SLACK_MIN = 20;
+  const capacityAt = (boxW) => Math.max(1, Math.floor((boxW - PAD - SLACK_MIN) / CHAR_W));
+
+  // Every shipped box, and every length from one character to four full lines'
+  // worth. A handful of hand-picked strings would only prove the cases someone
+  // thought of — the failure mode here is arithmetic on the width cap, and that
+  // bites at particular lengths (just under, and well over, ART_MAX_W), which is
+  // exactly what a sweep finds and a spot-check misses.
+  for (const boxId of ['1', '2', '3', '4', '5', '6', '7']) {
+    let boxW = 120;
+    const measure = (s) => {
+      const lines = Math.max(1, Math.ceil([...s].length / capacityAt(boxW)));
+      return { width: 0, height: lines * LINE_H };   // width comes from the Range
+    };
+    const w = bootWithLayout(measure, boxId);
+    try {
+      for (let n = 1; n <= 40; n++) {
+        w.paint({ text: '字'.repeat(n) });
+        const width = parseFloat(w.bubble.style.width);
+        // Re-wrap at the width the code actually chose, with the slack reserved.
+        const capacity = capacityAt(width);
+        const lines = Math.max(1, Math.ceil(n / capacity));
+        const widest = Math.min(capacity, n) * CHAR_W;
+        const slack = width - PAD - widest;
+        assert.ok(slack >= SLACK_MIN,
+          `box ${boxId}, ${n} chars: ${width}px box, ${lines} line(s) of up to ` +
+          `${capacity} chars, leaves only ${slack.toFixed(0)}px clearance around a ${widest}px line`);
+        boxW = width;
+      }
+    } finally { w.close(); }
+  }
 });
 
 check('the height follows the measured aspect ratio, or the text if taller', () => {
