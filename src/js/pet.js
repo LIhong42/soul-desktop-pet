@@ -444,16 +444,19 @@ if (M.on) {
       }
     }
     if (payload.oneShotMs && payload.action) {
-      // One-shot: play the requested action for `oneShotMs` then notify
-      // the controller via `pet:action_ended` so it can drop back to
-      // `default` and re-roll the next loop action by probability
-      // (default 70% / movement 15% / other 15%). The controller passes
-      // `loop: false` for both movement and cozy one-shots, so the
-      // frame sequence plays exactly once and `FrameAnimator.onEnded`
-      // fires here when the last frame finishes — that's our
-      // authoritative "action done" signal. The controller's
-      // `actionUntil` timer is a defensive backstop for the rare case
-      // where this IPC never lands.
+      // One-shot: play the requested action through to the end of its
+      // frame sequence, then notify the controller via `pet:action_ended`
+      // so it can drop back to `default` and re-roll the next loop action
+      // by probability (default 70% / movement 15% / other 15%).
+      //
+      // `oneShotMs` is used here ONLY as a truthiness marker that
+      // distinguishes a one-shot from a plain loop broadcast — it is not
+      // a timer. The animation's length is decided entirely by the frames
+      // themselves (Σ frames[i].ms inside `FrameAnimator`), so an action
+      // always plays in full no matter what number the controller sent.
+      // The controller passes `loop: false` for both movement and cozy
+      // one-shots, so the sequence plays exactly once and `onEnded` fires
+      // when the last frame finishes — the authoritative "action done".
       playVariant(payload.action, payload.direction || currentDirection, {
         forceLoop: (typeof payload.loop === 'boolean') ? payload.loop : undefined,
         onEnded: () => {

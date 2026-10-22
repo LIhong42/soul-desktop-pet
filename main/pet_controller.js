@@ -23,6 +23,17 @@ const petActionTexts = require('./pet_action_texts');
 
 const TICK_MS = 100;
 
+// Lost-IPC watchdog for one-shot animations, see `tick()`.
+//
+// An action's real duration comes only from its frame sequence — the
+// renderer plays every frame and calls back. This constant is NOT an
+// animation length: it is the point past which we conclude the callback
+// never arrived (renderer crash / dropped IPC) and the pet is frozen
+// rather than busy. Set far above the longest realistic sequence — the
+// imported VioletMoon `dancing` is 61 frames ≈ 12.2s — so it can never
+// truncate a real animation.
+const ONE_SHOT_WATCHDOG_MS = 5 * 60_000;
+
 // Render height is fixed; width is computed from the active pet's
 // `manifest.defaultSize` so the character fits the window without any
 // letterboxing. Built-in pets declare 768×832 (≈ 0.92 wide:tall) and end up
@@ -260,6 +271,15 @@ class PetController {
     this.actionDirection = 1;  // -1 = left, +1 = right
     this.actionStepVel = 1;    // px per tick while walking
     this.actionUntil = 0;
+    // True while a user-triggered one-shot is playing. `tick()` skips its
+    // autonomous re-roll entirely while this is set, so an action always
+    // plays its full frame sequence and only ends when the renderer
+    // reports `pet:action_ended` (which clears this flag).
+    this._oneShot = false;
+    // When `_oneShot` was set, so `tick()` can distinguish "still playing
+    // a long animation" from "renderer went silent" after
+    // ONE_SHOT_WATCHDOG_MS.
+    this._oneShotStartedAt = 0;
     this._pickNextAt = 0;
     this.enabled = db.getSetting('pet_walk_enabled') !== '0';
     // Legacy `pet_species` is allowed during migration; map to a real pet id.
@@ -583,15 +603,32 @@ class PetController {
     }
     // Mirror the renderer state on the controller so `tick()` doesn't
     // accidentally re-route through the autonomous path while the user
-    // one-shot is still playing. The `actionUntil` here acts as a
-    // defensive backstop — the renderer's `pet:action_ended` callback is
-    // the primary signal, but if it never arrives (e.g. IPC failure) the
-    // controller will still recover on its own after `ms` elapses.
+    // one-shot is still playing.
+    //
+    // **Play length comes from the frames alone.** The caller's `ms` is
+    // NOT an animation duration and never truncates anything — the
+    // renderer plays the variant's full frame sequence and reports back
+    // via `pet:action_ended`. We set `_oneShot` so `tick()` stays out of
+    // the way until that report lands. `actionUntil` is kept only as a
+    // diagnostic backstop (it also gates `_pickNextAt`); nothing reads it
+    // to cut an animation short.
     const oneShotMs = Math.max(300, ms || 1500);
     this.action = variant;
     this.actionStepVel = 0;
     this.actionDirection = this.actionDirection || 1;
     this.actionUntil = Date.now() + oneShotMs;
+    this._oneShot = true;
+    // Lost-IPC watchdog. A one-shot normally ends when the renderer's
+    // `onEnded` calls back; if that IPC is ever dropped (renderer crashed,
+    // window reloaded) nothing would ever clear `_oneShot` and the pet
+    // would sit frozen on that variant forever. This deadline is the only
+    // thing that can end a one-shot without the renderer's say-so, so it
+    // is deliberately far larger than any real animation — `dancing` is
+    // 61 frames ≈ 12.2s, and pets with longer sequences exist. Five
+    // minutes cannot cut a legitimate animation short; it only catches a
+    // genuinely stuck one. `handleActionEnded()` clears it on the normal
+    // path, so the common case never waits this long.
+    this._oneShotStartedAt = Date.now();
     // Defer the next autonomous re-roll until well after this one-shot
     // is done; the renderer's onEnded handler will reset this earlier via
     // `handleActionEnded`, but having a backstop here keeps us sane if
@@ -627,6 +664,10 @@ class PetController {
       // Don't re-roll until the queue empties.
       return;
     }
+    // The renderer finished a one-shot: its `onEnded` is the authoritative
+    // end-of-animation signal, so hand off to the next action now.
+    this._oneShot = false;
+    this._oneShotStartedAt = 0;
     this.actionUntil = 0;
     this.actionStepVel = 0;
     this._chooseNextLoopAction();
@@ -758,14 +799,34 @@ class PetController {
     }
     // Non-movement action that's already exhausted its duration (e.g.
     // an `other` variant like `greet` / `blink` that was rolled by
-    // `_chooseNextLoopAction`, or a non-movement one-shot whose render
-    // finished but the `pet:action_ended` IPC never landed). The
-    // renderer's `FrameAnimator.onEnded` is the primary signal for
-    // user-triggered one-shots, but as a defensive backstop we also
-    // re-roll here when the controller's own `actionUntil` timer
-    // expires. This is what makes the loop "event-driven + probability":
-    // every action naturally hands off to the next roll, with no
-    // separate cool-down timer gating it.
+    // `_chooseNextLoopAction`). This is what makes the loop
+    // "event-driven + probability": every action naturally hands off to
+    // the next roll, with no separate cool-down timer gating it.
+    //
+    // **One-shots never take this branch while they are playing.** An action's
+    // play length is defined solely by its frame sequence (Σ frames[i].ms) —
+    // the renderer plays it through and reports `pet:action_ended` when the
+    // last frame lands. No external millisecond figure decides when an
+    // animation stops, so a one-shot always completes.
+    //
+    // The one exception is the lost-IPC watchdog: if `_oneShot` has been
+    // set for longer than `ONE_SHOT_WATCHDOG_MS` the renderer never called
+    // back and the animation is stuck rather than merely long, so we roll
+    // on. The threshold is minutes, not the animation's own length — it has
+    // to be large enough that no real sequence can ever reach it, which is
+    // what makes "only the frames end an animation" true in practice.
+    if (this._oneShot) {
+      if (Date.now() - this._oneShotStartedAt < ONE_SHOT_WATCHDOG_MS) return;
+      console.warn(`[pet_controller] one-shot '${this.action}' produced no action_ended within ${ONE_SHOT_WATCHDOG_MS}ms; rolling on`);
+      this._oneShot = false;
+      // Re-roll directly rather than falling through to the `actionUntil`
+      // check below — that timer is the caller's `ms`, which has long since
+      // expired *or* may not have (a caller passing a very large `ms` would
+      // otherwise leave the pet frozen for that whole span, the exact
+      // outcome this watchdog exists to prevent).
+      this._chooseNextLoopAction();
+      return;
+    }
     if (this.actionUntil && now >= this.actionUntil) {
       this._chooseNextLoopAction();
       return;
@@ -784,6 +845,13 @@ class PetController {
   // stays in `default` and `_pickNextAt` is pushed out to keep the timer
   // happy.
   _chooseNextLoopAction() {
+    // Any loop-rolled action is controller-timed, not renderer-timed, so
+    // it is not exempt from the autonomous re-roll. (Movement one-shots
+    // go through `_stepWalk`, which re-rolls on its own duration and is
+    // exempt via the `getMovementProfile` branch in `tick()` anyway.)
+    this._oneShot = false;
+    this._oneShotStartedAt = 0;
+
     // ---- Build the candidate pools ----
     // Movement pool: every compound key the active pet's manifest declares
     // that has a movement profile (walking.* / running.*). Excludes bare

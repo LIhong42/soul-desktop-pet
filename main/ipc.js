@@ -1869,11 +1869,11 @@ function normFreeText(s) {
     // route a click through to the pet renderer (which doubles as the
     // visual feedback layer for the cozy interaction).
     const fireBondAction = (action) => {
-      let accepted = false;
+      let out = null;
       try {
-        const r = petInteractions.applyCozyInteraction(db, action, {}, db.nowStr.bind(db));
-        accepted = !!(r && r.accepted);
+        out = petInteractions.applyCozyInteraction(db, action, {}, db.nowStr.bind(db));
       } catch {}
+      const accepted = !!(out && out.accepted);
       // Same 吃饭提醒 early-end hook as the `bond:feed` IPC above — the
       // right-click menu is the primary way a user feeds the pet, so
       // without this the bubble would outlive the meal it was asking about.
@@ -1884,32 +1884,39 @@ function normFreeText(s) {
       // intentionally do this here (main process) rather than in the
       // renderer so the menu works even if the pet window is unfocused.
       //
-      // `map` keeps the parts of the binding that *can't* be customized
-      // (the particle emoji and the one-shot duration) and
-      // pulls the variant from the user's per-pet `effect_overrides` via
-      // `getEffectVariant` — falling back to the EFFECT_BINDINGS default
-      // when the user hasn't customized that action. The effect_overrides
-      // map is keyed by cozy action id, so we look it up by `action`.
-      const map = {
-        pet:    { ms: 1200, particle: '💗' },
-        pat:    { ms: 1800, particle: '✨' },
-        feed:   { ms: 1500, particle: '🍖' },
-        play:   { ms: 2000, particle: '🧶' },
-        sleep:  { ms: 2200, particle: '💤' },
-        cuddle: { ms: 2500, particle: '💞' },
-      };
-      const m = map[action];
-      if (m) {
-        // Resolve the variant at click time. The pet id doesn't change
-        // between menu open and click, so a single loadConfig per click
-        // is fine — it reads from the in-memory DB row, no IPC roundtrip.
+      // The one-shot duration and particle come from cozy_engine's return
+      // value (`oneShotMs` / `particle`) — the same source the `bond:*` IPC
+      // handlers use. This path used to carry a private hardcoded table
+      // (feed=1500, sleep=2200, …) instead, which truncated the animations:
+      // the renderer fired `pet:action_ended` mid-sequence and rolled a new
+      // loop action while the feed frames were still playing. Keeping the
+      // engine authoritative means the two entry points can't drift again.
+      //
+      // The variant is the one thing the menu resolves on its own: the user's
+      // per-pet `effect_overrides` via `getEffectVariant`, which already
+      // cross-checks the override against the active pet's manifest and falls
+      // back through the binding default to `default`, so it always yields a
+      // variant the renderer can resolve. The effect_overrides map is keyed by
+      // cozy action id, so we look it up by `action`. No minTier: every cozy
+      // action plays on every tier, so a fresh pet still animates when the
+      // user right-clicks it.
+      //
+      // Everything below is gated on `accepted`, exactly like the `bond:*`
+      // handlers. That matters on cooldown: `applyInteraction` returns
+      // `{accepted:false, silent:true}` with no `oneShotMs`, so without the
+      // guard we'd fall through to the 1800 default and play a reaction for
+      // an interaction the engine refused to count — the menu would animate
+      // while the cozy score silently didn't move.
+      if (accepted) {
         const petId = db.getSetting('pet_id') || null;
         const cfg = petId ? petActionsConfig.loadConfig(db, petId) : null;
         const variant = petActionsConfig.getEffectVariant(cfg, action, petRegistry, petId);
-        // No minTier: every cozy action plays on every tier, so a fresh
-        // pet still animates when the user right-clicks it.
-        fireVariant(variant, m.ms);
-        if (m.particle) sendParticle(m.particle);
+        fireVariant(variant, out.oneShotMs || 1800);
+        if (out.particle) sendParticle(out.particle);
+        // Push the new cozy numbers straight away instead of waiting for the
+        // 1s pipeline tick, matching the `bond:*` handlers so the 今日 page bar
+        // animates on the same click as a renderer-initiated interaction.
+        if (petId) pushPetStatusNow(petId);
       }
     };
     const menu = Menu.buildFromTemplate([
