@@ -170,6 +170,7 @@ export const api = {
   export_: {
     previewFilter: (filter) => M.export_.previewFilter(filter || {}),
     pdf: (payload) => M.export_.pdf(payload || {}),
+    docx: (payload) => M.export_.docx(payload || {}),
     mp4: (payload) => M.export_.mp4(payload || {}),
     cancel: (payload) => M.export_.cancel(payload || {}),
   },

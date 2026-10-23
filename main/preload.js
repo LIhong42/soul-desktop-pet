@@ -202,6 +202,7 @@ contextBridge.exposeInMainWorld('mp', {
   export_: {
     previewFilter: (filter) => ipcRenderer.invoke('export:preview_filter', filter || {}),
     pdf: (payload) => ipcRenderer.invoke('export:pdf', payload || {}),
+    docx: (payload) => ipcRenderer.invoke('export:docx', payload || {}),
     mp4: (payload) => ipcRenderer.invoke('export:mp4', payload || {}),
     cancel: (payload) => ipcRenderer.invoke('export:cancel', payload || {}),
   },

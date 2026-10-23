@@ -13,6 +13,7 @@ const {
 } = require('./pet_zip_import');
 const { petRenderSize } = require('./pet_controller');
 const albumPdf = require('./album_pdf');
+const albumDocx = require('./album_docx');
 const PDFDocument = require('pdfkit');
 const albumVideo = require('./album_video');
 const { verifyPin, hashPin, isValidPinShape } = require('./auth');
@@ -2396,6 +2397,7 @@ function normFreeText(s) {
   //
   //   export:preview_filter  – filter counts + event summaries for the UI
   //   export:pdf             – save dialog → build PDF
+  //   export:docx            – save dialog → build Word (.docx)
   //   export:mp4             – save dialog → build MP4
   //   export:cancel          – flip the killed flag for a running job
   //
@@ -2529,6 +2531,64 @@ function normFreeText(s) {
           pages: stats.pages,
           bytes: stats.bytes,
           font: stats.font,
+          heicSkipped: stats.heicSkipped,
+          mode: stats.mode,
+        },
+      };
+    } catch (err) {
+      if (job.killed) {
+        try { fs.unlinkSync(result.filePath); } catch {}
+        return { canceled: true, jobId };
+      }
+      throw err;
+    } finally {
+      activeExportJobs.delete(jobId);
+    }
+  });
+
+  ipcMain.handle('export:docx', async (_e, payload = {}) => {
+    const eventIds = Array.isArray(payload.eventIds) ? payload.eventIds.map(String) : [];
+    if (eventIds.length === 0) throw new Error('未选择任何事件');
+    const stamp = backupStamp();
+    const result = await dialog.showSaveDialog(winMain, {
+      title: '导出回忆相册 (Word)',
+      defaultPath: `soul-desktop-pet-album-${stamp}.docx`,
+      filters: [{ name: 'Word 文档', extensions: ['docx'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+
+    const events = loadEventsForExport(eventIds);
+    if (events.length === 0) throw new Error('所选事件不存在或已被删除');
+
+    // 同 PDF：主进程内联执行，jobId 只是为了让渲染层能订阅进度 / 取消。
+    const jobId = `docx-${Date.now().toString(36)}`;
+    const job = { killed: false, outPath: result.filePath };
+    activeExportJobs.set(jobId, job);
+
+    const progressCb = (phase, percent, note) => {
+      if (job.killed) return;
+      pushExportProgress(jobId, phase, percent, note);
+    };
+
+    const layout = (payload && payload.layout) || null;
+
+    try {
+      const stats = await albumDocx.buildAlbum({
+        events,
+        layout,
+        outPath: result.filePath,
+        progressCb,
+      });
+      try { db.setSetting('last_docx_export_at', db.nowStr()); } catch {}
+      return {
+        canceled: false,
+        path: result.filePath,
+        jobId,
+        stats: {
+          events: stats.events,
+          photos: stats.photos,
+          pages: stats.pages,
+          bytes: stats.bytes,
           heicSkipped: stats.heicSkipped,
           mode: stats.mode,
         },

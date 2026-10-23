@@ -132,7 +132,8 @@ function renderExportProgress() {
   return `
     <div class="card export-progress" data-job-id="${escapeHtml(e.jobId)}">
       <div class="export-progress-head">
-        <strong>${escapeHtml(e.kind === 'pdf' ? '正在导出相册 (PDF)…' : '正在导出视频 (MP4)…')}</strong>
+        <strong>${escapeHtml(e.kind === 'docx' ? '正在导出相册 (Word)…'
+          : e.kind === 'pdf' ? '正在导出相册 (PDF)…' : '正在导出视频 (MP4)…')}</strong>
         <span>${escapeHtml(phaseLabel(e.phase))} ${e.note ? '· ' + escapeHtml(e.note) : ''}</span>
       </div>
       <div class="export-progress-bar"><div class="export-progress-fill" style="width:${pct}%"></div></div>
@@ -160,7 +161,7 @@ function render() {
 
   app.innerHTML = `
     <h1>导出回忆</h1>
-    <p class="meta">按联系人和时间段筛选已记录的回忆事件，导出为 PDF 相册或 MP4 视频。素材仅来自「回忆事件」中已上传的事件与照片。</p>
+    <p class="meta">按联系人和时间段筛选已记录的回忆事件，导出为 PDF / Word 相册或 MP4 视频。素材仅来自「回忆事件」中已上传的事件与照片。</p>
 
     <div class="card">
       <h2>筛选条件</h2>
@@ -213,10 +214,11 @@ function render() {
       <h2>导出</h2>
       <div class="row" style="gap:8px; flex-wrap:wrap;">
         <button class="btn" id="export-pdf-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (PDF)</button>
+        <button class="btn" id="export-docx-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (Word)</button>
         <button class="btn" id="export-mp4-btn" ${exportDisabled ? 'disabled' : ''}>导出回忆视频 (MP4)</button>
         <button class="btn" id="export-edit-btn" ${exportDisabled ? 'disabled' : ''}>编辑并导出相册</button>
       </div>
-      <p class="meta" style="margin-top:8px;">直接导出使用简单排版；「编辑并导出相册」可选择主题与版式、调整每页图文布局。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
+      <p class="meta" style="margin-top:8px;">直接导出使用简单排版；Word 导出生成可编辑的图文文档（章节 + 内嵌照片）。「编辑并导出相册」可选择主题与版式、调整每页图文布局。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
       ${renderExportProgress()}
     </div>
   `;
@@ -389,10 +391,12 @@ function wireUi() {
       const lbl = document.querySelector('.chip-list-actions .meta');
       if (lbl) lbl.textContent = `已选 ${state.selectedEventIds.size} / ${state.events.length}`;
       const pdfBtn = document.getElementById('export-pdf-btn');
+      const docxBtn = document.getElementById('export-docx-btn');
       const mp4Btn = document.getElementById('export-mp4-btn');
       const editBtn = document.getElementById('export-edit-btn');
       const disable = state.selectedEventIds.size === 0 || state.exporting;
       if (pdfBtn) pdfBtn.disabled = disable;
+      if (docxBtn) docxBtn.disabled = disable;
       if (mp4Btn) mp4Btn.disabled = disable;
       if (editBtn) editBtn.disabled = disable;
     };
@@ -400,9 +404,11 @@ function wireUi() {
 
   // Export buttons
   const pdfBtn = document.getElementById('export-pdf-btn');
+  const docxBtn = document.getElementById('export-docx-btn');
   const mp4Btn = document.getElementById('export-mp4-btn');
   const editBtn = document.getElementById('export-edit-btn');
   if (pdfBtn) pdfBtn.onclick = () => doExport('pdf');
+  if (docxBtn) docxBtn.onclick = () => doExport('docx');
   if (mp4Btn) mp4Btn.onclick = () => doExport('mp4');
   if (editBtn) editBtn.onclick = enterEditor;
 
@@ -475,7 +481,9 @@ async function doExport(kind, options = {}) {
   const isEditor = state.view === 'editor';
   if (!isEditor) render();
   try {
-    const fn = kind === 'pdf' ? api.export_.pdf : api.export_.mp4;
+    const fn = kind === 'docx' ? api.export_.docx
+      : kind === 'pdf' ? api.export_.pdf
+        : api.export_.mp4;
     const payload = { eventIds: ids };
     if (options.layout) payload.layout = options.layout;
     const r = await fn(payload);
@@ -502,10 +510,11 @@ async function doExport(kind, options = {}) {
         ? ` · ${Math.round(r.stats.durationSec)}s`
         : '';
       const pageTxt = (r.stats.pages != null) ? ` · ${r.stats.pages} 页` : '';
-      const kindLabel = kind === 'pdf' ? 'PDF 相册' : 'MP4 视频';
+      const kindLabel = kind === 'docx' ? 'Word 相册'
+        : kind === 'pdf' ? 'PDF 相册' : 'MP4 视频';
       toast(`${kindLabel} 已导出：${r.stats.events} 个事件${photoTxt}${pageTxt}${durTxt}${sizeTxt}`);
     } else {
-      toast(kind === 'pdf' ? 'PDF 已导出' : '视频已导出');
+      toast(kind === 'docx' ? 'Word 已导出' : kind === 'pdf' ? 'PDF 已导出' : '视频已导出');
     }
     state.exporting = null;
     render();

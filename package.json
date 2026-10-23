@@ -17,6 +17,7 @@
     "measure:text-boxes": "node scripts/measure-text-boxes.js",
     "test:bg-remove": "node scripts/smoke-image-bg-remove.js",
     "test:app-update": "node scripts/smoke-app-update.js",
+    "test:docx-export": "node scripts/smoke-docx-export.js",
     "test:settings-update": "node scripts/smoke-settings-update-card.js",
     "install:bin": "node scripts/install-electron-bin.js",
     "postinstall": "node scripts/install.js",
