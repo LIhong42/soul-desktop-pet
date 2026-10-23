@@ -16,6 +16,8 @@
     "test:settings-textboxes": "node scripts/smoke-settings-textboxes.js",
     "measure:text-boxes": "node scripts/measure-text-boxes.js",
     "test:bg-remove": "node scripts/smoke-image-bg-remove.js",
+    "test:app-update": "node scripts/smoke-app-update.js",
+    "test:settings-update": "node scripts/smoke-settings-update-card.js",
     "install:bin": "node scripts/install-electron-bin.js",
     "postinstall": "node scripts/install.js",
     "prebuild": "node scripts/hoist-call-bind-helpers.js && node scripts/prebuild-extract-winCodeSign.js",
@@ -94,7 +96,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "SoulDesktopPet"
+      "shortcutName": "SoulDesktopPet",
+      "deleteAppDataOnUninstall": false
     },
     "directories": {
       "output": "dist"

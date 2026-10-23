@@ -17,6 +17,11 @@ async function render() {
   // process decides that on first launch). `supported` is false in dev builds.
   const autoStart = (await api.app.getAutostart?.())
     || { supported: false, enabled: true, active: false };
+  // 自动更新状态。更新卡片由 renderUpdateCard() 单独渲染——它需要自己订阅
+  // 进度事件并局部重绘，不适合放进下面那次整页 innerHTML 赋值里。
+  // 主进程可能还没注册完 handler（老版本的 preload），所以都做可选调用。
+  const updateState = (await api.app.getUpdateState?.())
+    || { supported: false, enabled: true, currentVersion: '', info: null };
 
   const petOptions = installed.length
     ? installed.map((p) =>
@@ -97,6 +102,13 @@ async function render() {
       ${autoStart.supported && autoStart.enabled && !autoStart.active
         ? '<p class="meta" style="margin-top:4px; color:#b26a00;">⚠ 开机启动项当前未生效，可能已被系统或安全软件禁用；取消勾选后重新勾选可尝试恢复。</p>'
         : ''}
+    </div>
+
+    <div class="card" id="update-card">
+      <h2>软件更新</h2>
+      <div id="update-card-body">
+        <div class="empty">载入中…</div>
+      </div>
     </div>
 
     <div class="card">
@@ -250,6 +262,9 @@ async function render() {
   await renderPetActionsCard(currentPetId);
   await renderActionTextsCard();
   await renderBubblesCard();
+  // 放在最后：它会自己订阅事件并重绘 #update-card-body，而那个节点是上面
+  // 那次整页 innerHTML 赋值刚创建的。
+  await renderUpdateCard(updateState);
 }
 
 // ---------------------------------------------------------------------------
@@ -1351,3 +1366,278 @@ function wirePetListActions(currentPetId) {
 }
 
 register('/settings', render);
+
+// ---------------------------------------------------------------------------
+// 软件更新卡片 (main/app_update.js)
+// ---------------------------------------------------------------------------
+//
+// 单独成函数的原因：这张卡片的状态会自己变——每日检查在后台完成、下载进度
+// 一路往上报——而它周围的内容都是静态的。塞进 render() 的整页 innerHTML
+// 赋值会导致每次进度事件都把整个设置页重建一遍，正在输入的文本框内容会被
+// 冲掉。所以它只重绘自己那一个 #update-card-body。
+//
+// 订阅的两个事件：
+//   app:update-progress → 下载进度（{ phase, percent, received, total }）
+//   app:update-state    → 主进程状态变了（后台检查完成、开始/结束下载）
+
+let _updateState = null;   // 最近一次主进程状态
+let _updateProgress = null; // 下载进度，非 null 表示正在下载
+let _updateUnsub = [];      // 事件退订函数，页面重渲染时统一清理
+
+function fmtBytes(n) {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function fmtTime(ts) {
+  if (!ts) return '从未';
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return '从未';
+  const d = new Date(n);
+  const p = (v) => String(v).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function renderUpdateCard(state) {
+  const body = document.getElementById('update-card-body');
+  if (!body) return;
+  if (state) _updateState = state;
+
+  // 重新订阅。render() 每次进页面都会调这里，而退订函数会被丢掉，所以
+  // 先清掉上一轮的，否则事件会叠加（一次下载进度触发 N 次重绘）。
+  for (const off of _updateUnsub) { try { off(); } catch (_) { /* 已失效 */ } }
+  _updateUnsub = [];
+  if (api.on) {
+    _updateUnsub.push(api.on('app:update-progress', (p) => {
+      _updateProgress = p;
+      paintUpdateCard();
+    }));
+    _updateUnsub.push(api.on('app:update-state', async (s) => {
+      _updateState = s;
+      // 状态变了多半意味着后台检查有结果，把过期的进度清掉。
+      if (!s.downloading) _updateProgress = null;
+      paintUpdateCard();
+    }));
+  }
+
+  paintUpdateCard();
+}
+
+// 只重绘卡片内容，不碰页面上任何其他元素。
+function paintUpdateCard() {
+  const body = document.getElementById('update-card-body');
+  if (!body || !_updateState) return;
+  const s = _updateState;
+
+  if (!s.supported) {
+    body.innerHTML = `
+      <p class="meta">当前版本 <strong>${escapeHtml(s.currentVersion || '—')}</strong>。</p>
+      <p class="meta" style="margin-top:4px; color:#b26a00;">
+        自动更新仅在打包安装版（Windows）可用；开发模式下请从
+        <code>GitHub Releases</code> 手动下载。
+      </p>`;
+    return;
+  }
+
+  const info = s.info;
+  const hasUpdate = !!(info && info.hasUpdate);
+  const downloading = !!s.downloading || !!_updateProgress;
+
+  // --- 进度条 ---
+  let progressHtml = '';
+  if (downloading) {
+    const p = _updateProgress || {};
+    // percent 可能为 null：GitHub 的对象存储不总是给 content-length，
+    // 这时只能显示不确定态的动画条而不是一个假的 0%。
+    const pct = (p.percent === null || p.percent === undefined) ? null : Math.max(0, Math.min(100, p.percent));
+    progressHtml = `
+      <div style="margin-top:12px;">
+        <div class="meta">正在下载安装包…${pct === null ? '' : ` ${pct}%`}</div>
+        <div class="tools-progress-bar" style="margin-top:6px;">
+          <div class="tools-progress-fill" style="width:${pct === null ? 30 : pct}%;${pct === null ? 'animation: tools-progress-indeterminate 1.2s ease-in-out infinite;' : ''}"></div>
+        </div>
+        ${p.total ? `<div class="meta" style="margin-top:4px;">${fmtBytes(p.received)} / ${fmtBytes(p.total)}</div>` : ''}
+        <p class="meta" style="margin-top:6px; color:#b26a00;">
+          下载完成后会自动启动安装程序，中途请不要关闭 SoulDesktopPet。
+        </p>
+      </div>`;
+  }
+
+  // --- 有更新 / 已是最新 ---
+  let statusHtml;
+  if (s.checking) {
+    statusHtml = '<p class="meta" style="margin-top:8px;">正在检查更新…</p>';
+  } else if (hasUpdate) {
+    const notes = (info.notes || '').trim();
+    statusHtml = `
+      <div class="meta" style="margin-top:8px;">
+        发现新版本 <strong>${escapeHtml(info.version)}</strong>
+        <span style="color:var(--muted);">（当前 ${escapeHtml(s.currentVersion)}）</span>
+        ${info.publishedAt ? ` · 发布于 ${escapeHtml(fmtTime(Date.parse(info.publishedAt) || null))}` : ''}
+      </div>
+      ${notes
+        ? `<details style="margin-top:8px;">
+             <summary class="meta" style="cursor:pointer;">更新内容</summary>
+             <pre class="meta" style="white-space:pre-wrap; margin-top:6px; font-family:inherit;">${escapeHtml(notes)}</pre>
+           </details>`
+        : ''}
+      ${info.downloadable
+        ? ''
+        : '<p class="meta" style="margin-top:8px; color:#b26a00;">⚠ 该版本未提供适用于当前系统的安装包，可前往 GitHub Releases 手动查看。</p>'}`;
+  } else if (s.error) {
+    statusHtml = `<p class="meta" style="margin-top:8px; color:#b26a00;">${escapeHtml(s.error)}</p>`;
+  } else if (info) {
+    statusHtml = `<p class="meta" style="margin-top:8px;">已是最新版本（${escapeHtml(s.currentVersion)}）。</p>`;
+  } else {
+    statusHtml = '<p class="meta" style="margin-top:8px;">尚未检查过更新。</p>';
+  }
+
+  // --- 按钮 ---
+  let buttons;
+  if (downloading) {
+    buttons = '<button class="btn" disabled>正在下载…</button>';
+  } else if (hasUpdate && info.downloadable) {
+    buttons = `<button class="btn" id="btn-update-now">下载并更新</button>
+               <button class="btn secondary" id="btn-check-update">重新检查</button>`;
+  } else if (hasUpdate) {
+    // 有新版本但没有对应平台的安装包：唯一出路是去 GitHub 手动下载。
+    buttons = `<button class="btn" id="btn-open-releases">前往 GitHub 下载</button>
+               <button class="btn secondary" id="btn-check-update">重新检查</button>`;
+  } else {
+    buttons = `<button class="btn" id="btn-check-update" ${s.checking ? 'disabled' : ''}>
+                 ${s.checking ? '检查中…' : '检查更新'}
+               </button>`;
+  }
+
+  body.innerHTML = `
+    <p class="meta">当前版本 <strong>${escapeHtml(s.currentVersion || '—')}</strong>
+      ${hasUpdate ? '' : ''}
+      · 上次检查：${escapeHtml(fmtTime(s.lastCheckAt))}
+    </p>
+    <div class="field" style="justify-content:flex-start; margin-top:10px;">
+      <label style="display:flex; align-items:center; gap:6px;">
+        <input type="checkbox" id="app-update-enabled" ${s.enabled ? 'checked' : ''}/>
+        每天自动检查一次更新
+      </label>
+    </div>
+    ${statusHtml}
+    ${progressHtml}
+    <div class="row" style="gap:8px; margin-top:12px; flex-wrap:wrap;">
+      ${buttons}
+    </div>
+    <p class="meta" style="margin-top:10px;">
+      更新来源：GitHub Releases（<code>${escapeHtml(s.repo || '')}</code>）。
+      下载的安装包会先校验 SHA-256 再执行；校验不通过的文件不会被安装。
+      你的联系人、提醒、回忆和照片保存在应用数据目录，升级不会删除它们。
+    </p>`;
+
+  wireUpdateCard();
+}
+
+// 事件委托在每次重绘后重绑。按钮节点每次 paintUpdateCard 都是新建的，
+// 所以这里必须重新绑定。
+function wireUpdateCard() {
+  const toggle = document.getElementById('app-update-enabled');
+  if (toggle) {
+    toggle.onchange = async (e) => {
+      const want = !!e.target.checked;
+      try {
+        const r = await api.app.setUpdateEnabled(want);
+        _updateState = r.state || _updateState;
+        paintUpdateCard();
+        toast(want ? '已开启每日自动检查更新' : '已关闭自动检查更新');
+      } catch (err) {
+        // 落库失败要把勾选框弹回去，否则界面显示的是一个不存在的状态。
+        e.target.checked = !want;
+        toast('设置失败：' + ((err && err.message) || err));
+      }
+    };
+  }
+
+  const checkBtn = document.getElementById('btn-check-update');
+  if (checkBtn) {
+    checkBtn.onclick = async () => {
+      checkBtn.disabled = true;
+      try {
+        const r = await api.app.checkUpdate();
+        _updateState = r.state || _updateState;
+        if (!r.ok) {
+          _updateState = { ..._updateState, error: r.reason || '检查更新失败' };
+          toast(r.reason || '检查更新失败');
+        } else if (r.hasUpdate) {
+          toast(`发现新版本 ${r.info.version}`);
+        } else {
+          toast('已是最新版本');
+        }
+      } catch (err) {
+        toast('检查失败：' + ((err && err.message) || err));
+      } finally {
+        paintUpdateCard();
+      }
+    };
+  }
+
+  const releasesBtn = document.getElementById('btn-open-releases');
+  if (releasesBtn) {
+    releasesBtn.onclick = () => openReleasesPage();
+  }
+
+  const updateBtn = document.getElementById('btn-update-now');
+  if (updateBtn) {
+    updateBtn.onclick = async () => {
+      updateBtn.disabled = true;
+      _updateProgress = { phase: 'downloading', percent: 0, received: 0, total: 0 };
+      paintUpdateCard();
+      let r;
+      try {
+        r = await api.app.downloadUpdate();
+      } catch (err) {
+        _updateProgress = null;
+        paintUpdateCard();
+        toast('下载失败：' + ((err && err.message) || err));
+        return;
+      }
+      _updateProgress = null;
+      _updateState = r.state || _updateState;
+
+      if (!r.ok) {
+        paintUpdateCard();
+        // 校验和缺失、下载中断这类失败都可能需要用户去 GitHub 手动拿，
+        // 所以提供「打开 Releases 页面」的出口，而不是让用户干瞪眼。
+        toast(r.reason || '下载失败');
+        if (r.reason && /校验和|手动/.test(r.reason)) {
+          openReleasesPage();
+        }
+        return;
+      }
+
+      // 下载成功，直接进入安装。install() 会弹确认框，然后关掉应用。
+      try {
+        const ir = await api.app.installUpdate({
+          path: r.path,
+          version: r.version,
+          confirm: true,
+        });
+        if (ir && ir.canceled) {
+          paintUpdateCard();
+          toast('已取消更新');
+        }
+        // 非取消时应用会退出，这里不再操作界面。
+      } catch (err) {
+        paintUpdateCard();
+        toast('安装失败：' + ((err && err.message) || err));
+      }
+    };
+  }
+}
+
+// 在系统浏览器打开 Releases 页面——校验和缺失这类没法自动解决的失败，
+// 用户需要有个去处。
+async function openReleasesPage() {
+  const repo = _updateState?.repo || 'LIhong42/soul-desktop-pet';
+  const url = `https://github.com/${repo}/releases/latest`;
+  const r = await api.app.openExternal?.(url);
+  if (!r || !r.ok) toast('请手动打开：' + url);
+}

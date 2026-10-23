@@ -9,6 +9,7 @@ const ipc = require('./ipc');
 const { PetController, petRenderSize } = require('./pet_controller');
 const { PetRegistry } = require('./pet_registry');
 const autostart = require('./autostart');
+const appUpdate = require('./app_update');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
 
@@ -236,6 +237,25 @@ app.whenReady().then(async () => {
   // queue is already pushing activeCount() correctly into the mood payload.
   scheduler.startBondPipeline({ petController, winPet, winMain, queue, petRegistry });
 
+  // 每日自动检查更新（更新源为 GitHub Releases）。首次检查延迟
+  // FIRST_CHECK_DELAY_MS，之后每 24 小时一次，且距上次检查不足一天会跳过
+  // ——所以重启应用不会每次都联网。检查是静默的：只更新内部状态，不弹窗，
+  // 用户在设置页能看到「有新版本」提示。
+  //
+  // 用户在设置里重新勾选「自动检查更新」时，ipc.js 会回调下面这个钩子来
+  // 重启调度器；没有它的话，定时器会在 stopDailyCheck 之后再也不恢复。
+  const runUpdateCheck = () => {
+    appUpdate.checkForUpdate(db).then((r) => {
+      if (r.ok && r.hasUpdate) {
+        console.log(`[app_update] 有新版本：${r.info.version}（当前 ${r.info.currentVersion}）`);
+      }
+    });
+  };
+  appUpdate.onEnableToggled(() => {
+    appUpdate.startDailyCheck(db, runUpdateCheck);
+  });
+  appUpdate.startDailyCheck(db, runUpdateCheck);
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindows({ petRegistry: petRegistryRef });
   });
@@ -253,6 +273,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   scheduler.stop();
   scheduler.stopBondPipeline();
+  appUpdate.stopDailyCheck();
   // Drains ipc.js's registered timers (currently the bubble engine's 1s
   // tick + the idle sampler). Called before db.save() so any final
   // bubble-state write lands in the snapshot we persist.

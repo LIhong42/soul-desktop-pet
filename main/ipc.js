@@ -1,5 +1,5 @@
 // main/ipc.js — register all ipcMain handlers (sql.js-friendly)
-const { ipcMain, app, screen, Menu, dialog, shell, powerMonitor } = require('electron');
+const { ipcMain, app, screen, Menu, dialog, shell, powerMonitor, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -28,6 +28,7 @@ const petTextBoxes = require('./pet_text_boxes');
 const videoFrameSplit = require('./video_frame_split');
 const autostart = require('./autostart');
 const imageBgRemove = require('./image_bg_remove');
+const appUpdate = require('./app_update');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
 // `export:cancel`. The value is a mutable record: { killed, outPath? }.
@@ -1588,6 +1589,118 @@ function normFreeText(s) {
       enabled: r.ok ? want : db.getSetting(autostart.SETTING_KEY) !== '0',
     };
   });
+  // ---- 自动更新（更新源为 GitHub Releases）----
+  //
+  // 逻辑本身全在 main/app_update.js 里，这里只做三件事：把结果转成渲染
+  // 进程能直接用的形状、把下载进度推回去、以及在安装前弹一次确认框。
+  //
+  // 安装确认放在主进程而不是渲染进程，是因为下一步 app.quit() 会直接
+  // 关掉窗口——渲染进程没机会再弹任何东西。把确认放在这里，能保证用户
+  // 一定看到「即将重启安装」这个提示。
+
+  // 往主窗口推消息时统一走这里，而不是直接用上面闭包里捕获的 winMain。
+  // 那个引用是 register() 调用时的快照，main.js 的 `activate` 事件
+  // （macOS 关掉全部窗口后再点图标）会重建 winMain，此后闭包里的引用就指向
+  // 一个已销毁的窗口。浏览器窗口发送是异步的，发给已销毁的窗口不会立刻
+  // 报错，而是稍后以 "Object has been destroyed" 的形式冒出来——很难定位。
+  const pushToMain = (channel, payload) => {
+    // BrowserWindow.getAllWindows() 是当前真实存活的窗口，不受快照影响。
+    for (const w of BrowserWindow.getAllWindows()) {
+      try {
+        if (!w.isDestroyed()) w.webContents.send(channel, payload);
+      } catch (e) {
+        // 竞态：检查完 isDestroyed 到 send 之间窗口可能刚好被关掉。忽略即可，
+        // 推送本来就是 best-effort 的（渲染进程下次轮询会拿到完整状态）。
+      }
+    }
+  };
+
+  // 状态轮询入口：设置页每次渲染、下载进度回调都读它。
+  ipcMain.handle('app:get_update_state', () => appUpdate.publicState(db));
+
+  // 手动检查。返回值 { ok, hasUpdate, info, reason }——reason 是中文原因，
+  // 渲染进程直接显示，不需要自己再翻译一遍错误。
+  ipcMain.handle('app:check_update', async () => {
+    const r = await appUpdate.checkForUpdate(db);
+    return { ...r, state: appUpdate.publicState(db) };
+  });
+
+  // 打开/关闭每日自动检查。打开时立刻补一次检查，不用等下一个 24 小时。
+  // setEnabled 内部会回调 main.js 注册的钩子来重启每日调度器，定时器
+  // 的生命周期只在 startDailyCheck 里管一处。
+  ipcMain.handle('app:set_update_enabled', (_e, enabled) => {
+    const r = appUpdate.setEnabled(db, !!enabled);
+    return { ...r, state: appUpdate.publicState(db) };
+  });
+
+  // 下载安装包。下载进度走 `app:update-progress` 单向推送，模式与
+  // tools:progress 一致（见 preload 的 allowed 列表）。
+  ipcMain.handle('app:download_update', async () => {
+    const r = await appUpdate.downloadUpdate(db, (p) => {
+      pushToMain('app:update-progress', p);
+    });
+    return { ...r, state: appUpdate.publicState(db) };
+  });
+
+  // 启动安装器并退出重装。confirm=false 时直接静默重装（供「跳过确认」
+  // 这类显式调用），默认走确认框。
+  ipcMain.handle('app:install_update', async (_e, payload) => {
+    const opts = payload || {};
+    const p = opts.path;
+    if (!p) return { ok: false, reason: '没有可安装的文件' };
+
+    // 只允许安装自己刚下载到临时目录里的那个文件。渲染进程是潜在的
+    // 攻击面（页面被注入脚本的话），不该由它指定任意路径给 spawn。
+    // 这个校验把可执行文件的来源限制在 %TEMP%\SoulDesktopPet-update\。
+    const tmpRoot = path.join(os.tmpdir(), 'SoulDesktopPet-update');
+    const resolved = path.resolve(p);
+    if (resolved !== path.join(tmpRoot, path.basename(resolved))) {
+      return { ok: false, reason: '安装文件路径不合法' };
+    }
+
+    if (opts.confirm !== false) {
+      const { response } = await dialog.showMessageBox(winMain, {
+        type: 'info',
+        buttons: ['立即更新', '暂不更新'],
+        defaultId: 0,
+        cancelId: 1,
+        title: '更新 SoulDesktopPet',
+        message: `将更新到 ${opts.version || '新版本'}`,
+        detail:
+          '更新程序会先关闭 SoulDesktopPet，安装完成后再自动打开。\n\n' +
+          '你的联系人、提醒、回忆和照片都保存在应用数据目录，升级不会删除它们。',
+      });
+      if (response !== 0) return { ok: false, reason: null, canceled: true };
+    }
+
+    const r = appUpdate.installAndRelaunch(resolved);
+    return { ...r, state: appUpdate.publicState(db) };
+  });
+
+  // 在文件管理器里定位安装包，供用户选择手动安装。
+  ipcMain.handle('app:reveal_installer', (_e, payload) => {
+    const p = (payload || {}).path;
+    if (!p) return false;
+    const tmpRoot = path.join(os.tmpdir(), 'SoulDesktopPet-update');
+    const resolved = path.resolve(p);
+    if (resolved !== path.join(tmpRoot, path.basename(resolved))) return false;
+    return appUpdate.revealInstaller(resolved);
+  });
+
+  // 在系统浏览器打开 URL。渲染进程是潜在的注入面，限定 http/https 是为了
+  // 防止它被诱导去打开 file:// 或本地自定义协议（那等价于任意文件访问）。
+  ipcMain.handle('app:open_external', (_e, url) => {
+    const s = String(url || '');
+    if (!/^https?:\/\//i.test(s)) return { ok: false };
+    return { ok: shell.openExternal(s) };
+  });
+
+  // 把状态变化推给渲染进程，这样每日检查在后台发现新版本时，设置页即使
+  // 没重新渲染也能看到提示条。
+  appUpdate.onStatus(() => {
+    pushToMain('app:update-state', appUpdate.publicState(db));
+  });
+
   ipcMain.handle('pet:set_paused', (_e, ms) => {
     if (petController && typeof petController.setPaused === 'function') {
       petController.setPaused(ms);

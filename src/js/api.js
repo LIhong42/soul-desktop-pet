@@ -150,6 +150,14 @@ export const api = {
     // 开机自启动. Returns { supported, enabled, active }.
     getAutostart: ()     => M.app.getAutostart(),
     setAutostart: (on)   => M.app.setAutostart(on),
+    // 自动更新 (GitHub Releases). 详见 main/app_update.js 的模块注释。
+    getUpdateState:   ()     => M.app.getUpdateState(),
+    checkUpdate:      ()     => M.app.checkUpdate(),
+    setUpdateEnabled: (on)   => M.app.setUpdateEnabled(on),
+    downloadUpdate:   ()     => M.app.downloadUpdate(),
+    installUpdate:    (opts) => M.app.installUpdate(opts || {}),
+    revealInstaller:  (p)    => M.app.revealInstaller(p),
+    openExternal:     (url) => M.app.openExternal(url),
   },
   backup: {
     export: () => M.backup.export(),

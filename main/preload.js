@@ -162,6 +162,24 @@ contextBridge.exposeInMainWorld('mp', {
     // { supported, enabled, active } — see main/autostart.js.
     getAutostart:    ()      => ipcRenderer.invoke('app:get_autostart'),
     setAutostart:    (on)    => ipcRenderer.invoke('app:set_autostart', on),
+    // 自动更新（GitHub Releases）。逻辑全在 main/app_update.js。
+    //   getState()    → { currentVersion, supported, enabled, info, checking,
+    //                    downloading, installing, error, lastCheckAt, repo }
+    //   check()       → { ok, hasUpdate, info, reason, state }
+    //   setEnabled(on)
+    //   download()    → { ok, path, version, bytes, reason, state }（进度走
+    //                    `app:update-progress` 推送）
+    //   install({path, version, confirm}) → 会关闭应用并启动安装器
+    //   revealInstaller(path) → 在文件管理器中定位安装包
+    getUpdateState:     ()      => ipcRenderer.invoke('app:get_update_state'),
+    checkUpdate:        ()      => ipcRenderer.invoke('app:check_update'),
+    setUpdateEnabled:   (on)    => ipcRenderer.invoke('app:set_update_enabled', on),
+    downloadUpdate:     ()      => ipcRenderer.invoke('app:download_update'),
+    installUpdate:      (opts)  => ipcRenderer.invoke('app:install_update', opts || {}),
+    revealInstaller:    (p)     => ipcRenderer.invoke('app:reveal_installer', { path: p }),
+    // 打开外部链接（当前只有 GitHub Releases 页面）。限制为 http/https，
+    // 否则渲染进程可以拿它去打开 file:// 或自定义 scheme。
+    openExternal:       (url)   => ipcRenderer.invoke('app:open_external', url),
   },
   // Backup / restore. Two-step import (pick → apply) so the renderer can
   // surface a confirm() dialog between picking the zip and overwriting the
@@ -233,6 +251,8 @@ contextBridge.exposeInMainWorld('mp', {
       'main:say-prompt',
       'export:progress',
       'tools:progress',
+      'app:update-progress',
+      'app:update-state',
       'pet:mood-changed',
       'pet:status-changed',
       'pet:cozy-changed',

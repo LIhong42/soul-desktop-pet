@@ -56,10 +56,20 @@
 - 上传帧动画 PNG 压缩包，**自动生成新桌宠，立刻可用**；
 - 内置拆帧工具：把视频按帧拆分为 PNG 序列，打包 zip——亲手 DIY 自己的桌宠。
 
+### 🔄 软件自动更新
+- 更新来源为 **GitHub Releases**，在「设置 → 软件更新」里可手动检查；
+- 默认**每天自动检查一次**，静默进行，不打扰桌宠；
+- 下载的安装包先校验 **SHA-256** 再执行，校验不通过的文件一律不安装；
+- 用户数据（联系人 / 提醒 / 回忆 / 照片）保存在 `%APPDATA%/SoulDesktopPet\`，
+  与安装目录分离，**升级过程不会删除它们**。
+
 ### 🔐 隐私与安全
 - 主窗口需 4 位 PIN 码解锁（默认 `1234`），可在「设置 → 访问密码」中修改；
 - **数据库纯本地**：使用 sql.js（纯 JS SQLite），零原生依赖，不走任何云端 API；
 - 一键导出 / 导入 zip 备份，整机迁移无忧。
+
+> 自动更新只在**打包安装版（Windows）**可用；开发模式下会提示去 GitHub
+> Releases 手动下载。仓库地址见 `main/app_update.js` 顶部的 `REPO` 常量。
 
 ---
 
@@ -126,6 +136,7 @@ npm run build
 │  ├─ pet_zip_import.js   用户 zip 导入桌宠
 │  ├─ album_pdf.js        PDF 相册导出
 │  ├─ album_video.js      MP4 视频相册导出
+│  ├─ app_update.js       自动更新（GitHub Releases + SHA-256 校验）
 │  └─ festivals.js        节日库
 ├─ pet/                 ← 桌宠窗口 preload
 ├─ src/                 ← 渲染进程（主窗口）
