@@ -70,3 +70,4 @@ coverage/
 # info.lps is also legacy metadata we don't read; ignore it too.
 #resources/pets/
 reference/
+.claude/

@@ -1593,13 +1593,21 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
    it and `overflow: hidden` would slice the decoration off (3.png's speech tail
    went missing this way). `--prev-w` is the smaller of the two, so whichever
    axis is tighter is the one that decides the fit. */
+/* The canvas is placed by offset and scaled to fit, both computed in JS.
+   `--prev-w`/`--prev-h` are the image's size as a percentage of the frame's
+   width and height respectively — two different pixel dimensions, which is why
+   they're separate values and not one. `--prev-left`/`--prev-top` are the
+   image's own top-left corner relative to the frame's top-left, already signed:
+   they are negative when the canvas overhangs the frame, which it usually does,
+   because the crop is showing the middle band of a much larger square. The sign
+   is applied here exactly once so the arithmetic in JS reads as plain offsets. */
 .action-texts-thumb > img {
   position: absolute;
-  width: var(--prev-wv, 125%);
-  height: var(--prev-wh, 125%);
+  width: var(--prev-w, 125%);
+  height: var(--prev-h, 125%);
   max-width: none;
-  left: calc(var(--prev-left, 10%) * -1);
-  top: calc(var(--prev-top, 25%) * -1);
+  left: var(--prev-left, -10%);
+  top: var(--prev-top, -25%);
   transform-origin: top left;
   object-fit: fill;
   pointer-events: none;

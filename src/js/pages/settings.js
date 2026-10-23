@@ -290,7 +290,7 @@ let _textBoxes = [];
 // The geometry behind this is the same one the pet window uses (see
 // main/pet_text_boxes.js and .pet-bubble.has-art in pet.css): the 2048×2048
 // canvas has the bubble in a middle band with 4–19% transparent margin on each
-// side and 23–33% above/below, so the raw canvas is mostly empty. `geom` rides
+// side and 9–29% above/below, so the raw canvas is mostly empty. `geom` rides
 // in the payload because the crop needs those margins.
 //
 // Deliberately just the frame, with no sample text laid over it. The point of
@@ -301,48 +301,66 @@ let _textBoxes = [];
 // interior already shows where text will go.
 function renderTextBoxThumb(box) {
   const g = box.geom || {};
-  const visW = 100 - (g.left || 10) - (g.right || 10);
-  const visH = 100 - (g.top || 25) - (g.bottom || 25);
-  // A drawn bubble with no measurement gets the conservative fallback aspect
-  // rather than being squashed into a square it probably doesn't have.
+  // The drawing's own shape, which is what the crop window has to be. A drawn
+  // bubble with no measurement gets the conservative fallback aspect rather
+  // than being squashed into a square it probably doesn't have.
   const aspect = Number.isFinite(g.aspect) && g.aspect > 0 ? g.aspect : 1.6;
 
-  // Scale by the *smaller* visible fraction, so the whole drawing fits.
+  // Margins as fractions of the canvas, falling back to the same centred guess
+  // main/pet_text_boxes.js makes for art with no measured row.
+  const l = g.left == null ? 10 : g.left;
+  const r = g.right == null ? 10 : g.right;
+  const t = g.top == null ? 25 : g.top;
+  const b = g.bottom == null ? 25 : g.bottom;
+
+  // The crop is one uniform scale applied to the square canvas, then the drawing
+  // is centred in the frame. This works because the measured `aspect` *is*
+  // `visW/visH` — the drawing's shape is the crop window's shape — so a single
+  // scale lands it proportionally on both axes at once.
   //
-  // Scaling by the larger one (as the pet window does, where the box is sized
-  // to the text and the overflow is allowed to hang outside) fills the frame on
-  // that axis and overflows the other, and `overflow: hidden` then cuts the
-  // decoration off: 3.png's speech tail and 2.png's bottom-left corner were
-  // sliced off mid-shape, so the user was picking a cropped picture of a bubble.
+  // Everything is computed in pixels against a frame of `fw` x `fh` and converted
+  // to percentages only at the very end. That matters because CSS resolves
+  // `width` against the frame's width but `height` against its height: a
+  // percentage that looks right as a width is a different number of pixels as a
+  // height. Mixing the two mid-calculation is what left every preview with its
+  // top and bottom sliced off — the canvas got stretched onto a non-square
+  // frame, overflowed it vertically, and `overflow: hidden` cut it.
   //
-  // Both axes must be expressed as percentages of their own dimension for the
-  // image to keep the drawing's proportions — hence two variables rather than
-  // one, unlike the pet where the box and the canvas are sized independently.
-  const kW = (100 / visW) * 100;
-  const kH = (100 / visH) * 100;
+  // The frame is taken as `fw` wide only because it's a convenient unit; the
+  // browser sizes it from `--thumb-w` and `--thumb-ar`, so every value below is
+  // a ratio and the absolute choice cancels out.
+  const fw = 100;
+  const fh = fw / aspect;
+  const visW = 100 - l - r;
+  const visH = 100 - t - b;
 
-  // The crop offsets have to be scaled by the same factor as the axis they
-  // apply to. A margin is a fraction of the *canvas*, but `left`/`top` resolve
-  // against the *frame*, and one canvas unit is now kW/100 (or kH/100) frame
-  // units — so the same 18.95% of canvas is 26.2% of a frame the image is 138%
-  // of. Feeding the raw margin in slides the image off-centre and pushes the
-  // drawing out of the crop box: bubble 3 lost its tail to the top edge.
-  const offX = ((g.left || 10) * kW) / 100;
-  const offY = ((g.top || 25) * kH) / 100;
+  // How much of the frame the drawing should occupy. Less than 1 leaves a margin
+  // so the art isn't flush against the edge — flush reads as *clipped* in a grid
+  // of small thumbnails, which is how "the picture isn't showing in full" gets
+  // reported. One number resizes all seven previews at once.
+  const INSET = 0.88;
 
-  // Fit inside the cell with a little breathing room, so a bubble whose drawing
-  // is nearly as wide as the cell (5.png is 90% of its canvas) doesn't sit flush
-  // against the cell edge and read as cut off. Sized off the smaller of the two
-  // scales — whichever axis is tighter is what decides the fit.
-  const k = Math.min(kW, kH) * 0.94;
+  // The canvas is square, so one side `q` fixes both axes and the drawing
+  // occupies visW x visH percent of it. Solving on the width also satisfies the
+  // height, because fh = fw * visH/visW by the aspect measurement.
+  const q = (fw * INSET * 100) / visW;
+  const drawW = (q * visW) / 100;
+  const drawH = (q * visH) / 100;
 
-  // Cap the width: 5.png is a 2.45:1 sliver, and at an uncapped cell width it
-  // renders as a hairline the user can't tell apart from the box outline.
-  const w = Math.min(100, 62 * aspect);
+  // Centre the *drawing* — not the canvas, which is lopsided; centring that
+  // would push the drawing to one side. The image then sits at the drawing's
+  // top-left minus the canvas margin that precedes it, which is negative: the
+  // canvas overhangs the frame, because the crop shows a middle band of a much
+  // larger square.
+  const ix = (fw - drawW) / 2 - (l / 100) * q;
+  const iy = (fh - drawH) / 2 - (t / 100) * q;
+
+  // The frame carries the drawing's own aspect, not the interior's, so the crop
+  // window is the shape of the whole thing including its decoration.
   return `<span class="action-texts-thumb"
-      style="--prev-w:${k}%;--prev-wv:${kW}%;--prev-wh:${kH}%;
-             --prev-left:${offX}%;--prev-top:${offY}%;
-             --thumb-w:${w}%;--thumb-ar:${aspect}">
+      style="--prev-w:${(q / fw) * 100}%;--prev-h:${(q / fh) * 100}%;
+             --prev-left:${(ix / fw) * 100}%;--prev-top:${(iy / fh) * 100}%;
+             --thumb-w:${Math.min(100, 62 * aspect)}%;--thumb-ar:${aspect}">
       <img alt="" draggable="false" src="${escapeHtml(box.url)}">
     </span>`;
 }

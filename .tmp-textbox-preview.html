@@ -1595,13 +1595,21 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
    it and `overflow: hidden` would slice the decoration off (3.png's speech tail
    went missing this way). `--prev-w` is the smaller of the two, so whichever
    axis is tighter is the one that decides the fit. */
+/* The canvas is placed by offset and scaled to fit, both computed in JS.
+   `--prev-w`/`--prev-h` are the image's size as a percentage of the frame's
+   width and height respectively — two different pixel dimensions, which is why
+   they're separate values and not one. `--prev-left`/`--prev-top` are the
+   image's own top-left corner relative to the frame's top-left, already signed:
+   they are negative when the canvas overhangs the frame, which it usually does,
+   because the crop is showing the middle band of a much larger square. The sign
+   is applied here exactly once so the arithmetic in JS reads as plain offsets. */
 .action-texts-thumb > img {
   position: absolute;
-  width: var(--prev-wv, 125%);
-  height: var(--prev-wh, 125%);
+  width: var(--prev-w, 125%);
+  height: var(--prev-h, 125%);
   max-width: none;
-  left: calc(var(--prev-left, 10%) * -1);
-  top: calc(var(--prev-top, 25%) * -1);
+  left: var(--prev-left, -10%);
+  top: var(--prev-top, -25%);
   transform-origin: top left;
   object-fit: fill;
   pointer-events: none;
@@ -3196,8 +3204,6 @@ body.locked #say-modal { display: none !important; }
   /* --zoom: blow the grid up so a couple of pixels of text offset is actually
      judgeable by eye. Off by default; the caller opts in. */
   
-  .action-texts-panel { transform: scale(1.9); transform-origin: top left; }
-  .stage { width: 1100px; }
 </style></head>
 <body><div class="stage"><div class="shell">
   <h3>只有一个下拉框展开，其余收起</h3>
@@ -3211,31 +3217,31 @@ body.locked #say-modal { display: none !important; }
         <span class="action-texts-panel" role="listbox" hidden><button type="button" class="action-texts-cell">
       <span class="action-texts-thumb action-texts-thumb-default"></span><span class="action-texts-cell-name">默认</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:130.17587591746297%;--prev-wv:138.48497438027977%;--prev-wh:207.29684908789386%;--prev-left:26.242902645063012%;--prev-top:55.4726368159204%;--thumb-w:92.81400000000001%;--thumb-ar:1.497">
+      <span class="action-texts-thumb" style="--prev-w:104.7868540128602%;--prev-h:134.54632055251253%;--prev-left:-1.5760895451297945%;--prev-top:-19.903540843057876%;--thumb-w:79.608%;--thumb-ar:1.284">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/1.png">
     </span><span class="action-texts-cell-name">1</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:112.8451380552221%;--prev-wv:120.04801920768308%;--prev-wh:213.53833013025834%;--prev-left:10.37214885954382%;--prev-top:56.09651932521887%;--thumb-w:100%;--thumb-ar:1.779">
+      <span class="action-texts-thumb" style="--prev-w:95.20718381477876%;--prev-h:181.46489235096828%;--prev-left:2.372606296656929%;--prev-top:-41.66699037109164%;--thumb-w:100%;--thumb-ar:1.906">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/2.png">
     </span><span class="action-texts-cell-name">2</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:112.57485029940118%;--prev-wv:119.76047904191616%;--prev-wh:197.12201852946976%;--prev-left:9.880239520958083%;--prev-top:47.54583086930811%;--thumb-w:100%;--thumb-ar:1.646">
+      <span class="action-texts-thumb" style="--prev-w:102.04081632653059%;--prev-h:106.83673469387753%;--prev-left:-1.020408163265306%;--prev-top:-3.3916581632652925%;--thumb-w:64.914%;--thumb-ar:1.047">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/3.png">
     </span><span class="action-texts-cell-name">3</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:121.61987320481302%;--prev-wv:129.38284383490748%;--prev-wh:240.67388688327318%;--prev-left:14.723767628412473%;--prev-top:70.27677496991576%;--thumb-w:100%;--thumb-ar:1.86">
+      <span class="action-texts-thumb" style="--prev-w:92.23351849910911%;--prev-h:154.02997589351222%;--prev-left:3.7495021486217377%;--prev-top:-29.571885546588412%;--thumb-w:100%;--thumb-ar:1.67">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/4.png">
     </span><span class="action-texts-cell-name">4</span>
     </button><button type="button" class="action-texts-cell is-on">
-      <span class="action-texts-thumb" style="--prev-w:103.50143140277473%;--prev-wv:110.1079057476327%;--prev-wh:270.1972439881113%;--prev-left:5.053952873816341%;--prev-top:88.27343961091597%;--thumb-w:100%;--thumb-ar:2.454">
+      <span class="action-texts-thumb" style="--prev-w:95.91280653950953%;--prev-h:208.6103542234332%;--prev-left:1.597602179836513%;--prev-top:-54.30517711171662%;--thumb-w:100%;--thumb-ar:2.175">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/5.png">
     </span><span class="action-texts-cell-name">5</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:121.98287049052684%;--prev-wv:129.76901116013494%;--prev-wh:200.36064916850327%;--prev-left:14.884505580067477%;--prev-top:50.67120817471447%;--thumb-w:95.72800000000001%;--thumb-ar:1.544">
+      <span class="action-texts-thumb" style="--prev-w:109.09992561368709%;--prev-h:158.0857922142326%;--prev-left:-6.470121497644435%;--prev-top:-33.51672402677907%;--thumb-w:89.83800000000001%;--thumb-ar:1.449">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/6.png">
     </span><span class="action-texts-cell-name">6</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:107.30593607305936%;--prev-wv:114.15525114155251%;--prev-wh:206.44095788604463%;--prev-left:7.077625570776256%;--prev-top:56.95706028075971%;--thumb-w:100%;--thumb-ar:1.808">
+      <span class="action-texts-thumb" style="--prev-w:99.14375844975216%;--prev-h:159.91888237945022%;--prev-left:0.4281207751239285%;--prev-top:-27.584645786390276%;--thumb-w:100%;--thumb-ar:1.613">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/7.png">
     </span><span class="action-texts-cell-name">7</span>
     </button></span>
@@ -3251,31 +3257,31 @@ body.locked #say-modal { display: none !important; }
         <span class="action-texts-panel" role="listbox"><button type="button" class="action-texts-cell">
       <span class="action-texts-thumb action-texts-thumb-default"></span><span class="action-texts-cell-name">默认</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:130.17587591746297%;--prev-wv:138.48497438027977%;--prev-wh:207.29684908789386%;--prev-left:26.242902645063012%;--prev-top:55.4726368159204%;--thumb-w:92.81400000000001%;--thumb-ar:1.497">
+      <span class="action-texts-thumb" style="--prev-w:104.7868540128602%;--prev-h:134.54632055251253%;--prev-left:-1.5760895451297945%;--prev-top:-19.903540843057876%;--thumb-w:79.608%;--thumb-ar:1.284">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/1.png">
     </span><span class="action-texts-cell-name">1</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:112.8451380552221%;--prev-wv:120.04801920768308%;--prev-wh:213.53833013025834%;--prev-left:10.37214885954382%;--prev-top:56.09651932521887%;--thumb-w:100%;--thumb-ar:1.779">
+      <span class="action-texts-thumb" style="--prev-w:95.20718381477876%;--prev-h:181.46489235096828%;--prev-left:2.372606296656929%;--prev-top:-41.66699037109164%;--thumb-w:100%;--thumb-ar:1.906">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/2.png">
     </span><span class="action-texts-cell-name">2</span>
     </button><button type="button" class="action-texts-cell is-on">
-      <span class="action-texts-thumb" style="--prev-w:112.57485029940118%;--prev-wv:119.76047904191616%;--prev-wh:197.12201852946976%;--prev-left:9.880239520958083%;--prev-top:47.54583086930811%;--thumb-w:100%;--thumb-ar:1.646">
+      <span class="action-texts-thumb" style="--prev-w:102.04081632653059%;--prev-h:106.83673469387753%;--prev-left:-1.020408163265306%;--prev-top:-3.3916581632652925%;--thumb-w:64.914%;--thumb-ar:1.047">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/3.png">
     </span><span class="action-texts-cell-name">3</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:121.61987320481302%;--prev-wv:129.38284383490748%;--prev-wh:240.67388688327318%;--prev-left:14.723767628412473%;--prev-top:70.27677496991576%;--thumb-w:100%;--thumb-ar:1.86">
+      <span class="action-texts-thumb" style="--prev-w:92.23351849910911%;--prev-h:154.02997589351222%;--prev-left:3.7495021486217377%;--prev-top:-29.571885546588412%;--thumb-w:100%;--thumb-ar:1.67">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/4.png">
     </span><span class="action-texts-cell-name">4</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:103.50143140277473%;--prev-wv:110.1079057476327%;--prev-wh:270.1972439881113%;--prev-left:5.053952873816341%;--prev-top:88.27343961091597%;--thumb-w:100%;--thumb-ar:2.454">
+      <span class="action-texts-thumb" style="--prev-w:95.91280653950953%;--prev-h:208.6103542234332%;--prev-left:1.597602179836513%;--prev-top:-54.30517711171662%;--thumb-w:100%;--thumb-ar:2.175">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/5.png">
     </span><span class="action-texts-cell-name">5</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:121.98287049052684%;--prev-wv:129.76901116013494%;--prev-wh:200.36064916850327%;--prev-left:14.884505580067477%;--prev-top:50.67120817471447%;--thumb-w:95.72800000000001%;--thumb-ar:1.544">
+      <span class="action-texts-thumb" style="--prev-w:109.09992561368709%;--prev-h:158.0857922142326%;--prev-left:-6.470121497644435%;--prev-top:-33.51672402677907%;--thumb-w:89.83800000000001%;--thumb-ar:1.449">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/6.png">
     </span><span class="action-texts-cell-name">6</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:107.30593607305936%;--prev-wv:114.15525114155251%;--prev-wh:206.44095788604463%;--prev-left:7.077625570776256%;--prev-top:56.95706028075971%;--thumb-w:100%;--thumb-ar:1.808">
+      <span class="action-texts-thumb" style="--prev-w:99.14375844975216%;--prev-h:159.91888237945022%;--prev-left:0.4281207751239285%;--prev-top:-27.584645786390276%;--thumb-w:100%;--thumb-ar:1.613">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/7.png">
     </span><span class="action-texts-cell-name">7</span>
     </button></span>
@@ -3291,31 +3297,31 @@ body.locked #say-modal { display: none !important; }
         <span class="action-texts-panel" role="listbox" hidden><button type="button" class="action-texts-cell is-on">
       <span class="action-texts-thumb action-texts-thumb-default"></span><span class="action-texts-cell-name">默认</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:130.17587591746297%;--prev-wv:138.48497438027977%;--prev-wh:207.29684908789386%;--prev-left:26.242902645063012%;--prev-top:55.4726368159204%;--thumb-w:92.81400000000001%;--thumb-ar:1.497">
+      <span class="action-texts-thumb" style="--prev-w:104.7868540128602%;--prev-h:134.54632055251253%;--prev-left:-1.5760895451297945%;--prev-top:-19.903540843057876%;--thumb-w:79.608%;--thumb-ar:1.284">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/1.png">
     </span><span class="action-texts-cell-name">1</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:112.8451380552221%;--prev-wv:120.04801920768308%;--prev-wh:213.53833013025834%;--prev-left:10.37214885954382%;--prev-top:56.09651932521887%;--thumb-w:100%;--thumb-ar:1.779">
+      <span class="action-texts-thumb" style="--prev-w:95.20718381477876%;--prev-h:181.46489235096828%;--prev-left:2.372606296656929%;--prev-top:-41.66699037109164%;--thumb-w:100%;--thumb-ar:1.906">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/2.png">
     </span><span class="action-texts-cell-name">2</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:112.57485029940118%;--prev-wv:119.76047904191616%;--prev-wh:197.12201852946976%;--prev-left:9.880239520958083%;--prev-top:47.54583086930811%;--thumb-w:100%;--thumb-ar:1.646">
+      <span class="action-texts-thumb" style="--prev-w:102.04081632653059%;--prev-h:106.83673469387753%;--prev-left:-1.020408163265306%;--prev-top:-3.3916581632652925%;--thumb-w:64.914%;--thumb-ar:1.047">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/3.png">
     </span><span class="action-texts-cell-name">3</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:121.61987320481302%;--prev-wv:129.38284383490748%;--prev-wh:240.67388688327318%;--prev-left:14.723767628412473%;--prev-top:70.27677496991576%;--thumb-w:100%;--thumb-ar:1.86">
+      <span class="action-texts-thumb" style="--prev-w:92.23351849910911%;--prev-h:154.02997589351222%;--prev-left:3.7495021486217377%;--prev-top:-29.571885546588412%;--thumb-w:100%;--thumb-ar:1.67">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/4.png">
     </span><span class="action-texts-cell-name">4</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:103.50143140277473%;--prev-wv:110.1079057476327%;--prev-wh:270.1972439881113%;--prev-left:5.053952873816341%;--prev-top:88.27343961091597%;--thumb-w:100%;--thumb-ar:2.454">
+      <span class="action-texts-thumb" style="--prev-w:95.91280653950953%;--prev-h:208.6103542234332%;--prev-left:1.597602179836513%;--prev-top:-54.30517711171662%;--thumb-w:100%;--thumb-ar:2.175">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/5.png">
     </span><span class="action-texts-cell-name">5</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:121.98287049052684%;--prev-wv:129.76901116013494%;--prev-wh:200.36064916850327%;--prev-left:14.884505580067477%;--prev-top:50.67120817471447%;--thumb-w:95.72800000000001%;--thumb-ar:1.544">
+      <span class="action-texts-thumb" style="--prev-w:109.09992561368709%;--prev-h:158.0857922142326%;--prev-left:-6.470121497644435%;--prev-top:-33.51672402677907%;--thumb-w:89.83800000000001%;--thumb-ar:1.449">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/6.png">
     </span><span class="action-texts-cell-name">6</span>
     </button><button type="button" class="action-texts-cell">
-      <span class="action-texts-thumb" style="--prev-w:107.30593607305936%;--prev-wv:114.15525114155251%;--prev-wh:206.44095788604463%;--prev-left:7.077625570776256%;--prev-top:56.95706028075971%;--thumb-w:100%;--thumb-ar:1.808">
+      <span class="action-texts-thumb" style="--prev-w:99.14375844975216%;--prev-h:159.91888237945022%;--prev-left:0.4281207751239285%;--prev-top:-27.584645786390276%;--thumb-w:100%;--thumb-ar:1.613">
       <img alt="" src="file:///C:/Users/liuhong/Desktop/claude/soul-desktop-pet/resources/text_boxes/7.png">
     </span><span class="action-texts-cell-name">7</span>
     </button></span>

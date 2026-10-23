@@ -109,45 +109,84 @@ function decodePng(buf) {
 // Bounds
 // ---------------------------------------------------------------------------
 
-// Smallest rectangle containing every pixel at/above `threshold`. Sampling on
-// a grid keeps this fast on a 2048² image (4M pixels) — the margins are large
-// and smooth, so a step of 4px is plenty accurate for CSS percentages, and the
-// result is then rounded to 0.1%.
+// Smallest rectangle containing every pixel at/above `threshold`.
+//
+// The coarse pass samples on a grid purely to find roughly *where* the art is;
+// the grid can miss sparse decoration entirely (a bat wing's tip lands between
+// two samples), so every edge it reports is then re-measured at full resolution.
+// That refine used to re-scan a single mid-height row for the horizontal edges
+// and a single mid-width column for the vertical ones, which quietly threw the
+// decoration away: on 1.png the mid row runs through the bubble's interior, so
+// the wings hanging above and the cross dangling below were both dropped, and
+// on 3.png the heavy outer frame sat outside the measured box entirely. The
+// numbers came out plausible — a clean rectangle with a sensible aspect — so
+// nothing looked wrong until the art was drawn on screen and read as cropped.
+//
+// Refining per-edge instead: for each of the four edges, scan only the rows (or
+// columns) the coarse pass found that edge on, and take the extreme across all
+// of them. Same cost, no decoration lost.
 function opaqueBounds(img, threshold = 12) {
   const { width, height, alphaAt } = img;
   const step = 4;
   let minX = width, minY = height, maxX = -1, maxY = -1;
 
+  // Every sampled row that is opaque at all, and every sampled column likewise.
+  // Kept as lists so each edge can be refined over the band it was seen in.
+  const rowsWithArt = [];
+  const colsWithArt = [];
+  const colHasArt = new Uint8Array(width);
+
   for (let y = 0; y < height; y += step) {
+    let rowMin = width, rowMax = -1;
     for (let x = 0; x < width; x += step) {
       if (alphaAt(x, y) < threshold) continue;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+      if (x < rowMin) rowMin = x;
+      if (x > rowMax) rowMax = x;
     }
+    if (rowMax < 0) continue;
+    rowsWithArt.push(y);
+    // Span this row's extent across the grid at full resolution, so the column
+    // list records where art really is rather than which samples happened to hit.
+    const from = Math.max(0, rowMin - step);
+    const to = Math.min(width - 1, rowMax + step);
+    for (let x = from; x <= to; x++) colHasArt[x] = 1;
+    if (rowMin < minX) minX = rowMin;
+    if (rowMax > maxX) maxX = rowMax;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
   }
   if (maxX < 0) return null;
+  for (let x = 0; x < width; x++) if (colHasArt[x]) colsWithArt.push(x);
 
-  // Refine each edge by scanning the step that found it at full resolution.
-  const scanRow = (y) => {
+  // Refine each edge at full resolution across the band it was seen in.
+  const refineX = () => {
     let lo = width, hi = -1;
-    for (let x = 0; x < width; x++) {
-      if (alphaAt(x, y) >= threshold) { if (x < lo) lo = x; if (x > hi) hi = x; }
+    for (const y of rowsWithArt) {
+      const scanFrom = Math.max(0, minX - step * 2), scanTo = Math.min(width - 1, maxX + step * 2);
+      for (let x = scanFrom; x <= scanTo; x++) {
+        if (alphaAt(x, y) < threshold) continue;
+        if (x < lo) lo = x;
+        if (x > hi) hi = x;
+      }
     }
     return [lo, hi];
   };
-  const scanCol = (x) => {
+  const refineY = () => {
     let lo = height, hi = -1;
-    for (let y = 0; y < height; y++) {
-      if (alphaAt(x, y) >= threshold) { if (y < lo) lo = y; if (y > hi) hi = y; }
+    for (const x of colsWithArt) {
+      const scanFrom = Math.max(0, minY - step * 2), scanTo = Math.min(height - 1, maxY + step * 2);
+      for (let y = scanFrom; y <= scanTo; y++) {
+        if (alphaAt(x, y) < threshold) continue;
+        if (y < lo) lo = y;
+        if (y > hi) hi = y;
+      }
     }
     return [lo, hi];
   };
 
-  const [rl, rr] = scanRow(Math.round((minY + maxY) / 2));
+  const [rl, rr] = refineX();
   if (rl >= 0) { minX = rl; maxX = rr; }
-  const [ct, cb] = scanCol(Math.round((minX + maxX) / 2));
+  const [ct, cb] = refineY();
   if (ct >= 0) { minY = ct; maxY = cb; }
 
   return { minX, minY, maxX, maxY };

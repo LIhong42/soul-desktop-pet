@@ -93,13 +93,13 @@ const { pathToFileURL } = require('url');
 // row. An id with no row here still works — it just gets the conservative
 // fallback geometry (see `geometryFor`).
 const GEOMETRY = {
-  '1': { left: 18.95, top: 26.76, right:  8.84, bottom: 25.00, aspect: 1.497, ia: 1.613, dx: -0.0093, dy: -0.0173 },
-  '2': { left:  8.64, top: 26.27, right:  8.06, bottom: 26.90, aspect: 1.779, ia: 2.007, dx: -0.0002, dy:  0.0024 },
-  '3': { left:  8.25, top: 24.12, right:  8.25, bottom: 25.15, aspect: 1.646, ia: 1.729, dx:  0,      dy:  0 },
-  '4': { left: 11.38, top: 29.20, right: 11.33, bottom: 29.25, aspect: 1.860, ia: 2.152, dx:  0.0034, dy: -0.0081 },
-  '5': { left:  4.59, top: 32.67, right:  4.59, bottom: 30.32, aspect: 2.454, ia: 3.383, dx:  0,      dy: -0.0103 },
-  '6': { left: 11.47, top: 25.29, right: 11.47, bottom: 24.80, aspect: 1.544, ia: 1.647, dx:  0,      dy:  0.0105 },
-  '7': { left:  6.20, top: 27.59, right:  6.20, bottom: 23.97, aspect: 1.808, ia: 2.170, dx:  0,      dy: -0.0173 },
+  '1': { left:  7.23, top: 19.24, right:  8.79, bottom: 15.33, aspect: 1.284, ia: 1.609, dx:  0.0498, dy: -0.0281 },
+  '2': { left:  3.81, top: 26.27, right:  3.76, bottom: 25.24, aspect: 1.906, ia: 2.007, dx:  0.0024, dy: -0.0059 },
+  '3': { left:  6.88, top:  8.79, right:  6.88, bottom:  8.84, aspect: 1.047, ia: 1.729, dx:  0,      dy: -0.0049 },
+  '4': { left:  2.44, top: 23.10, right:  2.15, bottom: 19.78, aspect: 1.670, ia: 2.152, dx:  0.0022, dy: -0.0249 },
+  '5': { left:  4.59, top: 28.91, right:  3.66, bottom: 28.91, aspect: 2.175, ia: 3.383, dx: -0.0046, dy:  0.0015 },
+  '6': { left: 11.43, top: 25.00, right:  7.91, bottom: 19.34, aspect: 1.449, ia: 1.704, dx: -0.0176, dy: -0.0078 },
+  '7': { left:  5.62, top: 21.00, right:  5.62, bottom: 23.97, aspect: 1.613, ia: 2.170, dx:  0,      dy:  0.0156 },
 };
 
 // Used for art with no measured row. Assumes the bubble is centred with a

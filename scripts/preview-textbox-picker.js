@@ -29,29 +29,29 @@ const BOX_URL = (id) => 'file:///' + path.join(ROOT, 'resources', 'text_boxes', 
 
 // id, and the measured geometry from main/pet_text_boxes.js.
 const BOXES = [
-  ['1', 18.95, 26.76, 8.84, 25.00, 1.497, -0.0093, -0.0173],
-  ['2',  8.64, 26.27, 8.06, 26.90, 1.779, -0.0002,  0.0024],
-  ['3',  8.25, 24.12, 8.25, 25.15, 1.646,  0,       0],
-  ['4', 11.38, 29.20, 11.33, 29.25, 1.860,  0.0034, -0.0081],
-  ['5',  4.59, 32.67, 4.59, 30.32, 2.454,  0,      -0.0103],
-  ['6', 11.47, 25.29, 11.47, 24.80, 1.544,  0,       0.0105],
-  ['7',  6.20, 27.59, 6.20, 23.97, 1.808,  0,      -0.0173],
+  ['1',  7.23, 19.24, 8.79, 15.33, 1.284,  0.0498, -0.0281],
+  ['2',  3.81, 26.27, 3.76, 25.24, 1.906,  0.0024, -0.0059],
+  ['3',  6.88,  8.79, 6.88,  8.84, 1.047,  0,      -0.0049],
+  ['4',  2.44, 23.10, 2.15, 19.78, 1.670,  0.0022, -0.0249],
+  ['5',  4.59, 28.91, 3.66, 28.91, 2.175, -0.0046,  0.0015],
+  ['6', 11.43, 25.00, 7.91, 19.34, 1.449, -0.0176, -0.0078],
+  ['7',  5.62, 21.00, 5.62, 23.97, 1.613,  0,       0.0156],
 ];
 
 // Same arithmetic as renderTextBoxThumb in settings.js.
 function thumb(id, l, t, r, b, aspect) {
-  // Mirrors renderTextBoxThumb: fit the whole drawing, scaling each axis by its
-  // own visible fraction, taking the tighter of the two, and scaling the crop
-  // offsets by the same factors (they resolve against the frame, not the canvas).
-  const visW = 100 - l - r;
-  const visH = 100 - t - b;
-  const kW = (100 / visW) * 100;
-  const kH = (100 / visH) * 100;
-  const k = Math.min(kW, kH) * 0.94;
-  const offX = (l * kW) / 100;
-  const offY = (t * kH) / 100;
+  // Mirrors renderTextBoxThumb: one uniform canvas scale, drawing centred in the
+  // frame, INSET of the frame's own box.
+  const fw = 100, fh = fw / aspect;
+  const visW = 100 - l - r, visH = 100 - t - b;
+  const INSET = 0.88;
+  const q = (fw * INSET * 100) / visW;
+  const drawW = (q * visW) / 100;
+  const drawH = (q * visH) / 100;
+  const ix = (fw - drawW) / 2 - (l / 100) * q;
+  const iy = (fh - drawH) / 2 - (t / 100) * q;
   const w = Math.min(100, 62 * aspect);
-  return `<span class="action-texts-thumb" style="--prev-w:${k}%;--prev-wv:${kW}%;--prev-wh:${kH}%;--prev-left:${offX}%;--prev-top:${offY}%;--thumb-w:${w}%;--thumb-ar:${aspect}">
+  return `<span class="action-texts-thumb" style="--prev-w:${(q / fw) * 100}%;--prev-h:${(q / fh) * 100}%;--prev-left:${(ix / fw) * 100}%;--prev-top:${(iy / fh) * 100}%;--thumb-w:${w}%;--thumb-ar:${aspect}">
       <img alt="" src="${BOX_URL(id)}">
     </span>`;
 }
