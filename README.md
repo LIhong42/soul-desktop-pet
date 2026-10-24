@@ -1,245 +1,245 @@
-# 🐾 SoulDesktopPet · 灵魂桌宠
+# 🐾 SoulDesktopPet
 
-> 一只住进你电脑里的桌宠，把**情绪价值、记忆价值、实用价值**三合一。
-> 卖萌的同时，替你记住那些最容易忽略的人和事。
+> A desktop pet that lives on your computer — combining **emotional companionship, memory keeping, and practical utility** in one.
+> It looks cute while quietly remembering the people and things you would otherwise forget.
 
----
-
-## 🌟 这是什么
-
-**SoulDesktopPet（灵魂桌宠）**是一款本地优先的桌面应用，把陪伴与记事合二为一：
-
-- 💝 **情绪价值**——一只常驻桌面的萌宠，会撒娇、走动、主动凑上来求摸摸；
-- 🧠 **记忆价值**——帮你记住联系人喜好、忌讳、礼物，节日生日自动提醒，回忆事件带相册；
-- 🛠 **实用价值**——工作事件按计划闹铃，回忆一键导出 PDF / MP4 相册。
-
-**🔒 一切数据只保存在你自己电脑里（`%APPDATA%/SoulDesktopPet/`）**，不上云、不上传、不联网。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
 ---
 
-## ✨ 核心功能
+## 🌟 What Is It?
 
-### 👥 联系人管理
-- 新建 / 编辑 / 删除联系人，自定义头像，记录昵称与关系；
-- 每个联系人可绑定「**喜好 · 忌讳 · 礼物**」三类标签，全局条目库批量管理；
-- 重要日期按公历 / **农历**记录，支持一次性或按年循环。
+**SoulDesktopPet** is a local-first desktop app that merges companionship with a personal memory keeper:
 
-### 📅 周期提醒
-- 生日、纪念日、节日周期触发；
-- **支持农历（新历）日期**，内置节日库：情人节、教师节、七夕、圣诞节、父亲节……含浮动节日自动计算；
-- 桌宠右上角实时显示未读提醒数，到点主动叫醒你。
+- 💝 **Emotional value** — a pet that lives on your desktop, acts cute, walks around, and comes over to be petted;
+- 🧠 **Memory value** — remembers contact preferences, taboos, and gift ideas; reminds you of birthdays and festivals; keeps memory events with photo albums;
+- 🛠 **Practical value** — schedules work events on a schedule, and exports memory albums to PDF / MP4 with one click.
 
-### 📷 回忆事件 & 相册导出
-- 「回忆事件」按时间线记录，留下每个重要瞬间；
-- 一个事件可绑定多张照片，**情侣第一次 xxx** 这种仪式感时刻专门收录；
-- 一键导出为 **PDF 相册** 或 **MP4 视频相册**，多套模板，所见即所得；
-- **年度相册**：自动汇聚某一年的所有回忆，方便回顾。
-
-### 💼 工作事件提醒
-- 一次性或**按 cron 周期循环**的工作提醒；
-- 与私人事件分通道呈现，不打扰也不遗漏。
-
-### 🐾 桌宠本体
-- 半透明无边框窗体，置顶显示，自动行走 / 待机 / 入睡；
-- **单击 / 双击 / 右击**多种交互：摸头、拍头、喂食、玩耍、睡觉、抱抱；
-- 右击弹出 **Cozy 互动菜单**，6 种动作全部可自定义角色动画。
-
-### 💞 亲密度系统（三层架构）
-- **Bond（永久羁绊）**：按 10 个维度每周结算，季度升级——是你与桌宠的"长线关系"；
-- **Cozy（短时温馨值）**：会随时间衰减，玩一次加一点，决定宠物当下心情；
-- **Mood（情绪）**：由 Cozy + 当天活动驱动，影响桌宠表情滤镜。
-
-> 双击拍头等高级互动需要亲密度 tier ≥ 5 解锁。
-
-### 🎨 个性化 & 插拔更换
-- 每个桌宠可独立配置：单击动作 / 待机循环动作 / 右击菜单 6 个 cozy 动作；
-- 上传帧动画 PNG 压缩包，**自动生成新桌宠，立刻可用**；
-- 内置拆帧工具：把视频按帧拆分为 PNG 序列，打包 zip——亲手 DIY 自己的桌宠。
-
-### 🔄 软件自动更新
-- 更新来源为 **GitHub Releases**，在「设置 → 软件更新」里可手动检查；
-- 默认**每天自动检查一次**，静默进行，不打扰桌宠；
-- 下载的安装包先校验 **SHA-256** 再执行，校验不通过的文件一律不安装；
-- 用户数据（联系人 / 提醒 / 回忆 / 照片）保存在 `%APPDATA%/SoulDesktopPet\`，
-  与安装目录分离，**升级过程不会删除它们**。
-
-### 🔐 隐私与安全
-- 主窗口需 4 位 PIN 码解锁（默认 `1234`），可在「设置 → 访问密码」中修改；
-- **数据库纯本地**：使用 sql.js（纯 JS SQLite），零原生依赖，不走任何云端 API；
-- 一键导出 / 导入 zip 备份，整机迁移无忧。
-
-> 自动更新只在**打包安装版（Windows）**可用；开发模式下会提示去 GitHub
-> Releases 手动下载。仓库地址见 `main/app_update.js` 顶部的 `REPO` 常量。
+**🔒 All data stays on your own computer (`%APPDATA%/SoulDesktopPet/`) — no cloud, no upload, no network calls.**
 
 ---
 
-## 🚀 安装与运行
+## ✨ Core Features
 
-### 准备环境
+### 👥 Contact Management
+- Create / edit / delete contacts, with custom avatars, nicknames, and relationships;
+- Bind three tag categories per contact — **likes · taboos · gifts** — managed from a global tag library;
+- Record important dates in the Gregorian or the **Chinese lunar calendar**, either one-off or recurring yearly.
+
+### 📅 Recurring Reminders
+- Birthdays, anniversaries, and festivals trigger on a cycle;
+- **Lunar (traditional Chinese) calendar dates are supported**, with a built-in festival library: Valentine's Day, Teacher's Day, Qixi, Christmas, Father's Day… including floating festivals that are computed automatically;
+- The pet shows an unread reminder badge in the corner and wakes you up when the time comes.
+
+### 📷 Memory Events & Album Export
+- "Memory events" record moments on a timeline, keeping every important highlight;
+- One event can hold multiple photos — perfect for ritual moments like *"our first trip together"*;
+- One-click export to a **PDF album** or an **MP4 video album**, with multiple templates and a live WYSIWYG preview;
+- **Annual album**: automatically gathers all memories from a given year for a year-in-review.
+
+### 💼 Work Event Reminders
+- One-off or **cron-scheduled recurring** work reminders;
+- Shown on a separate channel from personal events — never in the way, never missed.
+
+### 🐾 The Pet Itself
+- Translucent, borderless, always-on-top window that walks, idles, and falls asleep on its own;
+- **Single click / double click / right click** interactions: pet the head, pat the head, feed, play, sleep, hug;
+- Right click opens the **Cozy interaction menu** — all 6 actions are customizable per character animation.
+
+### 💞 Intimacy System (three-layer architecture)
+- **Bond (permanent bond)**: settled weekly across 10 dimensions, upgrading quarterly — your long-term relationship with the pet;
+- **Cozy (short-term warmth)**: decays over time, a little more with each play session, and drives the pet's current mood;
+- **Mood (emotion)**: derived from Cozy plus the day's activity, and drives the pet's expression filters.
+
+> Advanced interactions such as double-click head patting unlock at intimacy tier ≥ 5.
+
+### 🎨 Customization & Pluggable Characters
+- Every pet can be configured independently: click action / idle loop action / 6 cozy actions in the right-click menu;
+- Upload a frame-animation PNG package and **a new pet is generated automatically and ready to use**;
+- Built-in frame splitter: cut a video into a PNG sequence and zip it — DIY your own desktop pet.
+
+### 🔄 Software Auto-Update
+- Updates come from **GitHub Releases** and can be checked manually under "Settings → Software Update";
+- Checks run **automatically once a day**, silently, without interrupting your pet;
+- Downloaded installers are verified with **SHA-256** before execution — a file that fails verification is never installed;
+- User data (contacts / reminders / memories / photos) lives in `%APPDATA%\SoulDesktopPet\`, separate from the install directory, so **upgrading never deletes it**.
+
+### 🔐 Privacy & Security
+- The main window requires a 4-digit PIN to unlock (default `1234`), changeable under "Settings → Access Password";
+- **Fully local database**: uses sql.js (pure-JS SQLite), zero native dependencies, and never calls any cloud API;
+- One-click export / import of zip backups for painless whole-machine migration.
+
+> Auto-update is only available in the **packaged Windows build**; in development mode the app points you to GitHub Releases to download manually. The repository address is the `REPO` constant at the top of `main/app_update.js`.
+
+---
+
+## 🚀 Installation & Running
+
+### Prerequisites
 - Node.js 18+
-- Windows 10 / 11（macOS 也能跑，但默认打包目标是 Windows）
+- Windows 10 / 11 (macOS works too, but the default packaging target is Windows)
 
-### 安装依赖
+### Install dependencies
 ```bash
 npm install
 ```
-`postinstall` 钩子会自动补齐运行所需的 helper 模块。
+A `postinstall` hook automatically pulls in the helper modules needed at runtime.
 
-### 开发模式
+### Development mode
 ```bash
 npm run dev
 ```
-> 启动 Electron，主窗口自动打开并附带 DevTools；桌宠窗体置顶显示。
+> Launches Electron; the main window opens automatically with DevTools attached, and the pet window stays on top.
 
-### 正式启动
+### Production run
 ```bash
 npm start
 ```
 
-### 打包安装程序（Windows）
+### Build the installer (Windows)
 ```bash
 npm run build
 ```
-> 产物在 `dist/` 下，NSIS 安装器，自动生成桌面 + 开始菜单快捷方式（名称：SoulDesktopPet）。
+> Output lands in `dist/` as an NSIS installer, which automatically creates desktop and Start menu shortcuts (named: SoulDesktopPet).
 
 ---
 
-## 📂 数据存储位置
+## 📂 Where Data Lives
 
-所有数据均保存在操作系统用户目录：
+All data is stored in the OS user directory:
 
 ```
 %APPDATA%\SoulDesktopPet\
-  ├─ soul-desktop-pet.db       ← SQLite 数据库（sql.js）
-  ├─ avatars\<contact_id>      ← 联系人的自定义头像
-  ├─ photos\<event_id>\        ← 回忆事件照片
-  └─ pets\                     ← 内置 + 用户导入的桌宠包
+  ├─ soul-desktop-pet.db       ← SQLite database (sql.js)
+  ├─ avatars\<contact_id>      ← custom avatars for contacts
+  ├─ photos\<event_id>\        ← memory event photos
+  └─ pets\                     ← built-in + user-imported pet packages
 ```
 
-备份 zip 同样以 `soul-desktop-pet.db` 为根文件，导入时原子替换。
+Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on import.
 
 ---
 
-## 🗂 项目结构
+## 🗂 Project Structure
 
 ```
 .
-├─ main/                ← Electron 主进程（数据库、调度、IPC、桌宠引擎）
-│  ├─ main.js             入口
-│  ├─ db.js               sql.js 封装 + SQLite 模式
-│  ├─ scheduler.js        提醒队列 + 1Hz 亲密值管线
-│  ├─ ipc.js              所有 IPC handler
-│  ├─ bond_engine.js      亲密值（tier 1+2）算法
-│  ├─ cozy_engine.js      cozy（tier 3）算法
-│  ├─ pet_controller.js   桌宠自动行为状态机
-│  ├─ pet_registry.js     桌宠资源注册表
-│  ├─ pet_zip_import.js   用户 zip 导入桌宠
-│  ├─ album_pdf.js        PDF 相册导出
-│  ├─ album_video.js      MP4 视频相册导出
-│  ├─ app_update.js       自动更新（GitHub Releases + SHA-256 校验）
-│  └─ festivals.js        节日库
-├─ pet/                 ← 桌宠窗口 preload
-├─ src/                 ← 渲染进程（主窗口）
+├─ main/                ← Electron main process (database, scheduling, IPC, pet engine)
+│  ├─ main.js             entry point
+│  ├─ db.js               sql.js wrapper + SQLite schema
+│  ├─ scheduler.js        reminder queue + 1Hz intimacy pipeline
+│  ├─ ipc.js              all IPC handlers
+│  ├─ bond_engine.js      intimacy (tier 1+2) algorithm
+│  ├─ cozy_engine.js      cozy (tier 3) algorithm
+│  ├─ pet_controller.js   pet auto-behavior state machine
+│  ├─ pet_registry.js     pet asset registry
+│  ├─ pet_zip_import.js   user zip pet import
+│  ├─ album_pdf.js        PDF album export
+│  ├─ album_video.js      MP4 video album export
+│  ├─ app_update.js       auto-update (GitHub Releases + SHA-256 verification)
+│  └─ festivals.js        festival library
+├─ pet/                 ← pet window preload
+├─ src/                 ← renderer process (main window)
 │  ├─ index.html
-│  ├─ pet.html           ← 桌宠窗口 HTML
+│  ├─ pet.html           ← pet window HTML
 │  └─ js/
 │     ├─ main.js, api.js, router.js, auth.js, pet.js
-│     └─ pages/            路由页面（today / contacts / events / export …）
-├─ scripts/             ← 工具脚本（含若干 smoke 测）
-├─ docs/                ← 文档
-│  └─ 角色制作与更换指南.md   ← 角色制作 / 更换教程
-├─ icons/               ← 应用图标
-├─ resources/           ← 桌宠帧资源（默认包含若干内置桌宠）
+│     └─ pages/            router pages (today / contacts / events / export …)
+├─ scripts/             ← utility scripts (including several smoke tests)
+├─ docs/                ← documentation
+│  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)
+├─ icons/               ← application icons
+├─ resources/           ← pet frame assets (several built-in pets included)
 └─ package.json
 ```
 
-### 模块要点
+### Module highlights
 
-- **主进程**（`main/`）：所有数据库 / 文件系统 / 调度逻辑都在主进程，渲染进程只能通过 `preload.js` 暴露的白名单 IPC 访问；
-- **桌宠窗体**独立进程，自带透明无边框窗体、置顶渲染、不抢焦点；
-- **亲密值三层模型**已在 [核心功能](#-核心功能) 中说明，这里不再赘述。
-
----
-
-## 📖 使用入门
-
-### 1. 解锁主窗口
-- 启动后默认显示桌宠 + PIN 解锁界面（默认密码 `8888`）；
-- 在 **设置 → 访问密码** 中可修改 4 位 PIN。
-
-### 2. 添加联系人
-- 进入 **联系人 → 新建联系人**，填名称、关系、选头像 / 上传自定义头像；
-- 进联系人详情页可继续添加：喜好、忌讳、礼物、重要日期。
-
-### 3. 创建回忆事件 + 上传照片
-- **回忆事件 → 新建** → 填标题、日期、关联联系人；
-- 在详情页可批量上传照片，之后可一键导出 PDF / MP4 相册。
-
-### 4. 等待桌宠提醒
-- 桌宠右上角会显示未读提醒数，到时间桌面宠物会自动弹窗；
-- 点桌宠唤起主窗口 / 提醒弹窗，或在 **今日** 页查看所有当天事项。
-
-### 5. 与桌宠互动
-- **单击**：触发用户为该桌宠配置的"单击动作"（默认：摸一下）；
-- **双击**：触发"双击动作"（默认：拍头，亲密度 tier ≥ 5 解锁）；
-- **右击**：弹出 cozy 互动菜单：摸一下 / 拍头 / 喂食 / 玩耍 / 睡觉 / 抱抱；
-- 在 **设置 → 角色动作** 中可自由切换每个触发绑定的角色动画。
-
-### 6. 切换桌宠 / 导入新桌宠
-- **设置 → 桌面宠物形象** → 在下拉中切换，或上传帧动画压缩包；
-- 📘 想亲手做一个？👉 **见 [角色制作与更换指南](docs/角色制作与更换指南.md)**。
-
-### 7. 备份与迁移
-- **设置 → 数据迁移 → 导出备份** 生成 zip，包含数据库 + 所有照片 + 设置；
-- 在另一台机器上 **导入备份** 即可还原全部数据。
+- **Main process** (`main/`): all database / filesystem / scheduling logic lives here; the renderer can only reach it through the whitelisted IPC exposed by `preload.js`;
+- The **pet window** runs in its own process with a transparent, borderless, always-on-top window that never steals focus;
+- The **three-layer intimacy model** is described under [Core Features](#-core-features) above.
 
 ---
 
-## 📚 文档索引
+## 📖 Getting Started
 
-- 📘 **[角色制作与更换指南](docs/角色制作与更换指南.md)**——如何从零做一个新桌宠：拆帧 → PNG 排序 → 打包 zip → 一键导入。
+### 1. Unlock the main window
+- On launch you get the desktop pet plus a PIN unlock screen (default PIN `8888`);
+- Change the 4-digit PIN under **Settings → Access Password**.
 
-> 更多文档正在不断完善中……
+### 2. Add a contact
+- Go to **Contacts → New Contact**, fill in a name and relationship, pick or upload an avatar;
+- In the contact detail page you can keep adding likes, taboos, gifts, and important dates.
+
+### 3. Create a memory event and upload photos
+- **Memory Events → New** → fill in a title, date, and linked contacts;
+- In the detail page, upload photos in bulk, then export a PDF / MP4 album with one click.
+
+### 4. Wait for pet reminders
+- The pet shows an unread reminder count in the corner and pops up automatically when the time comes;
+- Click the pet to bring up the main window / reminder dialog, or check everything for the day under **Today**.
+
+### 5. Interact with the pet
+- **Single click**: triggers the "single-click action" configured for that pet (default: a gentle pet);
+- **Double click**: triggers the "double-click action" (default: head pat, unlocked at intimacy tier ≥ 5);
+- **Right click**: opens the cozy interaction menu — pet / pat head / feed / play / sleep / hug;
+- Under **Settings → Character Actions** you can freely switch the character animation bound to each trigger.
+
+### 6. Switch pets / import a new pet
+- **Settings → Desktop Pet Appearance** → pick one from the dropdown, or upload a frame-animation archive;
+- 📘 Want to build your own? 👉 See the **[Character Creation & Replacement Guide](docs/角色制作与更换指南.md)**.
+
+### 7. Back up and migrate
+- **Settings → Data Migration → Export Backup** produces a zip with the database, all photos, and settings;
+- **Import Backup** on another machine restores everything.
+
+---
+
+## 📚 Documentation
+
+- 📘 **[Character Creation & Replacement Guide](docs/角色制作与更换指南.md)** (Chinese) — build a brand-new pet from scratch: split frames → sort PNGs → pack into a zip → import in one click.
+
+> More documentation is on its way……
 
 ---
 
 
-## 🧰 技术栈
+## 🧰 Tech Stack
 
-| 层 | 选型 |
+| Layer | Choice |
 |---|---|
-| 桌面壳 | Electron 32 |
-| 数据库 | sql.js（纯 JS SQLite，零原生依赖） |
-| 渲染 | 原生 HTML + ES Module + hash 路由（无框架） |
-| 打包 | electron-builder + NSIS |
-| 视频帧拆分 | ffmpeg-static + fluent-ffmpeg |
-| PDF 生成 | pdfkit |
-| 农历 | lunar-javascript |
+| Desktop shell | Electron 32 |
+| Database | sql.js (pure-JS SQLite, zero native dependencies) |
+| Rendering | Vanilla HTML + ES Modules + hash router (no framework) |
+| Packaging | electron-builder + NSIS |
+| Video frame splitting | ffmpeg-static + fluent-ffmpeg |
+| PDF generation | pdfkit |
+| Lunar calendar | lunar-javascript |
 
-> 无任何云端依赖；无任何追踪；网络只在 OS 自动更新 Electron 时使用。
+> No cloud dependencies; no tracking; the network is used only when the OS updates Electron itself.
 
-## 📸 交流群
+## 📸 Community Chat
 
-想和作者 & 其他用户一起交流桌宠玩法、反馈 bug、分享自制角色？
+Want to chat with the author and other users about pet tricks, report bugs, and share your own characters?
 
-👉 加入 QQ 交流群（扫码下方二维码）：
+👉 Join the QQ group (scan the QR code below):
 
-![qq交流群](assets/qq交流群.jpg)
+![QQ community group](assets/qq交流群.jpg)
 
 ---
 
-## 🙏 致谢
+## 🙏 Acknowledgements
 
-本项目在设计与实现过程中参考了若干优秀的开源项目，特此致谢：
+This project was designed and implemented with inspiration from several excellent open-source projects:
 
 - [desktop-pet](https://github.com/TonyNa-code/desktop-pet)
 - [Monica](https://github.com/monicahq/monica)
 - [Immich Memories](https://github.com/sam-dumont/immich-memories)
 - [PhotoBook Studio](https://github.com/romaruss/ImmichPhotoBook)
-- 以及其它提供灵感的开源作品……
+- and other open-source works that provided inspiration……
 
 ---
 
 ## 📄 License
 
-Apache License 2.0 — 见 [LICENSE](LICENSE) / [NOTICE](NOTICE)。
+Apache License 2.0 — see [LICENSE](LICENSE) / [NOTICE](NOTICE).
