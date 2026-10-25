@@ -179,6 +179,7 @@ export const api = {
   tools: {
     splitVideo:     (opts) => M.tools.splitVideo(opts || {}),
     removeImageBackground: (opts) => M.tools.removeImageBackground(opts || {}),
+    batchResizeImages: (opts) => M.tools.batchResizeImages(opts || {}),
     cancel:         (payload) => M.tools.cancel(payload || {}),
     revealInFolder: (path) => M.tools.revealInFolder(path),
   },

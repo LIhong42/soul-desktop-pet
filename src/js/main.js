@@ -17,6 +17,7 @@ import './pages/event_edit.js';
 import './pages/tools.js';
 import './pages/tool_video_frames.js';
 import './pages/tool_transparent_png.js';
+import './pages/tool_batch_resize.js';
 import './pages/settings.js';
 import './pages/export.js';
 

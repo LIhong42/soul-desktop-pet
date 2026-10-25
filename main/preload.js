@@ -219,9 +219,16 @@ contextBridge.exposeInMainWorld('mp', {
   //   removeImageBackground({ tolerance, softness })
   //     → { canceled } | { canceled:false, path, width, height, bytes, transparentRatio, jobId }
   // tolerance is 'strict'|'normal'|'loose'; softness is 0-4.
+  //
+  // batchResizeImages backs the "批量缩小" tool. Both folder pickers run
+  // in the main process; the renderer just kicks off the job and waits.
+  //   batchResizeImages({ factor, recursive })
+  //     → { canceled } | { canceled:false, outputDir, count, failed, factor, jobId }
+  // factor is a divisor (2 = shrink to half); recursive defaults to true.
   tools: {
     splitVideo:     (opts) => ipcRenderer.invoke('tools:split_video_to_frames', opts || {}),
     removeImageBackground: (opts) => ipcRenderer.invoke('tools:remove_image_background', opts || {}),
+    batchResizeImages: (opts) => ipcRenderer.invoke('tools:batch_resize_images', opts || {}),
     cancel:         (payload) => ipcRenderer.invoke('tools:cancel', payload || {}),
     revealInFolder: (path) => ipcRenderer.invoke('tools:reveal_in_folder', path),
   },

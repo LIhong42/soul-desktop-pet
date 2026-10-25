@@ -29,6 +29,7 @@ const petTextBoxes = require('./pet_text_boxes');
 const videoFrameSplit = require('./video_frame_split');
 const autostart = require('./autostart');
 const imageBgRemove = require('./image_bg_remove');
+const imageBatchResize = require('./image_batch_resize');
 const appUpdate = require('./app_update');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
@@ -3043,7 +3044,89 @@ function normFreeText(s) {
     }
   });
 
-  // Tear down the bubble engine's timers on app quit. Both intervals keep
+  // ---- Tools page: batch image resize -------------------------------------
+  //
+  //   tools:batch_resize_images — folder pickers → ffmpeg scale → output folder
+  //
+  // Shares the `activeToolsJobs` map, `tools:cancel` handler, and
+  // `tools:progress` channel with the other two tools.
+  //
+  // This is the first tool in the app that picks *directories* rather than
+  // a single file. Both pickers run in main (same convention as every
+  // other dialog here) so the renderer never has to enumerate a folder
+  // itself — the file listing, the format decisions, and the ffmpeg calls
+  // all happen in the main process.
+  //
+  // The source folder is never written to. Output goes to a folder the
+  // user picks, mirroring the source's sub-directory structure. main/
+  // image_batch_resize.js additionally refuses to write into the source
+  // tree or a sub-folder of it, so a mis-click can't destroy originals.
+  ipcMain.handle('tools:batch_resize_images', async (_e, payload = {}) => {
+    // The factor is a divisor: 2 means "shrink to half". Clamp it to the
+    // range the module accepts so a bogus value can't reach ffmpeg.
+    const factorRaw = Number(payload && payload.factor);
+    const factor = Number.isFinite(factorRaw)
+      ? Math.max(imageBatchResize.MIN_FACTOR, Math.min(imageBatchResize.MAX_FACTOR, factorRaw))
+      : 2;
+    const recursive = !(payload && payload.recursive === false);
+
+    const srcPick = await dialog.showOpenDialog(winMain, {
+      title: '选择要缩小的图片文件夹',
+      properties: ['openDirectory'],
+    });
+    if (srcPick.canceled || !srcPick.filePaths || !srcPick.filePaths.length) {
+      return { canceled: true };
+    }
+    const inputDir = srcPick.filePaths[0];
+
+    // Default the output folder next to the source, named after it, so the
+    // common case needs no thinking. The user can pick anywhere.
+    const parentDir = path.dirname(inputDir);
+    const baseName = path.basename(inputDir);
+    const outPick = await dialog.showOpenDialog(winMain, {
+      title: '选择输出文件夹',
+      defaultPath: path.join(parentDir, `${baseName}-small`),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (outPick.canceled || !outPick.filePaths || !outPick.filePaths.length) {
+      return { canceled: true };
+    }
+    const outputDir = outPick.filePaths[0];
+
+    const jobId = `batchresize-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const job = { killed: false };
+    activeToolsJobs.set(jobId, job);
+
+    try {
+      const result = await imageBatchResize.resizeBatch({
+        inputDir,
+        outputDir,
+        factor,
+        recursive,
+        cancelCheck: () => job.killed,
+        progressCb: (info) => {
+          if (job.killed) return;
+          pushToolsProgress(jobId, info.phase, info.percent, info.note);
+        },
+      });
+      return {
+        canceled: false,
+        outputDir: result.outputDir,
+        count: result.count,
+        failed: result.failed,
+        factor,
+        jobId,
+      };
+    } catch (err) {
+      if (job.killed || (err && err.killed)) {
+        return { canceled: true, jobId };
+      }
+      throw err;
+    } finally {
+      activeToolsJobs.delete(jobId);
+    }
+  });
+
   // Node's event loop alive, and `main.js`'s before-quit handler is the one
   // place that already owns timer teardown, so we expose the cleanup rather
   // than hiding it behind a process listener here.
