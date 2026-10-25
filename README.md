@@ -153,7 +153,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 ├─ scripts/             ← utility scripts (including several smoke tests)
 ├─ docs/                ← documentation
 │  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)
-├─ icons/               ← application icons
+├─ icons/               ← application icons (icon.ico + per-size PNGs)
 ├─ resources/           ← pet frame assets (several built-in pets included)
 └─ package.json
 ```

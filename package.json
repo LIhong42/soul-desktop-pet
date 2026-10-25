@@ -46,6 +46,7 @@
       "pet/**/*",
       "src/**/*",
       "resources/**/*",
+      "icons/icon.png",
       "package.json",
       "node_modules/**/*",
       "!node_modules/.cache/**",

@@ -155,7 +155,7 @@ npm run build
 ├─ scripts/             ← 工具脚本（含若干 smoke 测）
 ├─ docs/                ← 文档
 │  └─ 角色制作与更换指南.md   ← 角色制作 / 更换教程
-├─ icons/               ← 应用图标
+├─ icons/               ← 应用图标（icon.ico + 各尺寸 PNG）
 ├─ resources/           ← 桌宠帧资源（默认包含若干内置桌宠）
 └─ package.json
 ```

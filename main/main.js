@@ -143,6 +143,9 @@ function createWindows({ petRegistry } = {}) {
     show: false,
     center: true,
     title: 'SoulDesktopPet',
+    // Packaged builds inherit the icon from the exe resource, but dev runs
+    // (plain electron.exe) would otherwise show the default Electron logo.
+    icon: path.join(__dirname, '..', 'icons', 'icon.png'),
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
