@@ -118,6 +118,10 @@ function estimateBackground(rgba, width, height) {
 // It used to re-implement the whole pipeline; having two copies of the
 // same steps is exactly how the tool and the zip importer drifted apart in
 // the first place.
+//
+// Every cleanup stage is on: the hole repair, the outline defringe, the
+// boundary expansion that removes the black rim around the character, and
+// the speck pass that clears the small leftover dots.
 function removeBackground({ inputPath, outPath, tolerance, softness, progressCb, cancelCheck }) {
   const ceiling = Number.isFinite(tolerance) ? tolerance : toleranceFor(null);
   return cutoutToPng({
@@ -127,6 +131,8 @@ function removeBackground({ inputPath, outPath, tolerance, softness, progressCb,
     softness,
     repair: true,
     defringe: true,
+    expand: true,
+    speck: true,
     progressCb,
     cancelCheck,
   });

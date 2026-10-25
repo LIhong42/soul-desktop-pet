@@ -81,16 +81,40 @@
 //
 // The pipeline
 // ------------
-// Every entry point runs the same four steps, in this order:
+// Every entry point runs the same six steps, in this order:
 //
 //   1. buildBottleneckMask — background = cheaply reachable from the edge
 //   2. applyMask         — write the alpha channel, feather the cut
 //   3. defringeOutline   — strip the white sticker stroke
-//   4. repairHoles       — close holes the cut left inside the character
+//   4. expandBoundary    — grow the cut outward to swallow the dark rim
+//   5. repairHoles       — close holes the cut left inside the character
+//   6. removeSpecks      — drop the isolated small leftover blobs
 //
 // The order is load-bearing. The defringe has to run *after* the cut
 // (it needs the background it hugs) and *before* the repair (the repair
-// would otherwise fill the stroke straight back in).
+// would otherwise fill the stroke straight back in). The expansion has
+// to run *after* the defringe, because the defringe measures the
+// stroke by its distance from the cut — a cut that had already grown
+// into the stroke band would shift that measurement and leave the
+// halo behind.
+//
+// The last two steps
+// ------------------
+// Two artefacts survive the cut itself:
+//
+//   - The dark rim. The flood stops at the first pixel it cannot walk
+//     through, which on real artwork is the anti-aliased fringe where
+//     the backdrop blends into the character's edge. On a dark backdrop
+//     that fringe is *black*, and it shows up as a halo following the
+//     silhouette. `expandBoundary` grows the transparent region a few
+//     pixels outward to swallow it — gated on darkness, so it eats the
+//     rim and stops at the character's own material.
+//
+//   - The black dots. A handful of isolated pixels of the backdrop can
+//     survive the cut when they happen to sit behind a thin strand of
+//     the character's line art. `removeSpecks` labels the connected
+//     components of what the cut kept and makes every component that
+//     is both small and disconnected from the body transparent.
 //
 // Performance
 // -----------
@@ -107,6 +131,10 @@ const { spawn } = require('node:child_process');
 const { getFfmpegPath } = require('./video_frame_split');
 const {
   buildBottleneckMask,
+  colorDistance,
+  computeLuminancePlane,
+  computeSobelGradient,
+  smoothLuminance,
   DEFAULT_CEIL,
 } = require('./png_bottleneck_flood');
 
@@ -124,6 +152,62 @@ const MAX_PIXELS = 24 * 1000 * 1000;
 
 // Keep stderr for error messages only; ffmpeg is chatty at default loglevel.
 const MAX_STDERR_BYTES = 8 * 1024;
+
+// How far the transparent region is grown outward, in pixels, to swallow
+// the dark anti-aliased fringe that the flood leaves behind.
+//
+// Five pixels is enough to cover the fringe on the artwork this tool is
+// built for: the fringe is a 2-4 px blend between the backdrop and the
+// character's edge, so 5 px reaches past it with a pixel or two to spare.
+//
+// It is an absolute pixel count rather than a ratio, because the fringe
+// is a property of the *rendering* (a blend between two colours), not of
+// the artwork's size — it stays a handful of pixels wide whether the
+// frame is 200 px or 4000 px across.
+const DEFAULT_EXPAND_PX = 5;
+
+// How far a pixel may be from the backdrop colour and still be swallowed
+// by the boundary expansion, in 0..255 units.
+//
+// This is the gate that makes the expansion safe. The rim left behind by
+// the flood is a *blend* of the backdrop and the character's edge, so it
+// sits close to the backdrop colour; the character's own material does
+// not.
+//
+// Measured on a real 432x576 frame, the kept pixels at depth 1-2 from
+// the cut (the rim) are pure black, depth 3 is the blend (median
+// luminance 32) and the character's own body starts at depth 5. Their
+// distance to the backdrop runs 0-56 for the rim and from 67 upward for
+// the character, so 60 separates them.
+//
+// The value is deliberately close to the old colour tolerance of 32 that
+// this algorithm replaced: it is used the same way (a per-channel
+// distance from the backdrop) but over a 5 px band instead of over the
+// whole frame, and *only* where the flood already decided the pixel was
+// nearly background. It cannot reach the character's interior, because
+// the interior is more than 5 px away from the cut.
+const DEFAULT_EXPAND_TOLERANCE = 60;
+
+// How far a pixel may be from the backdrop colour and still count as
+// speck material, in 0..255 units.
+//
+// A speck is leftover *background*, so it is judged against the backdrop
+// colour exactly like the cut itself judges the background. The value is
+// the same one the expansion uses, so a pixel that the expansion would
+// have removed is also a pixel the speck pass can recognise.
+const DEFAULT_SPECK_TOLERANCE = 60;
+
+// The highest Sobel gradient a speck pixel may sit on.
+//
+// This is the separator between "a leftover blob of background" and
+// "the character's own dark detail". A speck is flat material — the
+// gradient is near zero because the whole patch has the same colour. A
+// pupil, a button or a strand of hair sits on strong edges.
+//
+// The threshold is well below a real edge (a saturated anti-aliased
+// edge reaches 460-675) and above the noise of a flat patch (which
+// measures under 30).
+const DEFAULT_SPECK_MAX_GRADIENT = 120;
 
 // ---------------------------------------------------------------------
 // ffmpeg helpers
@@ -651,6 +735,47 @@ function distanceToBackground(mask, width, height) {
   return dist;
 }
 
+// Measure how dark the character's own material is.
+//
+// It is measured from the *deepest* kept pixels — the far interior of
+// the character, whatever the sprite's size — and it is a *low*
+// quantile rather than the median.
+//
+// The quantile is the important part. The interior of a character is
+// mostly dark costume, but it can contain a large bright region (a
+// white shirt, a white face, white hair). A median over the interior
+// is then pulled up by that region, the "body" ends up brighter than
+// the stroke, the comparison inverts, and the defringe bails out
+// silently — the halo stays. A low quantile lands on the costume
+// instead, which is the material the level actually has to protect.
+//
+// Returns null when there is too little interior to measure.
+function measureBodyLevel(rgba, mask, width, height, dist) {
+  const total = width * height;
+
+  const kept = [];
+  for (let i = 0; i < total; i += 1) {
+    if (mask[i] === 1) continue;
+    const d = dist[i];
+    if (d < 0) continue;
+    kept.push(d);
+  }
+  if (kept.length < 256) return null;
+  kept.sort((a, b) => a - b);
+  const deepCutoff = kept[Math.floor(kept.length * 0.9)];
+
+  const deep = [];
+  for (let i = 0; i < total; i += 1) {
+    if (mask[i] === 1) continue;
+    const d = dist[i];
+    if (d >= deepCutoff) deep.push(luminance(rgba, i));
+  }
+  if (deep.length < 64) return null;
+  deep.sort((a, b) => a - b);
+  // The 25th percentile of the interior: the costume, not the accents.
+  return deep[Math.floor(deep.length * 0.25)];
+}
+
 // Pick the brightness that separates the outline stroke from the body.
 //
 // The stroke raises the *median* luminance of the outer ring well above
@@ -690,39 +815,7 @@ function chooseDefringeLevel(rgba, mask, width, height, dist) {
   };
 
   // The body's level: how dark the character's own material is.
-  //
-  // It is measured from the *deepest* kept pixels — the far interior of
-  // the character, whatever the sprite's size — and it is a *low*
-  // quantile rather than the median.
-  //
-  // The quantile is the important part. The interior of a character is
-  // mostly dark costume, but it can contain a large bright region (a
-  // white shirt, a white face, white hair). A median over the interior
-  // is then pulled up by that region, the "body" ends up brighter than
-  // the stroke, the comparison inverts, and the defringe bails out
-  // silently — the halo stays. A low quantile lands on the costume
-  // instead, which is the material the level actually has to protect.
-  const kept = [];
-  for (let i = 0; i < total; i += 1) {
-    if (mask[i] === 1) continue;
-    const d = dist[i];
-    if (d < 0) continue;
-    kept.push(d);
-  }
-  if (kept.length < 256) return null;
-  kept.sort((a, b) => a - b);
-  const deepCutoff = kept[Math.floor(kept.length * 0.9)];
-
-  const deep = [];
-  for (let i = 0; i < total; i += 1) {
-    if (mask[i] === 1) continue;
-    const d = dist[i];
-    if (d >= deepCutoff) deep.push(luminance(rgba, i));
-  }
-  if (deep.length < 64) return null;
-  deep.sort((a, b) => a - b);
-  // The 25th percentile of the interior: the costume, not the accents.
-  const bodyLevel = deep[Math.floor(deep.length * 0.25)];
+  const bodyLevel = measureBodyLevel(rgba, mask, width, height, dist);
   if (bodyLevel === null) return null;
 
   // The stroke's crest: the brightest median in the outer ring.
@@ -777,7 +870,6 @@ function chooseDefringeLevel(rgba, mask, width, height, dist) {
     bodyLevel,
     crest,
     crestDepth,
-    deepCutoff,
   };
 }
 
@@ -1008,6 +1100,384 @@ function applyMask(rgba, mask, width, height, softness) {
   for (let i = 0; i < total; i += 1) rgba[i * 4 + 3] = coverage[i];
 }
 
+// ---------------------------------------------------------------------
+// Speck removal: the "small black dots" left behind by the cut
+// ---------------------------------------------------------------------
+//
+// The problem
+// -----------
+// The flood stops at the first pixel it cannot walk through, so any
+// *small* region of the backdrop that happens to be enclosed by
+// expensive pixels — or that sits behind a thin strand of the
+// character's dark line art — survives the cut and shows up as a
+// little black dot on the sprite.
+//
+// These are the classic leftovers of a magic-wand style cut: a
+// handful of isolated dark pixels, a couple of pixels wide, scattered
+// over the character's outline.
+//
+// The rule
+// --------
+// A speck is a small region of pixels that still look like *backdrop*
+// but that the cut kept. Two things define it:
+//
+//   (a) its colour is close to the backdrop colour, and
+//   (b) it is small.
+//
+// Condition (a) is what makes this safe and condition (b) is what
+// makes it useful.
+//
+// On colour alone the rule would be catastrophic — a character with a
+// black costume on a black backdrop is *entirely* backdrop-coloured,
+// and a threshold would delete the whole sprite. The area limit is
+// what prevents that: the costume is large, and a speck is small by
+// definition.
+//
+// The subtlety is that a speck is often *not* a separate connected
+// component. A 3x3 black dot inside the character's face is
+// 8-connected to the pixels around it, so a component labelling finds
+// nothing. The speck is detected by its *colour* and its *size*, not
+// by its connectivity.
+//
+// But a colour test alone would also delete a 3x3 patch of the
+// character's own dark line art — a pupil, an eye, a button. Those are
+// indistinguishable from a speck by colour and size alone.
+//
+// The separator is the same one the rest of the pipeline uses: the
+// *gradient*. A speck is flat backdrop-coloured material; a pupil is
+// the middle of a drawing, so it sits on a strong edge and is
+// surrounded by detail. A speck's neighbourhood is uniform.
+//
+// So the rule is: a kept pixel is a speck candidate when it is close
+// to the backdrop colour *and* flat. The candidates are then grouped
+// into blobs, and a blob qualifies only if it is small.
+//
+// The size limit is what keeps this safe. A component that is part of
+// the character — a thin antenna, a stray hair, a sword tip — is
+// disconnected from the body too, but it is usually *long*, so it
+// clears the area limit. A speck is small in area by definition.
+//
+// The limit is absolute (in pixels) rather than a ratio, because a
+// speck's size is a property of the *noise*, not of the artwork: it
+// is the same handful of pixels whether the frame is 200x200 or
+// 4000x4000. It is scaled mildly by the frame's short side so that a
+// 4K frame does not sprout dots that a 200px frame would not have.
+//
+// The order matters
+// -----------------
+// This runs *after* the cut and *after* the hole repair. The hole
+// repair closes transparent regions that are enclosed by the
+// character; a speck is the opposite — it is a background-coloured
+// region that the cut kept — so the two passes cannot fight. But the
+// speck pass has to run after the repair, because the repair may
+// turn a speck-sized region of the *background* into an opaque patch,
+// and that patch is then a speck we want gone.
+//
+// Returns { removed, components } — the number of pixels made
+// transparent and the number of speck components that were found.
+function removeSpecks(rgba, width, height, { maxArea, bg, tolerance } = {}) {
+  const total = width * height;
+  const NX = [-1, 0, 1, -1, 1, -1, 0, 1];
+  const NY = [-1, -1, -1, 0, 0, 1, 1, 1];
+
+  // Without a backdrop colour there is no way to tell a speck from the
+  // character's own material, so nothing is removed.
+  const backdrop = bg && bg.length >= 3 ? bg : null;
+  if (!backdrop) return { removed: 0, components: 0, skipped: 'no-backdrop' };
+
+  // The colour tolerance, in 0..255 units. A speck is background
+  // material, so it is judged by the same yardstick as the rest of the
+  // pipeline.
+  const limit = Number.isFinite(tolerance)
+    ? Math.max(0, tolerance)
+    : DEFAULT_SPECK_TOLERANCE;
+
+  // The size limit. The default is small enough that only noise
+  // qualifies, and it scales gently with the frame so a big frame
+  // tolerates a slightly bigger dot.
+  const shortSide = Math.min(width, height);
+  const areaLimit = Number.isFinite(maxArea)
+    ? Math.max(1, Math.round(maxArea))
+    : Math.max(16, Math.round(shortSide * 0.02));
+
+  // The candidate set: kept pixels that are close to the backdrop
+  // colour.
+  //
+  // The gradient is *not* tested here. A 3x3 speck sitting on a
+  // bright character has a gradient of 520 on its eight boundary
+  // pixels and 0 only in its centre, so a per-pixel gradient gate
+  // would keep the speck and remove only its middle — leaving a ring
+  // of eight black pixels, which is worse than the original dot.
+  //
+  // The gradient is measured on the blob as a whole instead, below.
+  const candidate = new Uint8Array(total);
+  for (let i = 0; i < total; i += 1) {
+    if (rgba[i * 4 + 3] === 0) continue;
+    if (colorDistance(rgba, i, backdrop) > limit) continue;
+    candidate[i] = 1;
+  }
+
+  // Group the candidates into blobs and keep the small ones.
+  const { labels, componentCount } = labelBlobs(candidate, width, height);
+  if (componentCount === 0) return { removed: 0, components: 0, limit: areaLimit };
+
+  const sizes = new Int32Array(componentCount);
+  for (let i = 0; i < total; i += 1) {
+    const l = labels[i];
+    if (l >= 0) sizes[l] += 1;
+  }
+
+  // Is a blob a speck or the character's own dark detail?
+  //
+  // A speck is flat material — a patch of backdrop colour that the cut
+  // happened to keep. The character's own dark detail (a pupil, a
+  // button, a strand of hair) is part of a *drawing*: it has strong
+  // edges around it, and it is surrounded by detail.
+  //
+  // The test is therefore on the blob's *interior* — the pixels whose
+  // whole neighbourhood is inside the blob. A speck big enough to have
+  // an interior is a flat patch, so its interior gradient is low. A
+  // pupil is 3x3 and has no interior at all, so the test cannot
+  // condemn it — the area limit handles that case, and the detail
+  // around it is what makes it survive.
+  //
+  // Measured on a real frame, a speck's interior gradient is under 30
+  // while a saturated edge runs 460-675.
+  const lum = smoothLuminance(computeLuminancePlane(rgba, width, height), width, height);
+  const grad = computeSobelGradient(lum, width, height);
+
+  const speck = new Uint8Array(total);
+  let removed = 0;
+  let components = 0;
+
+  for (let l = 0; l < componentCount; l += 1) {
+    if (sizes[l] > areaLimit) continue;
+
+    // Collect the blob's interior pixels and their gradient.
+    let interior = 0;
+    let gradientSum = 0;
+    for (let i = 0; i < total; i += 1) {
+      if (labels[i] !== l) continue;
+      const x = i % width;
+      const y = (i - x) / width;
+      // Is the whole 8-neighbourhood inside the blob?
+      let enclosed = true;
+      for (let k = 0; k < 8; k += 1) {
+        const nx = x + NX[k];
+        const ny = y + NY[k];
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) { enclosed = false; break; }
+        if (labels[ny * width + nx] !== l) { enclosed = false; break; }
+      }
+      if (!enclosed) continue;
+      interior += 1;
+      gradientSum += grad[i];
+    }
+
+    // A blob with no interior is 1-2 px across: too small to be worth
+    // judging, and small enough to be a speck by definition.
+    // A blob with an interior has to be flat to count.
+    if (interior > 0 && gradientSum / interior > DEFAULT_SPECK_MAX_GRADIENT) continue;
+
+    for (let i = 0; i < total; i += 1) {
+      if (labels[i] !== l) continue;
+      speck[i] = 1;
+      removed += 1;
+    }
+    components += 1;
+  }
+
+  if (removed > 0) {
+    for (let i = 0; i < total; i += 1) {
+      if (speck[i]) rgba[i * 4 + 3] = 0;
+    }
+  }
+
+  return { removed, components, limit: areaLimit };
+}
+
+// ---------------------------------------------------------------------
+// Boundary expansion: eat the dark rim left around the character
+// ---------------------------------------------------------------------
+//
+// The tolerance
+// -------------
+// The expansion's colour gate is derived from the cost ceiling the cut
+// was made with, so that the two knobs stay consistent: a "strict" cut
+// gets a strict expansion, a "loose" cut gets a loose one.
+//
+// The cost field's colour term is `Db/255` and its gradient term is
+// `LE * G/GMAX`. A ceiling of 0.12 therefore admits a colour distance
+// of up to 0.12*255 = 31 on flat pixels, plus whatever the gradient
+// allows on edges. The expansion has no gradient term — it only looks
+// at the colour — so it uses a slightly wider tolerance to cover the
+// blend ramp the flood stopped short of.
+//
+// The mapping is linear from the ceiling's colour allowance up to the
+// measured default, which keeps "strict" at roughly half of "loose".
+function expandToleranceFor(ceiling) {
+  const c = Number.isFinite(ceiling) ? ceiling : DEFAULT_CEIL;
+  // 0.09 (strict) -> 45, 0.12 (normal) -> 60, 0.14 (loose) -> 70.
+  const scaled = (c - 0.09) / (0.14 - 0.09);
+  return Math.round(
+    Math.max(20, Math.min(80, 45 + scaled * (DEFAULT_EXPAND_TOLERANCE - 45))),
+  );
+}
+
+// The problem
+// -----------
+// The flood stops at the first pixel it cannot walk through, which on
+// real artwork is the *anti-aliased fringe* — the band where the
+// backdrop blends into the character's edge. That band survives the
+// cut, and on a dark backdrop it is a dark rim: a black halo that
+// follows the character's silhouette.
+//
+// It is a real artefact and not a rounding error. Measured on a real
+// 432x576 frame, the pixels the cut *keeps* right at the boundary are:
+//
+//   depth 1-2   luminance 0        — pure black
+//   depth 3-4   luminance 22..161  — the blend ramp
+//   depth 5+    luminance 200+      — the character's own body
+//
+// So the sprite comes out wearing a black outline the artwork never
+// had.
+//
+// The fix
+// -------
+// Grow the transparent region outward by a few pixels so the fringe
+// is swallowed too.
+//
+// But growing it *unconditionally* is destructive: 5 px of the
+// character would be eaten along its entire silhouette, which on a
+// 432x576 sprite is a visible dent in every limb and facial feature.
+//
+// Why a per-pixel colour gate is not enough
+// ------------------------------------------
+// The obvious gate is "remove pixels close to the backdrop colour".
+// It does not work, and the measurement says why.
+//
+// On the reference frame the kept pixels at depth 3 and 4 — the
+// ambiguous band, half blend and half body — have these distances to
+// the backdrop:
+//
+//   depth 3   p10=0  p25=0  p50=34  p75=76  p90=127
+//   depth 4   p10=0  p25=0  p50=33  p75=57  p90=103
+//
+// Half of each band is at distance 0 and half is at 100+. No single
+// threshold separates them: pick 60 and you keep half the blend;
+// pick 20 and you keep half the character's edge. The blend and the
+// body *overlap completely* in colour, because a blend between black
+// and a bright body passes through every colour in between.
+//
+// The rule that does work
+// -----------------------
+// The flood already made the right call; it just stopped a little
+// early, and the reason it stopped is the *gradient* term.
+//
+// The cost of a pixel is `Db/255 + LE * min(1, G/GMAX)`. The rim is
+// expensive almost entirely because of its gradient — it is the band
+// where the backdrop meets the character, so it is an edge by
+// definition. Its *colour* term is nearly zero.
+//
+// So the expansion re-runs the same connectivity question with the
+// gradient term switched off: flood outward from the already-known
+// background, through pixels whose **colour alone** is close enough to
+// the backdrop, and no further than `expand` pixels.
+//
+// Two things make this safe:
+//
+//   1. The colour gate. The character's own material is not close to
+//      the backdrop colour, so the flood cannot walk into it. On the
+//      reference frame the body's edge sits at distance 67+ while the
+//      rim sits at 0-56.
+//
+//   2. Connectivity. The flood starts from the background and stops at
+//      the first pixel that fails the colour test. Even where a blend
+//      pixel is dark enough to pass the test, the flood has to *reach*
+//      it through other passing pixels. The character's edge is
+//      bright, so it forms a wall the flood never crosses. This is
+//      the same invariant that protects the character in the original
+//      cut, applied with a weaker gate.
+//
+// The `expand` radius bounds the damage if the wall is broken
+// somewhere: at most `expand` pixels of the character can be lost per
+// boundary, rather than the whole costume.
+//
+// Returns { removed } — the number of pixels that were added to the
+// transparent region.
+function expandBoundary(rgba, mask, width, height, { expand, bg, tolerance } = {}) {
+  const total = width * height;
+  const reach = Number.isFinite(expand)
+    ? Math.max(0, Math.round(expand))
+    : DEFAULT_EXPAND_PX;
+  if (reach <= 0) return { removed: 0, reach: 0 };
+
+  // Without a backdrop colour there is no gate, so nothing is expanded.
+  const backdrop = bg && bg.length >= 3 ? bg : null;
+  if (!backdrop) return { removed: 0, reach, skipped: 'no-backdrop' };
+
+  // The colour tolerance, in 0..255 units.
+  const limit = Number.isFinite(tolerance)
+    ? Math.max(0, tolerance)
+    : DEFAULT_EXPAND_TOLERANCE;
+
+  // Distance from every pixel to the nearest already-transparent pixel.
+  //
+  // The transparent region is the seed set, so a kept pixel's distance
+  // is exactly how far it sits from the cut. A pixel at distance d is
+  // within the expansion radius when d <= reach.
+  const dist = distanceToBackground(mask, width, height);
+
+  // Flood outward from the background through pixels that are close to
+  // the backdrop colour, up to `reach` pixels deep.
+  //
+  // The background itself is the seed set, so the flood starts exactly
+  // where the original cut stopped.
+  const reached = new Uint8Array(total);
+  const stack = new Int32Array(total);
+  let sp = 0;
+
+  const push = (i) => {
+    if (reached[i]) return;
+    if (mask[i] === 1) { reached[i] = 1; stack[sp] = i; sp += 1; return; }
+    // The colour gate: how much backdrop is still in this pixel.
+    if (colorDistance(rgba, i, backdrop) > limit) return;
+    // The radius: never walk further than `reach` from the cut.
+    if (dist[i] > reach) return;
+    reached[i] = 1;
+    stack[sp] = i;
+    sp += 1;
+  };
+
+  for (let i = 0; i < total; i += 1) {
+    if (mask[i] === 1) { reached[i] = 1; stack[sp] = i; sp += 1; }
+  }
+
+  const NX = [-1, 0, 1, -1, 1, -1, 0, 1];
+  const NY = [-1, -1, -1, 0, 0, 1, 1, 1];
+  while (sp > 0) {
+    sp -= 1;
+    const idx = stack[sp];
+    const x = idx % width;
+    const y = (idx - x) / width;
+    for (let k = 0; k < 8; k += 1) {
+      const nx = x + NX[k];
+      const ny = y + NY[k];
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      push(ny * width + nx);
+    }
+  }
+
+  let removed = 0;
+  for (let i = 0; i < total; i += 1) {
+    if (mask[i] === 1) continue;
+    if (!reached[i]) continue;
+    mask[i] = 1;
+    removed += 1;
+  }
+
+  return { removed, reach, tolerance: limit };
+}
+
 // Encode an RGBA buffer to a PNG file.
 //
 // ffmpeg's PNG encoder does write the alpha channel, so no separate PNG
@@ -1052,9 +1522,11 @@ async function encodePng(rgba, width, height, outPath, { cancelCheck } = {}) {
 //   softness   — 0..4 edge-feathering ring count
 //   repair     — close holes the cut left inside the character
 //   defringe   — strip the white "sticker" outline
+//   expand     — grow the cut outward to swallow the dark rim (px)
+//   speck      — remove isolated small leftover blobs
 //   cancelCheck— () => boolean, polled between the heavy steps
 //
-// The four steps run in a fixed order, and the order is load-bearing:
+// The six steps run in a fixed order, and the order is load-bearing:
 //
 //   1. buildBottleneckMask — decide what is background. The background is
 //      the set of pixels that can be walked to from the image edge without
@@ -1067,13 +1539,26 @@ async function encodePng(rgba, width, height, outPath, { cancelCheck } = {}) {
 //      that hugs the cut, and *before* the repair, because the repair
 //      would otherwise fill the stroke straight back in.
 //
-//   4. repairHoles — close the transparent regions that sit *inside* the
+//   4. expandBoundary — grow the cut outward by a few pixels so the dark
+//      anti-aliased rim the flood left behind is swallowed. It has to run
+//      *after* the defringe: the defringe locates the stroke by its
+//      distance from the cut, so if the cut had already grown into the
+//      stroke band, the stroke would be found at the wrong depth and the
+//      halo would survive.
+//
+//   5. repairHoles — close the transparent regions that sit *inside* the
 //      character's silhouette, so the character can never come out
 //      hollow.
 //
+//   6. removeSpecks — make the isolated small leftover blobs transparent.
+//      It runs last, because the repair above may turn a speck-sized
+//      patch of background into an opaque blob, and that blob is exactly
+//      the kind of speck this pass exists to remove.
+//
 // Returns the mask plus the statistics both entry points report.
 function runCutoutPipeline(rgba, width, height, {
-  ceiling, softness = 0, repair = true, defringe = true, cancelCheck,
+  ceiling, softness = 0, repair = true, defringe = true,
+  expand = DEFAULT_EXPAND_PX, speck = true, cancelCheck,
 } = {}) {
   const cancelled = () => {
     try { return !!(cancelCheck && cancelCheck()); } catch { return false; }
@@ -1100,11 +1585,43 @@ function runCutoutPipeline(rgba, width, height, {
     const d = defringeOutline(rgba, mask, width, height);
     defringed = d.removed;
   }
+  if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
+
+  // Grow the cut outward so the dark anti-aliased rim around the
+  // character is swallowed instead of showing up as a black halo.
+  //
+  // The gate is the distance to the backdrop colour, and it is derived
+  // from the ceiling the cut was made with so the two agree: a tighter
+  // cut means a tighter expansion.
+  let expanded = 0;
+  if (expand > 0) {
+    const e = expandBoundary(rgba, mask, width, height, {
+      expand,
+      bg: backgroundColor,
+      tolerance: expandToleranceFor(effectiveCeiling),
+    });
+    expanded = e.removed;
+    // The mask changed, so the alpha channel has to be rewritten — the
+    // expansion only moved the *mask*, not the pixels.
+    if (expanded > 0) applyMask(rgba, mask, width, height, softness);
+  }
+  if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
 
   let repaired = 0;
   if (repair) {
     const r = repairHoles(rgba, width, height);
     repaired = r.repaired;
+  }
+
+  let specked = 0;
+  let speckComponents = 0;
+  if (speck) {
+    const s = removeSpecks(rgba, width, height, {
+      bg: backgroundColor,
+      tolerance: expandToleranceFor(effectiveCeiling),
+    });
+    specked = s.removed;
+    speckComponents = s.components;
   }
 
   return {
@@ -1116,6 +1633,9 @@ function runCutoutPipeline(rgba, width, height, {
     requestedCeiling: usedCeiling,
     repairedPixels: repaired,
     defringedPixels: defringed,
+    expandedPixels: expanded,
+    speckedPixels: specked,
+    speckComponents,
   };
 }
 
@@ -1135,7 +1655,7 @@ function runCutoutPipeline(rgba, width, height, {
 // Returns { width, height, transparentRatio, backgroundColor, bytes }.
 async function cutoutToPng({
   inputPath, outPath, ceiling, softness, repair = true, defringe = true,
-  progressCb, cancelCheck,
+  expand = DEFAULT_EXPAND_PX, speck = true, progressCb, cancelCheck,
 }) {
   const progress = (phase, percent, note) => {
     try {
@@ -1173,7 +1693,7 @@ async function cutoutToPng({
 
   progress('analyzing', 45, '正在识别背景');
   const stats = runCutoutPipeline(rgba, width, height, {
-    ceiling, softness, repair, defringe, cancelCheck,
+    ceiling, softness, repair, defringe, expand, speck, cancelCheck,
   });
   if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
 
@@ -1191,6 +1711,8 @@ async function cutoutToPng({
     requestedCeiling: stats.requestedCeiling,
     repairedPixels: stats.repairedPixels,
     defringedPixels: stats.defringedPixels,
+    expandedPixels: stats.expandedPixels,
+    speckedPixels: stats.speckedPixels,
     bytes: fs.statSync(outPath).size,
   };
 }
@@ -1203,7 +1725,10 @@ async function cutoutToPng({
 // reason to write an intermediate file either. The bytes are staged to a
 // temp file only because Windows ffmpeg will not read an image from
 // `pipe:0`.
-async function cutoutPngBuffer(bytes, { ceiling, softness, repair = true, defringe = true } = {}) {
+async function cutoutPngBuffer(bytes, {
+  ceiling, softness, repair = true, defringe = true,
+  expand = DEFAULT_EXPAND_PX, speck = true,
+} = {}) {
   if (!Buffer.isBuffer(bytes)) {
     throw new Error('cutoutPngBuffer 需要 Buffer 输入');
   }
@@ -1255,7 +1780,9 @@ async function cutoutPngBuffer(bytes, { ceiling, softness, repair = true, defrin
 
     let stats;
     try {
-      stats = runCutoutPipeline(rgba, width, height, { ceiling, softness, repair, defringe });
+      stats = runCutoutPipeline(rgba, width, height, {
+        ceiling, softness, repair, defringe, expand, speck,
+      });
     } catch (err) {
       if (err && err.noBackground) {
         // Nothing to remove — the frame is already fully opaque artwork, or
@@ -1283,11 +1810,17 @@ module.exports = {
   applyMask,
   defringeOutline,
   chooseDefringeLevel,
+  measureBodyLevel,
   distanceToBackground,
+  expandBoundary,
+  expandToleranceFor,
+  removeSpecks,
   repairHoles,
   findEnclosedHoles,
   fillHolesWithColor,
   MAX_PIXELS,
+  DEFAULT_EXPAND_PX,
+  DEFAULT_EXPAND_TOLERANCE,
   getFfmpegPath,
   // Shared with main/image_bg_remove.js, which reuses the same ffmpeg helpers.
   _internal: { runFfmpeg, probeSize },

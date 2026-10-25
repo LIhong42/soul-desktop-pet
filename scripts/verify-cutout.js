@@ -258,6 +258,173 @@ function runSynthetic() {
       `${bright} bright opaque pixels kept`,
     );
   }
+
+  // -- Case 6: the boundary expansion eats the black outline --------------
+  //
+  // A light disc on a black backdrop, ringed by a 3 px black outline (the
+  // artwork's own line art). The outline must be removed, and the disc's
+  // body must survive completely.
+  {
+    const W2 = 120;
+    const H2 = 120;
+    const rgba = makeImage(W2, H2, (x, y) => {
+      const dx = x - 60;
+      const dy = y - 60;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < 30) return [235, 235, 235];   // the body
+      if (d < 33) return [0, 0, 0];         // the black outline
+      return [0, 0, 0];                     // the backdrop
+    });
+
+    // The plain cut leaves the outline in place.
+    const plain = Buffer.from(rgba);
+    cut.runCutoutPipeline(plain, W2, H2, { ceiling: 0.12, softness: 0, expand: 0, speck: false });
+
+    // The full pipeline removes it.
+    const full = Buffer.from(rgba);
+    const stats = cut.runCutoutPipeline(full, W2, H2, { ceiling: 0.12, softness: 0 });
+
+    // The outline band is the ring at radius 30..33.
+    let outlineLeftPlain = 0;
+    let outlineLeftFull = 0;
+    let bodyLost = 0;
+    let bodyPixels = 0;
+    for (let y = 0; y < H2; y += 1) {
+      for (let x = 0; x < W2; x += 1) {
+        const dx = x - 60;
+        const dy = y - 60;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const o = (y * W2 + x) * 4;
+        if (d >= 30 && d < 33) {
+          if (plain[o + 3] !== 0) outlineLeftPlain += 1;
+          if (full[o + 3] !== 0) outlineLeftFull += 1;
+        }
+        if (d < 28) {
+          bodyPixels += 1;
+          if (full[o + 3] === 0) bodyLost += 1;
+        }
+      }
+    }
+    assert(
+      'the plain cut leaves the black outline in place',
+      outlineLeftPlain > 100,
+      `${outlineLeftPlain} outline pixels still opaque without the expansion`,
+    );
+    assert(
+      'the boundary expansion removes the black outline',
+      outlineLeftFull < outlineLeftPlain * 0.5,
+      `${outlineLeftPlain} -> ${outlineLeftFull} outline pixels opaque`,
+    );
+    assert(
+      'the boundary expansion leaves the character\'s body intact',
+      bodyLost === 0,
+      `${bodyLost}/${bodyPixels} body pixels lost`,
+    );
+    assert(
+      'the expansion reports how much it removed',
+      stats.expandedPixels > 0,
+      `${stats.expandedPixels} px expanded`,
+    );
+  }
+
+  // -- Case 7: the speck pass removes isolated leftover blobs --------------
+  //
+  // A bright disc on a black backdrop with three tiny black dots sitting
+  // inside the disc. Each dot is 3x3 — small and disconnected from
+  // nothing else — so the speck pass must clear them.
+  {
+    const W2 = 120;
+    const H2 = 120;
+    const dots = [[50, 50], [70, 50], [60, 70]];
+    const rgba = makeImage(W2, H2, (x, y) => {
+      const dx = x - 60;
+      const dy = y - 60;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < 30) {
+        for (const [cx, cy] of dots) {
+          if (Math.abs(x - cx) < 2 && Math.abs(y - cy) < 2) return [0, 0, 0];
+        }
+        return [235, 235, 235];
+      }
+      return [0, 0, 0];
+    });
+
+    // Without the speck pass the dots survive.
+    const plain = Buffer.from(rgba);
+    cut.runCutoutPipeline(plain, W2, H2, { ceiling: 0.12, softness: 0, expand: 0, speck: false });
+    let dotsLeftPlain = 0;
+    for (const [cx, cy] of dots) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const o = ((cy + dy) * W2 + (cx + dx)) * 4;
+          if (plain[o + 3] !== 0) dotsLeftPlain += 1;
+        }
+      }
+    }
+
+    // With it they are gone.
+    const full = Buffer.from(rgba);
+    const stats = cut.runCutoutPipeline(full, W2, H2, { ceiling: 0.12, softness: 0 });
+    let dotsLeftFull = 0;
+    for (const [cx, cy] of dots) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const o = ((cy + dy) * W2 + (cx + dx)) * 4;
+          if (full[o + 3] !== 0) dotsLeftFull += 1;
+        }
+      }
+    }
+
+    assert(
+      'the plain cut leaves the black dots in place',
+      dotsLeftPlain === dots.length * 9,
+      `${dotsLeftPlain} dot pixels still opaque without the speck pass`,
+    );
+    assert(
+      'the speck pass removes the isolated black dots',
+      dotsLeftFull === 0,
+      `${dotsLeftPlain} -> ${dotsLeftFull} dot pixels opaque`,
+    );
+    assert(
+      'the speck pass reports how many blobs it removed',
+      stats.speckedPixels >= dots.length * 9,
+      `${stats.speckedPixels} px cleared in ${stats.speckComponents} blobs`,
+    );
+  }
+
+  // -- Case 8: a disconnected but *large* fragment is kept ------------------
+  //
+  // The speck pass must only remove small blobs. A fragment that is big
+  // enough is part of the artwork and has to survive.
+  {
+    const W2 = 160;
+    const H2 = 160;
+    const rgba = makeImage(W2, H2, (x, y) => {
+      const dx = x - 80;
+      const dy = y - 80;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < 30) return [235, 235, 235];   // the body
+      // A detached bar, 40x10 — far too big to be a speck.
+      if (x >= 20 && x < 60 && y >= 120 && y < 130) return [235, 235, 235];
+      return [0, 0, 0];
+    });
+
+    const full = Buffer.from(rgba);
+    cut.runCutoutPipeline(full, W2, H2, { ceiling: 0.12, softness: 0 });
+
+    let barLeft = 0;
+    for (let y = 120; y < 130; y += 1) {
+      for (let x = 20; x < 60; x += 1) {
+        const o = (y * W2 + x) * 4;
+        if (full[o + 3] !== 0) barLeft += 1;
+      }
+    }
+    assert(
+      'a large disconnected fragment is not mistaken for a speck',
+      barLeft > 350,
+      `${barLeft}/400 bar pixels kept`,
+    );
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -412,6 +579,38 @@ function collectArtFiles() {
   return { picked, total: files.length };
 }
 
+// The "interior" of the character: every pixel that is opaque and has an
+// opaque neighbourhood all around it.
+//
+// This is the region the character *cannot* afford to lose. The cut's
+// boundary work — the expansion that removes the black outline, the
+// defringe that strips the sticker stroke — is allowed to eat into the
+// few pixels along the silhouette, but it must never reach in here.
+//
+// Returns a Uint8Array: 1 = deep inside the character.
+function markInterior(rgba, width, height, radius = 12) {
+  const n = width * height;
+  const interior = new Uint8Array(n);
+  const step = Math.max(1, Math.round(radius / 4));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = y * width + x;
+      if (rgba[i * 4 + 3] !== 255) continue;
+      let solid = true;
+      for (let dy = -radius; dy <= radius && solid; dy += step) {
+        for (let dx = -radius; dx <= radius; dx += step) {
+          const xx = x + dx;
+          const yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= width || yy >= height) continue;
+          if (rgba[(yy * width + xx) * 4 + 3] !== 255) { solid = false; break; }
+        }
+      }
+      if (solid) interior[i] = 1;
+    }
+  }
+  return interior;
+}
+
 async function runArt() {
   section('real art');
 
@@ -433,6 +632,16 @@ async function runArt() {
     // What the old colour-threshold algorithm deleted.
     const old = oldAlgorithmMask(rgba, width, height, bg);
 
+    // The pipeline without the boundary expansion — the reference the
+    // expansion is measured against.
+    const plain = Buffer.from(rgba);
+    cut.runCutoutPipeline(plain, width, height, {
+      ceiling: bottleneck.DEFAULT_CEIL,
+      softness: 0,
+      expand: 0,
+      speck: false,
+    });
+
     const copy = Buffer.from(rgba);
     const stats = cut.runCutoutPipeline(copy, width, height, {
       ceiling: bottleneck.DEFAULT_CEIL,
@@ -443,19 +652,38 @@ async function runArt() {
     // delete as well? The old deletion set is mostly genuine background
     // plus the character's black costume, so this number says "how much
     // costume did we fail to rescue".
+    //
+    // It is measured against the *plain* cut — the pipeline without the
+    // boundary expansion. The expansion deliberately removes the black
+    // outline along the silhouette, and that outline is part of the old
+    // algorithm's deletion set, so measuring the full pipeline against it
+    // would report the expansion as if it were costume damage.
     let bothDeleted = 0;
     for (let i = 0; i < old.mask.length; i += 1) {
-      if (old.mask[i] && copy[i * 4 + 3] === 0) bothDeleted += 1;
+      if (old.mask[i] && plain[i * 4 + 3] === 0) bothDeleted += 1;
     }
     const stillGonePct = old.total ? (bothDeleted / old.total) * 100 : 0;
 
-    // And the inverse: of the new algorithm's deletions, how many did the
-    // old algorithm *not* delete? Those are pixels the new one removes
-    // that the old one kept — should be near zero, or the new algorithm
-    // is eating something it shouldn't.
-    let newOnly = 0;
+    // How much of the character's *interior* did the new pipeline lose?
+    //
+    // This is the invariant that matters. The expansion is allowed to
+    // remove the black outline along the silhouette — that is the whole
+    // point of it — but it must never reach into the body.
+    const interior = markInterior(plain, width, height);
+    let interiorLost = 0;
+    let interiorTotal = 0;
     for (let i = 0; i < old.mask.length; i += 1) {
-      if (!old.mask[i] && copy[i * 4 + 3] === 0) newOnly += 1;
+      if (!interior[i]) continue;
+      interiorTotal += 1;
+      if (copy[i * 4 + 3] === 0) interiorLost += 1;
+    }
+    const interiorLostPct = interiorTotal ? (interiorLost / interiorTotal) * 100 : 0;
+
+    // And the reverse: how many pixels did the expansion add on top of
+    // the plain cut? These are the outline pixels it removed.
+    let expandedOnly = 0;
+    for (let i = 0; i < old.mask.length; i += 1) {
+      if (plain[i * 4 + 3] !== 0 && copy[i * 4 + 3] === 0) expandedOnly += 1;
     }
 
     rows.push({
@@ -464,9 +692,11 @@ async function runArt() {
       height,
       bg: (stats.transparentPixels / (width * height)) * 100,
       stillGonePct,
-      newOnly,
+      interiorLostPct,
+      expandedOnly,
       defringed: stats.defringedPixels,
       repaired: stats.repairedPixels,
+      specked: stats.speckedPixels,
     });
 
     // Write a checkerboard composite for eyeballing.
@@ -476,17 +706,20 @@ async function runArt() {
   }
 
   console.log('');
-  console.log(DIM('  frame                        size        bg%   still-gone%  new-only    defringed    repaired'));
+  console.log(DIM('  frame                        size        bg%   still-gone%  interior-lost  expanded    defringed    repaired    specked'));
   for (const r of rows) {
     console.log(
       `  ${r.name.slice(0, 26).padEnd(26)}  ${`${r.width}x${r.height}`.padEnd(11)}  `
       + `${r.bg.toFixed(1).padStart(5)}   ${r.stillGonePct.toFixed(2).padStart(8)}   `
-      + `${String(r.newOnly).padStart(8)}  ${String(r.defringed).padStart(9)}  ${String(r.repaired).padStart(9)}`,
+      + `${r.interiorLostPct.toFixed(2).padStart(9)}%  ${String(r.expandedOnly).padStart(9)}  `
+      + `${String(r.defringed).padStart(9)}  ${String(r.repaired).padStart(9)}  ${String(r.specked).padStart(8)}`,
     );
   }
-  console.log(DIM('  still-gone% = share of the OLD algorithm\'s deletions the new one also deletes'));
-  console.log(DIM('               (the costume the old one destroyed and the new one rescued)'));
-  console.log(DIM('  new-only   = pixels the new one deletes that the old one kept (should be ~0)'));
+  console.log(DIM('  still-gone%    = share of the OLD algorithm\'s deletions the new one also deletes'));
+  console.log(DIM('                  (the costume the old one destroyed and the new one rescued)'));
+  console.log(DIM('  interior-lost% = share of the character\'s interior the pipeline made transparent'));
+  console.log(DIM('                  (must be ~0 — the boundary work may not eat into the body)'));
+  console.log(DIM('  expanded       = pixels the boundary expansion removed on top of the plain cut'));
 
   // The old algorithm's deletion set is the *background* plus the black
   // costume. The new algorithm must delete nearly all of the background.
@@ -498,11 +731,25 @@ async function runArt() {
     worstStillGone < 99,
     `worst frame still deletes ${worstStillGone.toFixed(2)}% of the old algorithm\'s set`,
   );
+
+  // The invariant the boundary expansion must not break: the character's
+  // interior is untouchable. The expansion may remove the black outline
+  // along the silhouette, but nothing beyond it.
+  const worstInterior = Math.max(...rows.map((r) => r.interiorLostPct));
   assert(
-    'the new algorithm does not delete anything the old one kept',
-    rows.every((r) => r.newOnly / (r.width * r.height) < 0.005),
-    `worst frame adds ${Math.max(...rows.map((r) => r.newOnly))} px of new deletions`,
+    'the boundary expansion never reaches into the character\'s interior',
+    worstInterior < 0.5,
+    `worst frame loses ${worstInterior.toFixed(2)}% of its interior`,
   );
+
+  // The expansion has to actually do something, or the feature is dead
+  // weight. Every frame should lose a visible band of outline pixels.
+  assert(
+    'the boundary expansion removes the outline on every frame',
+    rows.every((r) => r.expandedOnly > 100),
+    `fewest pixels expanded ${Math.min(...rows.map((r) => r.expandedOnly))}`,
+  );
+
   assert(
     'every frame gets a usable cut',
     rows.every((r) => r.bg > 20),
