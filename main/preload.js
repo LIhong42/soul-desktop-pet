@@ -252,6 +252,7 @@ contextBridge.exposeInMainWorld('mp', {
       'main:say-prompt',
       'export:progress',
       'tools:progress',
+      'pet:import-progress',
       'app:update-progress',
       'app:update-state',
       'pet:mood-changed',

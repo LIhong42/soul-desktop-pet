@@ -3,7 +3,115 @@
 import { api, escapeHtml, toast } from '../api.js';
 import { register, navigate } from '../router.js';
 
+// ---- 桌宠压缩包导入进度 -----------------------------------------------
+//
+// 主进程每处理完一帧就推一次 `pet:import-progress`
+// （{ phase, processed, total, current }），这里把它渲染成一条进度条 +
+// "已处理 N / total 张图片"的计数。状态是模块级的（单页应用，参见
+// tool_video_frames.js 的做法），渲染时把进度条的内联 HTML 一并画出来，
+// 之后靠 paintImportProgress() 原地更新，不整页重绘（避免闪烁）。
+let _importProgress = null;   // null | { phase, processed, total, current }
+let _importUnsub = null;      // 退订函数，页面重渲染时清理
+
+// 计算百分比。total 未知（0）时返回 null，表示不确定态。
+function importPercent(p) {
+  if (!p) return null;
+  const total = Number(p.total) || 0;
+  if (total <= 0) return null;
+  return Math.max(0, Math.min(100, Math.round(((Number(p.processed) || 0) / total) * 100)));
+}
+
+// 进度条的 HTML。放在上传按钮下面，跟按钮同一块区域。
+function importProgressHtml() {
+  if (!_importProgress) return '';
+  const p = _importProgress;
+  const total = Number(p.total) || 0;
+  const processed = Number(p.processed) || 0;
+  const pct = importPercent(p);
+  // 计数文案：始终显示"已处理 N / total 张图片"。total 还没算出来时
+  // 只显示已处理的数量，避免出现 "3 / 0" 这种难看的中间态。
+  const countText = total > 0
+    ? `已处理 ${processed} / ${total} 张图片`
+    : `已处理 ${processed} 张图片`;
+  const phaseText = p.phase === 'preparing' ? '正在读取压缩包…' : '正在处理图片…';
+  return `
+    <div id="pet-import-progress" style="margin-top:10px;">
+      <div class="meta">${phaseText}${p.current ? ' · ' + escapeHtml(p.current) : ''}</div>
+      <div class="tools-progress-bar" style="margin-top:6px;">
+        <div class="tools-progress-fill" style="width:${pct === null ? 30 : pct}%;${pct === null ? 'animation: tools-progress-indeterminate 1.2s ease-in-out infinite;' : ''}"></div>
+      </div>
+      <div class="meta" style="margin-top:4px;">${countText}${pct === null ? '' : ` · ${pct}%`}</div>
+    </div>
+  `;
+}
+
+// 原地更新进度条（不整页重绘）。
+function paintImportProgress() {
+  const p = _importProgress;
+  let host = document.getElementById('pet-import-progress');
+  if (!p) {
+    if (host) host.outerHTML = '';
+    return;
+  }
+  // 进度条可能还没画出来（点按钮那一刻页面是按"无进度"渲染的），
+  // 这时按需插到上传按钮后面。
+  if (!host) {
+    const btn = document.getElementById('import-from-zip');
+    if (!btn || !btn.parentElement) return;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = importProgressHtml();
+    const created = wrap.firstElementChild;
+    if (!created) return;
+    btn.parentElement.insertAdjacentElement('afterend', created);
+    host = created;
+  }
+  const total = Number(p.total) || 0;
+  const processed = Number(p.processed) || 0;
+  const pct = importPercent(p);
+  const fill = host.querySelector('.tools-progress-fill');
+  if (fill) {
+    fill.style.width = (pct === null ? 30 : pct) + '%';
+    fill.style.animation = pct === null
+      ? 'tools-progress-indeterminate 1.2s ease-in-out infinite'
+      : '';
+  }
+  const metas = host.querySelectorAll('.meta');
+  if (metas.length >= 2) {
+    const countText = total > 0
+      ? `已处理 ${processed} / ${total} 张图片`
+      : `已处理 ${processed} 张图片`;
+    metas[1].textContent = countText + (pct === null ? '' : ` · ${pct}%`);
+    // 头部那行显示阶段和当前正在处理的文件名。
+    const phaseText = p.phase === 'preparing' ? '正在读取压缩包…' : '正在处理图片…';
+    metas[0].textContent = phaseText + (p.current ? ' · ' + p.current : '');
+  }
+}
+
+// 订阅导入进度事件。重复调用会先退订旧的，避免一次进度触发多次重绘。
+function ensureImportSubscribed() {
+  if (typeof api.on !== 'function') return;
+  if (typeof _importUnsub === 'function') {
+    try { _importUnsub(); } catch (_) { /* 已失效 */ }
+  }
+  _importUnsub = api.on('pet:import-progress', (msg) => {
+    if (!msg) return;
+    _importProgress = {
+      phase: msg.phase || 'processing',
+      processed: Number(msg.processed) || 0,
+      total: Number(msg.total) || 0,
+      current: msg.current || null,
+    };
+    paintImportProgress();
+  });
+}
+
 async function render() {
+  // 重渲染前先退掉上一轮的导入进度订阅，否则离开页面再回来会叠加
+  // 监听器，一次进度事件触发多次重绘。
+  if (typeof _importUnsub === 'function') {
+    try { _importUnsub(); } catch (_) { /* 已失效 */ }
+    _importUnsub = null;
+  }
   const app = document.getElementById('app');
   const lastExport = await api.settings.get('last_export_at');
   const lastImport = await api.settings.get('last_import_at');
@@ -63,6 +171,7 @@ async function render() {
       <div class="row" style="gap:8px; margin-top:10px; flex-wrap:wrap;">
         <button class="btn" id="import-from-zip">上传桌宠压缩包…</button>
       </div>
+      ${importProgressHtml()}
 
       <div id="installed-pets-list" style="margin-top:14px;"></div>
     </div>
@@ -199,9 +308,19 @@ async function render() {
     }
   };
   document.getElementById('import-from-zip').onclick = async () => {
+    // 先订阅再调用 IPC：主进程在文件选择框还开着的时候就会开始推进度，
+    // 晚订阅会丢掉最前面的几条消息。
+    _importProgress = { phase: 'preparing', processed: 0, total: 0, current: null };
+    ensureImportSubscribed();
+    paintImportProgress();
     try {
       const r = await api.pet.importFromZip?.();
-      if (!r || r.canceled) return;
+      if (!r || r.canceled) {
+        // 用户在文件选择框里点了取消 —— 清掉进度条，不报错。
+        _importProgress = null;
+        paintImportProgress();
+        return;
+      }
       const count = (r && typeof r.variantCount === 'number') ? r.variantCount : null;
       // Report what happened to the frames: how many went through the
       // background cutout and how many were already transparent and
@@ -219,9 +338,13 @@ async function render() {
           ? `已导入：${r.pet.name}（识别了 ${count} 个动作）${cutNote}`
           : `已导入：${r.pet.name}${cutNote}`);
       }
+      // 导入完成，进度条不再需要。
+      _importProgress = null;
       render();
     } catch (e) {
+      _importProgress = null;
       toast('导入失败：' + ((e && e.message) || e));
+      render();
     }
   };
 

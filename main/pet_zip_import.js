@@ -23,12 +23,18 @@
 // existing PetRegistry (`main/pet_registry.js`) can pick it up with no
 // further changes.
 //
-// installPetZip(zipPath, userDataPath)
+// installPetZip(zipPath, userDataPath, onProgress)
 //   → { ok, deduped, pet: { id, name }, rootDir }
 //   → throws on invalid input (bad zip / no usable variant / IO error)
 //   async — runs the background cutout over every *opaque* PNG before
 //          publishing; frames that are already transparent are passed
 //          through untouched.
+//
+// onProgress (optional)
+//   Called as onProgress({ phase, processed, total, current }) after each
+//   frame is handled, so the UI can show a live "N / total" counter.
+//   `phase` is one of 'preparing' | 'processing' | 'done'. A failing
+//   callback never aborts the import — progress is advisory only.
 //
 // Transparent vs opaque packs
 // --------------------------
@@ -272,10 +278,23 @@ function writeVariant(dir, files) {
 //                  matching the convention in `main/ipc.js:getPetsUserDataPath()`.
 //                  The function itself appends `/pets/`.
 //
+//   onProgress — optional callback, see the file header. Never throws.
+//
 // Returns: { ok:true, deduped:boolean, pet:{id,name}, rootDir }
-async function installPetZip(zipPath, userDataPath) {
+async function installPetZip(zipPath, userDataPath, onProgress) {
   if (!zipPath) throw new Error('zip 路径为空');
   if (!fs.existsSync(zipPath)) throw new Error('找不到桌宠压缩包');
+
+  // Progress reporting is advisory: a broken callback must not break the
+  // import. Wrap it once so every call site stays a plain `report(...)`.
+  const report = (payload) => {
+    if (typeof onProgress !== 'function') return;
+    try { onProgress(payload); } catch (err) {
+      console.error('[pet_zip_import] progress callback failed:', err.message);
+    }
+  };
+
+  report({ phase: 'preparing', processed: 0, total: 0, current: null });
 
   const { variants, frameSize, rootPrefix } = readPackFromZip(zipPath);
   const { id, name: zipBaseName } = digestFromZip(zipPath);
@@ -292,6 +311,7 @@ async function installPetZip(zipPath, userDataPath) {
       const m = JSON.parse(fs.readFileSync(path.join(targetDir, 'manifest.json'), 'utf8'));
       if (m && typeof m.name === 'string' && m.name.trim()) existingName = m.name;
     } catch {}
+    report({ phase: 'done', processed: 0, total: 0, current: null });
     return { ok: true, deduped: true, pet: { id, name: existingName }, rootDir: targetDir };
   }
 
@@ -322,8 +342,16 @@ async function installPetZip(zipPath, userDataPath) {
   //
   // The counts are reported back to the UI so the user can see what
   // happened to their pack (see the `cutout` field of the return value).
+  //
+  // Progress is reported per frame: `processed` counts frames that have
+  // finished (cut out or skipped as already-transparent), `total` is the
+  // frame count of the whole pack. The UI turns that into an "N / total"
+  // counter that ticks up after every completed frame.
+  const totalFrames = [...variants.values()].reduce((n, b) => n + b.length, 0);
+  let processedFrames = 0;
   let cutoutCount = 0;
   let skippedTransparent = 0;
+  report({ phase: 'processing', processed: 0, total: totalFrames, current: null });
   for (const bucket of variants.values()) {
     for (const f of bucket) {
       // Is this frame already a cut-out sprite? If so, leave it alone.
@@ -339,6 +367,8 @@ async function installPetZip(zipPath, userDataPath) {
 
       if (alreadyTransparent) {
         skippedTransparent += 1;
+        processedFrames += 1;
+        report({ phase: 'processing', processed: processedFrames, total: totalFrames, current: f.name });
         continue;
       }
 
@@ -352,6 +382,8 @@ async function installPetZip(zipPath, userDataPath) {
       } catch (err) {
         console.error(`[pet_zip_import] cutout failed for ${f.name}, keeping original:`, err.message);
       }
+      processedFrames += 1;
+      report({ phase: 'processing', processed: processedFrames, total: totalFrames, current: f.name });
     }
   }
 
@@ -395,6 +427,8 @@ async function installPetZip(zipPath, userDataPath) {
     throw err;
   }
 
+  report({ phase: 'done', processed: processedFrames, total: totalFrames, current: null });
+
   return {
     ok: true,
     deduped: false,
@@ -403,6 +437,9 @@ async function installPetZip(zipPath, userDataPath) {
     // How many frames went through the cutout and how many were already
     // transparent. Surfaced so the UI can tell the user what happened.
     cutout: { processed: cutoutCount, skipped: skippedTransparent },
+    // Frame totals, so the UI can render a final "N / N" counter without
+    // having to track progress messages itself.
+    frames: { total: totalFrames },
   };
 }
 

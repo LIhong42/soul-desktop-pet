@@ -1938,6 +1938,14 @@ button.chip:hover { filter: brightness(0.97); }
   color: var(--muted);
 }
 
+/* 不确定态进度条：百分比算不出来时（比如更新下载拿不到
+   content-length，或导入刚开始还没数出总帧数）用这段动画表示
+   "正在进行中"，而不是显示一个假的 0%。 */
+@keyframes tools-progress-indeterminate {
+  0%   { margin-left: -30%; }
+  100% { margin-left: 100%; }
+}
+
 .tools-result {
   margin-top: 12px;
 }

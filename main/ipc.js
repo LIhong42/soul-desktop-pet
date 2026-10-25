@@ -1474,6 +1474,24 @@ function normFreeText(s) {
     return petRegistry.list().map(decoratePetEntry);
   });
 
+  // Push import progress to the renderer. One-way channel, same shape as
+  // `tools:progress` / `export:progress`: { phase, processed, total }.
+  // `processed` is the number of frames finished so far, `total` the
+  // number of frames in the pack — the renderer renders that as "N / total".
+  function pushPetImportProgress(payload) {
+    if (!winMain || winMain.isDestroyed()) return;
+    try {
+      winMain.webContents.send('pet:import-progress', {
+        phase: (payload && payload.phase) || 'processing',
+        processed: (payload && typeof payload.processed === 'number') ? payload.processed : 0,
+        total: (payload && typeof payload.total === 'number') ? payload.total : 0,
+        current: (payload && payload.current) || null,
+      });
+    } catch (e) {
+      console.error('[pet] push import progress failed:', e);
+    }
+  }
+
   ipcMain.handle('pet:import_from_zip', async () => {
     if (!petRegistry) throw new Error('pet registry unavailable');
     const pick = await dialog.showOpenDialog(winMain, {
@@ -1485,7 +1503,7 @@ function normFreeText(s) {
       return { canceled: true };
     }
     const zip = pick.filePaths[0];
-    const installed = await installPetZip(zip, getPetsUserDataPath());
+    const installed = await installPetZip(zip, getPetsUserDataPath(), pushPetImportProgress);
     petRegistry.rescan();
     // Surface the action count so the renderer can tell the user
     // "已识别 N 个动作" instead of just "已导入: name". Without this,
@@ -1507,6 +1525,9 @@ function normFreeText(s) {
       // through the background cutout, `skipped` frames were already
       // transparent and were passed through untouched.
       cutout: installed.cutout || { processed: 0, skipped: 0 },
+      // Total frame count of the pack — the renderer pairs it with the
+      // progress messages to show "N / total".
+      frames: installed.frames || { total: 0 },
     };
   });
 
