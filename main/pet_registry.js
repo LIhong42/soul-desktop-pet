@@ -154,6 +154,20 @@ class PetRegistry {
     }));
   }
 
+  /**
+   * True when the pet lives under the user-data pets dir (i.e. it was
+   * installed by the user and can be uninstalled). This is a *location*
+   * fact, not an id-prefix guess: a pet that was imported and then
+   * promoted to a built-in keeps its `imported-…` id while living in
+   * `resources/pets/`, and must not be offered a delete button.
+   */
+  isImported(petId) {
+    const e = this._pets.get(petId);
+    if (!e || !this._userPetsDir) return false;
+    const ud = this._userPetsDir;
+    return e.rootDir === ud || e.rootDir.startsWith(ud + path.sep);
+  }
+
   getManifest(petId) {
     const e = this._pets.get(petId);
     return e ? e.manifest : null;
@@ -253,10 +267,8 @@ class PetRegistry {
     // entry rooted inside the user-data pets dir is user-installed and
     // should be wiped before the rescan rebuilds the catalog.
     const ud = this._userPetsDir;
-    for (const [id, entry] of this._pets.entries()) {
-      if (entry.rootDir === ud || entry.rootDir.startsWith(ud + path.sep)) {
-        this._pets.delete(id);
-      }
+    for (const id of [...this._pets.keys()]) {
+      if (this.isImported(id)) this._pets.delete(id);
     }
     this._scanOne(ud);
     return this._pets.size;

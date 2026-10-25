@@ -1434,26 +1434,104 @@ function normFreeText(s) {
   }
 
   // First built-in pet id, or null when no built-in exists. Imported pets
-  // (id starts with 'imported-') are skipped on purpose.
+  // (those living under the user-data pets dir) are skipped on purpose —
+  // determined by location, not by the `imported-` id prefix, so a
+  // promoted-to-built-in pet is correctly treated as built-in.
   function pickFirstBuiltinId() {
     if (!petRegistry) return null;
     const all = petRegistry.list();
-    const builtin = all.find((p) => !String(p.id || '').startsWith('imported-'));
+    const builtin = all.find((p) => !petRegistry.isImported(p.id));
     return builtin ? builtin.id : null;
+  }
+
+  // ---- orphan pruning ----
+  // Deleting a pet used to remove only its folder, leaving its bond /
+  // cozy / ritual / play-log rows and per-pet settings in the database.
+  // Those rows then lingered forever, because the pet id was no longer
+  // known to anything — even the settings UI had no way to find them.
+  //
+  // This sweeps the database for pet ids that no longer resolve to an
+  // installed pet and deletes their data. It runs once per boot, after
+  // the registry has been populated, so it also cleans up rows left by
+  // pets deleted before this cleanup existed.
+  //
+  // Returns the list of pruned ids (for logging).
+  function pruneOrphanedPetData() {
+    if (!petRegistry) return [];
+    const known = new Set(petRegistry.list().map((p) => p.id));
+    if (known.size === 0) return []; // nothing installed — don't wipe the DB
+
+    // Collect the distinct pet ids referenced anywhere in pet-scoped data.
+    const referenced = new Set();
+    const collect = (sql) => {
+      try {
+        for (const r of db.all(sql)) {
+          if (r && r.pet_id) referenced.add(r.pet_id);
+        }
+      } catch (e) {
+        // Table doesn't exist on this schema — skip it.
+      }
+    };
+    collect('SELECT DISTINCT pet_id FROM bond_strength');
+    collect('SELECT DISTINCT pet_id FROM cozy_state');
+    collect('SELECT DISTINCT pet_id FROM weekly_ritual');
+    collect('SELECT DISTINCT pet_id FROM play_log');
+
+    // Per-pet settings keys carry the id after a known prefix.
+    for (const prefix of [
+      'pet_actions_config:',
+      'pet_action_texts:',
+      'pet_bubbles_state:',
+      'auto_log:',
+      'today_event:',
+      'today_memorial:',
+    ]) {
+      try {
+        for (const r of db.all('SELECT key FROM settings WHERE key LIKE ?', [prefix + '%'])) {
+          const id = r.key.slice(prefix.length);
+          if (id) referenced.add(id);
+        }
+      } catch (e) {
+        console.error('[pet] orphan scan failed for prefix', prefix, e);
+      }
+    }
+
+    const orphans = [...referenced].filter((id) => !known.has(id));
+    for (const id of orphans) {
+      try {
+        const res = db.deletePetData(id);
+        console.log(`[pet] pruned orphaned pet data for '${id}':`, JSON.stringify(res.summary));
+      } catch (e) {
+        console.error(`[pet] failed to prune orphaned pet data for '${id}':`, e && e.message);
+      }
+    }
+    return orphans;
   }
 
   // Imported manifests already carry description/origin/importedAt — read
   // them straight from disk so the /pets UI doesn't have to second-guess
   // what the registry is showing. Built-ins get a stub object so the UI
   // renders them with the same shape.
+  //
+  // Whether a pet is deletable is decided by WHERE it lives (the registry
+  // knows the real root dir), NOT by whether its id starts with
+  // `imported-`. A pet that was imported and later promoted to a built-in
+  // keeps its `imported-…` id while sitting in `resources/pets/`, and
+  // guessing from the id wrongly offers it a delete button — the delete
+  // then tries to remove a user-data path that doesn't exist and silently
+  // fails.
   function decoratePetEntry(pet) {
-    if (String(pet.id).startsWith('imported-')) {
-      const mPath = path.join(getPetsUserDataPath(), 'pets', pet.id, 'manifest.json');
+    if (petRegistry && petRegistry.isImported(pet.id)) {
+      // Read the manifest from the pet's real root dir. The id is not
+      // guaranteed to equal the directory name (a built-in promoted from
+      // an import keeps its old id), so derive the path from the
+      // registry rather than guessing `pets/<id>/`.
+      const rootDir = petRegistry.getRootDir(pet.id);
       let description = '';
       let origin = null;
       let importedAt = null;
       try {
-        const m = JSON.parse(fs.readFileSync(mPath, 'utf8'));
+        const m = JSON.parse(fs.readFileSync(path.join(rootDir, 'manifest.json'), 'utf8'));
         if (m && typeof m.description === 'string') description = m.description;
         if (m && (m.origin === 'zip' || m.origin === 'folder')) origin = m.origin;
         if (m && typeof m.importedAt === 'string') importedAt = m.importedAt;
@@ -1533,7 +1611,15 @@ function normFreeText(s) {
 
   ipcMain.handle('pet:remove_imported', (_e, petId) => {
     if (!petRegistry) throw new Error('pet registry unavailable');
-    if (typeof petId !== 'string' || !petId.startsWith('imported-')) {
+    if (typeof petId !== 'string' || !petId) {
+      throw new Error('非导入桌宠不可删除');
+    }
+    // Guard on location, not on the `imported-` id prefix. A pet that
+    // was imported and then promoted to a built-in still carries the
+    // `imported-…` id but lives in `resources/pets/` — deleting it must
+    // be refused, otherwise we'd try to remove a user-data path that
+    // doesn't exist and the UI would show the row again unchanged.
+    if (!petRegistry.isImported(petId)) {
       throw new Error('非导入桌宠不可删除');
     }
     let switchedTo = null;
@@ -1552,9 +1638,26 @@ function normFreeText(s) {
         throw new Error('当前正在使用该桌宠且没有内置备选，请先切换到其他桌宠');
       }
     }
-    removeImported(petId, getPetsUserDataPath());
+    // Delete the pet's real root dir rather than assuming the directory
+    // is named after the id — the registry knows where it actually lives.
+    const rootDir = petRegistry.getRootDir(petId);
+    // Wipe the pet's database rows (bond / cozy / ritual / play log) and
+    // its per-pet settings (action bindings, bubble texts, bubble state)
+    // BEFORE removing the folder. Deleting the folder alone used to leave
+    // all of that behind, so the app kept affinity scores, cozy meters
+    // and configs for a pet that no longer existed. Cleaning the DB first
+    // means a failure here aborts the whole delete rather than leaving a
+    // half-deleted pet.
+    let dataSummary = null;
+    try {
+      dataSummary = db.deletePetData(petId);
+    } catch (e) {
+      console.error('[pet] deletePetData failed:', e && e.message);
+      throw new Error('删除桌宠数据失败：' + ((e && e.message) || e));
+    }
+    removeImported(petId, getPetsUserDataPath(), rootDir);
     petRegistry.rescan();
-    return { ok: true, removed: petId, switchedTo };
+    return { ok: true, removed: petId, switchedTo, data: dataSummary };
   });
 
   // ---- Pet species / walk toggle ----
@@ -2948,6 +3051,22 @@ function normFreeText(s) {
     clearInterval(idleSampler);
     petBubbles.stop();
   });
+
+  // Sweep out data left behind by pets that no longer exist. Deleting a
+  // pet now cleans up after itself (see `pet:remove_imported`), but rows
+  // written by pets deleted BEFORE that fix are still in the database with
+  // no way to find them from the UI. Pruning once at startup clears them.
+  //
+  // The registry is already populated by the time `register()` runs, so
+  // the known-pet set is accurate here.
+  try {
+    const pruned = pruneOrphanedPetData();
+    if (pruned.length) {
+      console.log(`[pet] pruned data for ${pruned.length} removed pet(s): ${pruned.join(', ')}`);
+    }
+  } catch (e) {
+    console.error('[pet] orphan prune failed:', e && e.message);
+  }
 }
 
 function updatePetState({ queue, setPetState, setActiveReminder }) {

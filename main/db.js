@@ -254,6 +254,7 @@ async function open(dbPathArg) {
   seedDefaultFestivals();
   migratePinV1();
   migrateBondV1();
+  migratePetIdRenameV1();
 
   // Settings defaults
   const s = db.prepare('SELECT value FROM settings WHERE key = ?');
@@ -705,6 +706,88 @@ function deleteContactCascade(id, queue) {
       events_kept: keptEventIds.length,
     },
   };
+}
+
+// ---- pet data deletion ----
+// Removes EVERYTHING the app persisted for a given pet id. Deleting a pet
+// used to only remove its folder on disk, which left the database holding
+// rows and settings for a pet that no longer exists:
+//
+//   bond_strength      — the long-term affinity score for that pet
+//   cozy_state         — the cozy meter (real accumulated value!)
+//   weekly_ritual      — the per-(pet, week) 10-dimension tallies
+//   play_log           — the interaction history
+//   settings           — the per-pet keys, stored as `<prefix><petId>`
+//
+// The last group is easy to miss: the per-pet action bindings, bubble
+// texts and bubble state all live in the generic `settings` table under
+// a prefixed key, so they have to be matched by prefix rather than by an
+// exact key.
+//
+// Returns a summary of what was removed, for logging / UI feedback.
+function deletePetData(petId) {
+  if (!db) throw new Error('DB not opened');
+  if (typeof petId !== 'string' || !petId) {
+    throw new Error('petId is required');
+  }
+
+  const summary = {
+    bond_strength: 0,
+    cozy_state: 0,
+    weekly_ritual: 0,
+    play_log: 0,
+    settings: 0,
+  };
+
+  // Tables that key rows by pet_id. Probe each one so this helper works
+  // on a database that predates any of them (a missing table is not an
+  // error — there'd be nothing to clean up anyway).
+  for (const table of ['bond_strength', 'cozy_state', 'weekly_ritual', 'play_log']) {
+    try {
+      const before = one(`SELECT COUNT(*) AS n FROM ${table} WHERE pet_id = ?`, [petId]);
+      if (before && before.n) {
+        run(`DELETE FROM ${table} WHERE pet_id = ?`, [petId]);
+        summary[table] = before.n;
+      }
+    } catch (e) {
+      // Table doesn't exist on this schema — nothing to clean up.
+    }
+  }
+
+  // Per-pet settings, stored as `<prefix><petId>`. The petId may itself
+  // contain a colon in principle, so match on the prefix and compare the
+  // remainder exactly rather than doing a LIKE with wildcards.
+  //
+  // The prefix list must cover every per-pet setting key in the app:
+  //   pet_actions_config: — action bindings (pet_actions_config.js)
+  //   pet_action_texts:   — bubble texts (pet_action_texts.js)
+  //   pet_bubbles_state:  — bubble state (pet_bubbles.js)
+  //   auto_log:           — auto-behaviour log (auto_behaviors.js)
+  //   today_event:        — "an event happened today" flag (bond_engine.js)
+  //   today_memorial:     — "a memorial happened today" flag (bond_engine.js)
+  for (const prefix of [
+    'pet_actions_config:',
+    'pet_action_texts:',
+    'pet_bubbles_state:',
+    'auto_log:',
+    'today_event:',
+    'today_memorial:',
+  ]) {
+    try {
+      const rows = all(
+        'SELECT key FROM settings WHERE key LIKE ?',
+        [prefix + '%']
+      ).map((r) => r.key).filter((k) => k.slice(prefix.length) === petId);
+      for (const key of rows) {
+        run('DELETE FROM settings WHERE key = ?', [key]);
+        summary.settings++;
+      }
+    } catch (e) {
+      console.error('deletePetData settings cleanup failed:', e);
+    }
+  }
+
+  return { deleted: true, summary };
 }
 
 // ---- events v1 migration ----
@@ -1363,6 +1446,78 @@ function migrateBondV1() {
   }
 }
 
+// ---- pet id rename migration ----
+// A pet that was imported (getting an `imported-<hash>` id) and then
+// promoted to a built-in had its manifest id changed to the built-in
+// name. Any settings still keyed by the OLD id would be orphaned, and
+// the app would silently fall back to a different pet because the
+// persisted `pet_id` no longer matched a known id.
+//
+// This migration rewrites every per-pet setting key from the old id to
+// the new one. It is driven by the PET_ID_RENAMES table below, so adding
+// a future rename is a one-line change.
+//
+// The rename is applied to:
+//   - settings.pet_id                       (which pet is active)
+//   - settings.pet_actions_config:<id>      (per-pet action bindings)
+//   - settings.pet_action_texts:<id>        (per-pet bubble texts)
+//   - settings.pet_bubbles_state:<id>       (per-pet bubble state)
+//   - settings.auto_log:<id>                (per-pet auto-behaviour log)
+//   - settings.today_event:<id>             (per-pet "event happened today")
+//   - settings.today_memorial:<id>          (per-pet "memorial happened today")
+//   - bond_strength / cozy_state / weekly_ritual / play_log pet_id columns
+const PET_ID_RENAMES = [
+  { from: 'imported-640578270aff78f2', to: 'Fino' },
+];
+const PET_ID_RENAME_KEY = 'pet_id_rename_v1_applied';
+
+function migratePetIdRenameV1() {
+  if (!db) return;
+  if (getSetting(PET_ID_RENAME_KEY) === '1') return;
+  try {
+    for (const { from, to } of PET_ID_RENAMES) {
+      // Per-pet setting keys: `<prefix><oldId>` → `<prefix><newId>`.
+      // Skip when the target key already exists — that means the rename
+      // already happened (or the user re-imported), so don't clobber it.
+      // Keep this prefix list in sync with `deletePetData` — a prefix
+      // missing from one is missing from the other.
+      for (const prefix of [
+        'pet_actions_config:',
+        'pet_action_texts:',
+        'pet_bubbles_state:',
+        'auto_log:',
+        'today_event:',
+        'today_memorial:',
+      ]) {
+        const oldKey = prefix + from;
+        const newKey = prefix + to;
+        if (!getSetting(oldKey)) continue;
+        if (getSetting(newKey)) {
+          run('DELETE FROM settings WHERE key = ?', [oldKey]);
+          continue;
+        }
+        run('UPDATE settings SET key = ? WHERE key = ?', [newKey, oldKey]);
+      }
+
+      // The active pet id.
+      if (getSetting('pet_id') === from) setSetting('pet_id', to);
+
+      // Tables that reference the pet by id.
+      for (const table of ['bond_strength', 'cozy_state', 'weekly_ritual', 'play_log']) {
+        try {
+          run(`UPDATE ${table} SET pet_id = ? WHERE pet_id = ?`, [to, from]);
+        } catch (e) {
+          // A table that doesn't exist yet on this schema — skip it.
+        }
+      }
+    }
+    setSetting(PET_ID_RENAME_KEY, '1');
+    markDirty();
+  } catch (e) {
+    console.error('migratePetIdRenameV1 failed:', e);
+  }
+}
+
 module.exports = {
   open, close, get, save, newId, nowStr, all, one, run,
   upsertSearch, deleteSearch, getSetting, setSetting,
@@ -1373,6 +1528,7 @@ module.exports = {
   parseContactRow, buildContactBody, safeParseArray,
   listAttributes, getAttribute,
   deleteContactCascade,
+  deletePetData,
   listMemorialEvents, getMemorialEvent, listPhotosForMemorialEvent,
   listMemorialEventsForExport,
   // Exposed so ipc.js can call them (avoids duplicating logic in IPC handlers).

@@ -1474,7 +1474,7 @@ function wirePetListActions(currentPetId) {
       const warn = wasCurrent
         ? '\n\n当前正在使用它，删除后会自动切换到其他内置桌宠。'
         : '';
-      if (!confirm(`确认删除桌宠"${name}"？此操作不可撤销。${warn}`)) return;
+      if (!confirm(`确认删除桌宠"${name}"？此操作不可撤销。\n\n它的羁绊值、好感度、互动记录和专属配置也会一并清除。${warn}`)) return;
       try {
         const r = await api.pet.removeImported?.(id);
         if (r && r.switchedTo) toast(`已删除并切换到 ${r.switchedTo}`);

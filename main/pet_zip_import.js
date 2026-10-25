@@ -443,10 +443,12 @@ async function installPetZip(zipPath, userDataPath, onProgress) {
   };
 }
 
-// Convenience: drop an imported pet directory. Caller must verify the id
-// starts with `imported-` before calling.
-function removeImported(petId, userDataPath) {
-  const dir = path.join(userDataPath, 'pets', petId);
+// Convenience: drop an imported pet directory. Caller must verify the pet
+// actually lives under the user-data pets dir before calling — `rootDir`
+// may be passed explicitly when the directory name differs from the pet
+// id (e.g. a pet imported under one id and later renamed).
+function removeImported(petId, userDataPath, rootDir) {
+  const dir = rootDir || path.join(userDataPath, 'pets', petId);
   if (!fs.existsSync(dir)) throw new Error('桌宠不存在');
   fs.rmSync(dir, { recursive: true, force: true });
   return { removed: true, rootDir: dir };

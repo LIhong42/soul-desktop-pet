@@ -1,0 +1,57 @@
+{
+  "id": "Fino",
+  "name": "Fino",
+  "description": "",
+  "defaultSize": {
+    "w": 1080,
+    "h": 1440
+  },
+  "frameRegex": "^(.*?)_(\\d{3,7})_(\\d{3,5})\\.png$",
+  "variants": {
+    "blinking": {
+      "roots": [
+        "blinking"
+      ],
+      "loop": true
+    },
+    "dancing": {
+      "roots": [
+        "dancing"
+      ],
+      "loop": true
+    },
+    "default": {
+      "roots": [
+        "default"
+      ],
+      "loop": true
+    },
+    "running.left": {
+      "roots": [
+        "running.left"
+      ],
+      "loop": true
+    },
+    "running.right": {
+      "roots": [
+        "running.right"
+      ],
+      "loop": true
+    },
+    "walking.left": {
+      "roots": [
+        "walking.left"
+      ],
+      "loop": true
+    },
+    "walking.right": {
+      "roots": [
+        "walking.right"
+      ],
+      "loop": true
+    }
+  },
+  "source": "builtIn",
+  "origin": null,
+  "importedAt": null
+}
