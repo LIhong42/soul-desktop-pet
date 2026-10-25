@@ -81,7 +81,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   //   2. Idle sampling. The 休息提醒 rule needs "how long has the user been
   //      at the keyboard", which is powerMonitor.getSystemIdleTime() — a
   //      platform query, not a rule concern. Sampling it here keeps
-  //      pet_bubbles.js runnable under plain node for tests.
+  //      pet_bubbles.js runnable under plain node.
   const broadcastBubble = (payload) => {
     if (winPet && !winPet.isDestroyed()) {
       winPet.webContents.send(petBubbles.BROADCAST_CHANNEL, payload);
@@ -2837,7 +2837,9 @@ function normFreeText(s) {
   // `tools:progress` channel with the frame-splitter above: both are
   // cancellable, both report phase/percent, and neither should push image
   // bytes through IPC (a 40 MPix source is ~160 MB of RGBA). The decode /
-  // flood-fill / re-encode pipeline lives in main/image_bg_remove.js.
+  // label / re-encode pipeline lives in main/image_bg_remove.js, which
+  // shares its cutout algorithm with the zip importer via
+  // main/png_border_cutout.js.
   ipcMain.handle('tools:remove_image_background', async (_e, payload = {}) => {
     // tolerance is a named preset rather than a raw 0-255 so the renderer
     // can't ask for a value the module has no tuning for. softness is the

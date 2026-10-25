@@ -2,16 +2,17 @@
 //
 // Detail UI for the background-removal tool: the user picks an image,
 // chooses how tolerant the background match should be and whether to
-// soften the cut edge, then main/image_bg_remove.js flood-fills from the
-// image border to compute a transparent PNG.
+// soften the cut edge, then main/image_bg_remove.js computes a transparent
+// PNG.
 //
 // "Transparent everywhere outside the outline" is decided in main by
 // connectivity, not color — that's why this page doesn't offer a manual
 // color picker the way a colorkey tool would. Interior regions that share
-// the background color survive because the outline blocks the fill. The
-// tolerance control only widens how far the fill may stray from the
-// estimated background color, so it's the knob that matters for noisy or
-// soft-shadowed sources.
+// the background color survive because the outline separates them from the
+// image border, and so do the character's black hair and clothing even
+// when the backdrop is black too. The tolerance control only widens how
+// far a pixel may stray from the estimated background color, so it's the
+// knob that matters for noisy or soft-shadowed sources.
 //
 // State is module-scoped (single-page app), matching tool_video_frames.js.
 // Progress arrives on the shared `tools:progress` channel; we subscribe on
@@ -159,8 +160,11 @@ function render() {
     <div class="card tools-help">
       <h2>说明</h2>
       <ul class="meta">
-        <li>工作方式：从图片的四条边向内填充，把与背景颜色相近、且能连通到图片边缘的区域判为背景并转为透明；被边界线围住的区域一律保留。</li>
-        <li>因此，像对话框这种<b>内部与背景同色</b>的图形不会被打穿——这正是与普通「按颜色抠图」的区别。</li>
+        <li>工作方式：先估计图片四边的背景颜色，再把与背景颜色相近的像素标记为「背景候选」；这些候选会分成若干连通区域，只有<b>与图片边缘相连</b>的那些才真正算背景并转为透明。</li>
+        <li>因此，被轮廓线围住的区域一律保留——哪怕它和背景颜色完全一样。这正是与普通「按颜色抠图」的区别。</li>
+        <li>所以角色身上的<b>黑色头发、黑色衣服、黑色轮廓</b>不会被误删，哪怕背景同样是黑色。</li>
+        <li>如果原图在角色外围有一圈<b>白色「贴纸」描边</b>，它会一并被去掉——描边是按位置识别的（紧贴边缘的窄亮带），因此角色内部被包围的白色头发、衬衫和皮肤都会保留；角色本身是亮色时不会被误判。</li>
+        <li>抠图在角色内部造成的空洞会被自动补上，不会留下黑洞。</li>
         <li>若背景带有渐变投影或压缩噪点导致边缘残留，请把「容差」调到<b>宽松</b>再试。</li>
         <li>支持常见图片格式（png / jpg / bmp / webp 等），输出统一为透明 PNG，尺寸与原图一致。</li>
         <li>处理时间与图片尺寸相关；超大图片（约 4000 万像素以上）请先缩小。</li>

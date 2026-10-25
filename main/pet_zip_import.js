@@ -286,16 +286,25 @@ async function installPetZip(zipPath, userDataPath) {
     ? rootPrefix
     : zipBaseName;
 
-  // Push every PNG through ffmpeg colorkey so the pet doesn't carry a
-  // solid black background to the desktop. Runs *before* staging is
-  // created so a failure here leaves zero on-disk artifacts — the
+  // Push every PNG through the border-connected cutout so the pet doesn't
+  // carry a solid black background to the desktop. Runs *before* staging
+  // is created so a failure here leaves zero on-disk artifacts — the
   // catch block below only has work to do once staging exists.
   // pngSize() (read-only, called earlier on the same Buffer objects)
   // inspects the IHDR width/height, which the re-encoded PNG keeps
   // identical, so it remains valid for the manifest's defaultSize.
+  //
+  // A frame that fails to cut out is passed through unchanged rather than
+  // aborting the whole import: a pack may legitimately contain a frame
+  // that is already transparent, and refusing the entire pet over one
+  // odd frame is worse than leaving that frame as it was.
   for (const bucket of variants.values()) {
     for (const f of bucket) {
-      f.bytes = await transparentizePng(f.bytes);
+      try {
+        f.bytes = await transparentizePng(f.bytes);
+      } catch (err) {
+        console.error(`[pet_zip_import] cutout failed for ${f.name}, keeping original:`, err.message);
+      }
     }
   }
 
@@ -354,6 +363,6 @@ function removeImported(petId, userDataPath) {
 module.exports = {
   installPetZip,
   removeImported,
-  // exported for tests / future callers
+  // exported for future callers
   _internal: { pickRootPrefix, pngSize, frameSizeFromDir, VARIANT_DIR_RE },
 };
