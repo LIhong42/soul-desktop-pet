@@ -54,6 +54,12 @@ async function render() {
 
       <h3 style="margin-top:18px;">上传桌宠压缩包</h3>
       <p class="meta">压缩包内需要按动作分目录放帧文件：<code>default/</code> 必填，其他动作目录名任意（如 <code>blinking/</code>、<code>dancing/</code>、<code>headpat/</code> 等），有几个就识别几个。每个目录下放 <code><name>_NNN_NNNN.png</code> 命名的帧，其中 <code>NNN</code> 为帧序号、最后四位为该帧播放毫秒数。压缩包可以包一层顶层目录，也可以直接放帧目录。上传后系统会自动生成 <code>manifest.json</code> 并立即生效。</p>
+      <p class="meta" style="margin-top:6px;"><strong>支持两种图片类型：</strong></p>
+      <ul class="meta" style="margin-top:4px; padding-left:22px;">
+        <li><strong>非透明 PNG（默认）：</strong>图片带实色背景（如纯黑底），上传时会自动抠掉背景、去除描边并导出透明 PNG。</li>
+        <li><strong>透明 PNG：</strong>图片本身已经抠好背景，上传时<strong>跳过抠图流程</strong>，原样使用，边缘不会被二次处理。</li>
+      </ul>
+      <p class="meta" style="margin-top:6px;">系统会自动判断每一帧属于哪种类型，可以混用（同一压缩包里既有透明帧也有非透明帧也可以）。</p>
       <div class="row" style="gap:8px; margin-top:10px; flex-wrap:wrap;">
         <button class="btn" id="import-from-zip">上传桌宠压缩包…</button>
       </div>
@@ -197,14 +203,21 @@ async function render() {
       const r = await api.pet.importFromZip?.();
       if (!r || r.canceled) return;
       const count = (r && typeof r.variantCount === 'number') ? r.variantCount : null;
+      // Report what happened to the frames: how many went through the
+      // background cutout and how many were already transparent and
+      // therefore skipped it.
+      const cut = (r && r.cutout) ? r.cutout : null;
+      const cutNote = (cut && (cut.processed || cut.skipped))
+        ? `（${cut.processed || 0} 帧已抠图，${cut.skipped || 0} 帧透明已跳过）`
+        : '';
       if (r.deduped) {
         toast(count != null
           ? `已存在同内容桌宠：${r.pet.name}（${count} 个动作）`
           : `已存在同内容桌宠：${r.pet.name}`);
       } else {
         toast(count != null
-          ? `已导入：${r.pet.name}（识别了 ${count} 个动作）`
-          : `已导入：${r.pet.name}`);
+          ? `已导入：${r.pet.name}（识别了 ${count} 个动作）${cutNote}`
+          : `已导入：${r.pet.name}${cutNote}`);
       }
       render();
     } catch (e) {

@@ -1503,6 +1503,10 @@ function normFreeText(s) {
       deduped: !!installed.deduped,
       pet: { id: installed.pet.id, name: installed.pet.name },
       variantCount,
+      // How the frames were treated on import: `processed` frames went
+      // through the background cutout, `skipped` frames were already
+      // transparent and were passed through untouched.
+      cutout: installed.cutout || { processed: 0, skipped: 0 },
     };
   });
 

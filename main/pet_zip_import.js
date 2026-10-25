@@ -26,13 +26,30 @@
 // installPetZip(zipPath, userDataPath)
 //   → { ok, deduped, pet: { id, name }, rootDir }
 //   → throws on invalid input (bad zip / no usable variant / IO error)
-//   async — runs ffmpeg colorkey over every PNG before publishing.
+//   async — runs the background cutout over every *opaque* PNG before
+//          publishing; frames that are already transparent are passed
+//          through untouched.
+//
+// Transparent vs opaque packs
+// --------------------------
+// Two kinds of pack are supported:
+//
+//   * Opaque packs (the default) ship flat-backdrop frames. They go
+//     through the border-connected cutout so the backdrop disappears.
+//   * Transparent packs ship frames that are already cut out (an alpha
+//     channel with real transparency). Those are passed through as-is:
+//     there is no backdrop to remove, and running the cutout on them
+//     would estimate the "backdrop colour" from the transparent
+//     perimeter and start eating the character's own dark pixels.
+//
+// See `main/png_alpha.js` for how the two are told apart.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const AdmZip = require('adm-zip');
 const { transparentizePng } = require('./png_colorkey');
+const { isTransparentPng } = require('./png_alpha');
 
 // Hard caps. Generous enough for a large pack with many high-res frames,
 // tight enough that a single zip can't fill the user-data disk.
@@ -286,10 +303,14 @@ async function installPetZip(zipPath, userDataPath) {
     ? rootPrefix
     : zipBaseName;
 
-  // Push every PNG through the border-connected cutout so the pet doesn't
-  // carry a solid black background to the desktop. Runs *before* staging
-  // is created so a failure here leaves zero on-disk artifacts — the
-  // catch block below only has work to do once staging exists.
+  // Push every *opaque* PNG through the border-connected cutout so the pet
+  // doesn't carry a solid black background to the desktop. Frames that
+  // are already transparent are skipped — there is no backdrop to remove,
+  // and the cutout would only risk eating the character's dark pixels.
+  //
+  // Runs *before* staging is created so a failure here leaves zero
+  // on-disk artifacts — the catch block below only has work to do once
+  // staging exists.
   // pngSize() (read-only, called earlier on the same Buffer objects)
   // inspects the IHDR width/height, which the re-encoded PNG keeps
   // identical, so it remains valid for the manifest's defaultSize.
@@ -298,10 +319,32 @@ async function installPetZip(zipPath, userDataPath) {
   // aborting the whole import: a pack may legitimately contain a frame
   // that is already transparent, and refusing the entire pet over one
   // odd frame is worse than leaving that frame as it was.
+  //
+  // The counts are reported back to the UI so the user can see what
+  // happened to their pack (see the `cutout` field of the return value).
+  let cutoutCount = 0;
+  let skippedTransparent = 0;
   for (const bucket of variants.values()) {
     for (const f of bucket) {
+      // Is this frame already a cut-out sprite? If so, leave it alone.
+      let alreadyTransparent = false;
+      try {
+        const probe = await isTransparentPng(f.bytes);
+        alreadyTransparent = !!probe.transparent;
+      } catch (err) {
+        // Detection failed — fall through to the cutout, which reports
+        // its own error if the frame is unusable.
+        console.error(`[pet_zip_import] transparency probe failed for ${f.name}:`, err.message);
+      }
+
+      if (alreadyTransparent) {
+        skippedTransparent += 1;
+        continue;
+      }
+
       try {
         f.bytes = await transparentizePng(f.bytes);
+        cutoutCount += 1;
       } catch (err) {
         console.error(`[pet_zip_import] cutout failed for ${f.name}, keeping original:`, err.message);
       }
@@ -348,7 +391,15 @@ async function installPetZip(zipPath, userDataPath) {
     throw err;
   }
 
-  return { ok: true, deduped: false, pet: { id, name: petName }, rootDir: targetDir };
+  return {
+    ok: true,
+    deduped: false,
+    pet: { id, name: petName },
+    rootDir: targetDir,
+    // How many frames went through the cutout and how many were already
+    // transparent. Surfaced so the UI can tell the user what happened.
+    cutout: { processed: cutoutCount, skipped: skippedTransparent },
+  };
 }
 
 // Convenience: drop an imported pet directory. Caller must verify the id
