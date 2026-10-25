@@ -1,9 +1,9 @@
-// main/png_border_cutout.js — cut a frame's background out by *connectivity*,
-// and pick the colour tolerance so that the character can never be hollowed
-// out.
+// main/png_border_cutout.js — the shared cutout pipeline: decide what is
+// background, cut it out, strip the "sticker" outline, and repair any hole
+// the cut left behind.
 //
-// The problem this replaces
-// -------------------------
+// The problem this solves
+// -----------------------
 // The zip importer used to run every incoming PNG through ffmpeg's
 // `colorkey=0x000000:0.1:0.0`. A colorkey makes **every** pixel close to
 // the key colour transparent, *anywhere in the frame*. Pet frames ripped
@@ -17,45 +17,37 @@
 // ------------------------
 // Only the background counts as background if you can *walk to it from the
 // outside of the image* without crossing the character. That is a
-// connectivity question, not a colour question:
+// connectivity question, not a colour question — but connectivity alone is
+// not enough either, because how far the flood may travel depends on how
+// the pixels are priced.
 //
-//   1. Estimate the backdrop colour from the outer perimeter (median, so a
-//      stray character pixel touching the edge can't drag it off).
-//   2. Mark every pixel within `threshold` of that colour as a background
-//      *candidate*.
-//   3. Group the candidates into 8-connected components.
-//   4. Keep only the components that touch the image border. Those are the
-//      real background.
-//   5. Everything else stays opaque -- including black hair and clothing
-//      that happens to match the backdrop exactly, because the outline
-//      separates them from the border.
+// So each pixel gets a *cost* that combines two signals:
 //
-// This is the same algorithm as the reference implementation in
-// `opencv_border_cutout.py`, ported to plain JS so it runs inside the
-// Electron main process without a Python dependency.
+//   - how far its colour is from the estimated backdrop, and
+//   - how strong an edge it sits on.
 //
-// Why component labelling instead of a flood fill
-// ----------------------------------------------
-// A flood fill from the border also respects connectivity, but it needs the
-// *non*-background pixels to form a sealed wall. A hand-drawn or
-// AI-generated outline is often thin and slightly broken, so the fill leaks
-// in and erases the interior. Here the candidate set is generated from a
-// colour distance, and a pixel is only removed when it is *also* connected
-// to the border through other candidates -- a broken outline simply means the
-// interior is a separate component that gets kept. Failing safe (keep the
-// pixels) is what we want for a sprite.
+// and the background is the set of pixels that can be reached from the
+// image border without ever passing through a pixel above a cost ceiling.
+// See `main/png_bottleneck_flood.js` for the full derivation and the
+// measurements behind it.
 //
-// Picking the tolerance (the "no black hole" guarantee)
-// -----------------------------------------------------
-// Connectivity alone does not protect the character: the *tolerance*
-// decides how far the candidate set reaches into the character, and a
-// tolerance that is even slightly too wide bridges the character's dark
-// costume to the backdrop and deletes it.
+// Why a cost instead of a colour threshold
+// -----------------------------------------
+// The previous version picked a single colour distance ("the tolerance")
+// and removed every pixel within it that was connected to the border.
 //
-// The tolerance is therefore measured per image, by `findFloodBreak`, which
-// watches the flood's reach as the tolerance widens and finds the point
-// where the flood breaks through the character's outline. See the comment
-// on that function for the measurements behind it.
+// On dark-on-dark artwork that number cannot be set safely. Measured on a
+// real 1080x1440 frame (black backdrop, character with a white sticker
+// outline), widening the tolerance from 21 to 32 deleted an extra 118,758
+// pixels — 7.64% of the frame — and every one of them was in the two
+// darkest luminance buckets, i.e. the character's own black costume. The
+// sprite came out riddled with holes.
+//
+// The cost formulation fixes that because the gradient term prices the
+// anti-aliased fringe around the character as expensive, so the flood
+// stops there, while the character's black costume — which is flat and
+// close to the backdrop colour, and therefore *cheap* — is never reached
+// because getting to it would mean crossing that expensive rim.
 //
 // Removing the "sticker" outline
 // ------------------------------
@@ -87,13 +79,25 @@
 // seam by taking the dark pixels that touch the band and that the
 // background flood could not reach.
 //
+// The pipeline
+// ------------
+// Every entry point runs the same four steps, in this order:
+//
+//   1. buildBottleneckMask — background = cheaply reachable from the edge
+//   2. applyMask         — write the alpha channel, feather the cut
+//   3. defringeOutline   — strip the white sticker stroke
+//   4. repairHoles       — close holes the cut left inside the character
+//
+// The order is load-bearing. The defringe has to run *after* the cut
+// (it needs the background it hugs) and *before* the repair (the repair
+// would otherwise fill the stroke straight back in).
+//
 // Performance
 // -----------
 // The whole thing is O(pixels) with typed-array buffers, plus one ffmpeg
-// decode and one ffmpeg encode. On a 1080x1440 frame the label pass takes
-// ~40 ms, which is far cheaper than the ffmpeg round-trip that surrounds
-// it. The tolerance search runs one flood per candidate tolerance, which
-// adds a few hundred milliseconds per frame -- paid once, at import time.
+// decode and one ffmpeg encode. This is *faster* than the version it
+// replaces, which had to run a full-frame flood once per candidate
+// tolerance (32 times) just to pick that tolerance.
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -101,39 +105,22 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { getFfmpegPath } = require('./video_frame_split');
-
-// Colour-distance tolerance from the estimated backdrop. Expressed as a
-// per-channel Chebyshev distance (0-255) so "how far from the backdrop
-// colour" reads the same way the tolerance presets in
-// `main/image_bg_remove.js` do.
-//
-// This is only a *fallback*. The real tolerance is derived per image by
-// `estimateAdaptiveThreshold`, because a single fixed number cannot serve
-// both a flat black backdrop and a noisy/gradient one.
-const DEFAULT_THRESHOLD = 24;
-
-// Bounds for the adaptive tolerance. The lower bound matters: a backdrop
-// that is *exactly* flat must not have its anti-aliased fringe swept up
-// with it, because that fringe is what bridges the character's black
-// costume to the background. The upper bound keeps a genuinely noisy or
-// gradient backdrop workable.
-const MIN_ADAPTIVE_THRESHOLD = 2;
-const MAX_ADAPTIVE_THRESHOLD = 32;
-
-// Fraction of the border-band samples that must be within the tolerance of
-// the estimate for the tolerance to be considered "sufficient". Below this
-// the backdrop is not flat and we widen the tolerance to cover the
-// variation.
-//
-// This only applies when the flood gives us no answer: the border band can
-// be dominated by the character when the character reaches the image edge,
-// so on its own it is a weak signal.
-const BACKDROP_COVERAGE_TARGET = 0.995;
+const {
+  buildBottleneckMask,
+  DEFAULT_CEIL,
+} = require('./png_bottleneck_flood');
 
 // Hard ceiling on the pixel count we accept, matching
-// `main/image_bg_remove.js`. 40 MPix ≈ 160 MB of RGBA plus the label
-// arrays; beyond that a 32-bit machine starts swapping.
-const MAX_PIXELS = 40 * 1000 * 1000;
+// `main/image_bg_remove.js`.
+//
+// This was lowered from 40 MPix because the cost field adds a Float32Array
+// and a Float32Array of path costs on top of the RGBA buffer: at 40 MPix
+// the pipeline peaks around 600 MB, which a 32-bit-ish Electron main
+// process starts swapping on. At 24 MPix the peak is roughly 360 MB.
+//
+// 24 MPix is still generous: the reference artwork is 1.5 MPix and a
+// 2160x2880 Live2D frame is 6.2 MPix.
+const MAX_PIXELS = 24 * 1000 * 1000;
 
 // Keep stderr for error messages only; ffmpeg is chatty at default loglevel.
 const MAX_STDERR_BYTES = 8 * 1024;
@@ -262,9 +249,9 @@ function probeSize(inputPath) {
 // backdrop colour.
 //
 // For a backdrop that is a gradient rather than a flat colour, the median
-// lands mid-ramp and the tolerance knob has to be wide enough to bridge
-// the ramp. That is a documented limitation rather than a bug: the
-// tolerance presets exist precisely to cover it.
+// lands mid-ramp and the cost ceiling has to be wide enough to bridge the
+// ramp. That is a documented limitation rather than a bug: the strength
+// presets exist precisely to cover it.
 function estimateBorderColor(rgba, width, height) {
   const samples = collectBorderSamples(rgba, width, height);
   return samples.map((arr) => {
@@ -273,9 +260,7 @@ function estimateBorderColor(rgba, width, height) {
   });
 }
 
-// Sample the perimeter band and return both the median colour and the
-// raw samples, so the adaptive threshold can measure how flat the
-// backdrop is.
+// Sample the perimeter band and return the raw per-channel samples.
 //
 // The band is the same one `estimateBorderColor` uses: a few rows/columns
 // hugging the image edge.
@@ -304,378 +289,6 @@ function collectBorderSamples(rgba, width, height) {
   }
 
   return samples;
-}
-
-// Chebyshev distance between a pixel and the backdrop colour.
-function colorDistance(rgba, index, bg) {
-  const o = index * 4;
-  const dr = rgba[o] - bg[0];
-  const dg = rgba[o + 1] - bg[1];
-  const db = rgba[o + 2] - bg[2];
-  const ar = dr < 0 ? -dr : dr;
-  const ag = dg < 0 ? -dg : dg;
-  const ab = db < 0 ? -db : db;
-  let m = ar > ag ? ar : ag;
-  if (ab > m) m = ab;
-  return m;
-}
-
-// Derive the tolerance from the backdrop's own colour distribution.
-//
-// Why this exists
-// ---------------
-// A single fixed tolerance cannot work for every pet pack, and picking a
-// "safe" wide one is actively harmful. The failure we have to avoid is
-// the *black hole*: the character is drawn in black on a black backdrop,
-// separated only by a thin outline. A tolerance that is even slightly too
-// wide swallows the anti-aliased fringe around the character's black
-// costume, that fringe bridges the costume to the backdrop, and the
-// costume is then deleted along with the backdrop -- leaving a hollow
-// silhouette.
-//
-// Why a colour histogram is not enough
-// ------------------------------------
-// The obvious way to pick the tolerance is to look at the histogram of
-// "distance from the backdrop colour" and cut where the anti-aliased
-// fringe ends. That was tried, and it does not work on real pet art.
-//
-// Measured on a real 86-frame pack (1080x1440, pure-black backdrop), the
-// histogram of the distance from the backdrop looks like this:
-//
-//      0: 837486  #########   <- the flat backdrop
-//      1:  15616  ##
-//      5:   4841  #
-//     10:   6204  #
-//     15:   6219  #
-//     20:   6050  #
-//     25:   9299  #
-//     30:  15398  ##          <- the character's own pixels start here
-//     35:   7091  #
-//     40:  11090  #
-//     45:   2929  #
-//     50:   2749  #
-//
-// There is no valley and no plateau to cut at: the buckets stay between
-// 4.9k and 11.3k all the way from distance 1 to distance 44. The reason
-// is that this art's *character* is drawn in dark greys (measured RGB
-// 20-53) that sit right on top of the anti-aliased fringe in the same
-// distance range, so the two populations overlap in colour space and no
-// colour threshold can separate them.
-//
-// Every histogram-based rule was measured against the real art and all
-// of them landed at T=32, where a quarter of the character's dark
-// costume is deleted.
-//
-// The rule that works: measure the flood, not the histogram
-// ---------------------------------------------------------
-// The question "where does the backdrop end?" is really a question about
-// *space*, not colour: the backdrop ends where the flood that starts at
-// the image border stops being able to travel. So we run the flood at a
-// series of tolerances and watch how much of the frame it can reach.
-//
-// The reach curve has a very characteristic shape:
-//
-//   * at small tolerances the flood eats only the anti-aliased fringe,
-//     and the reach grows slowly and *linearly* with the tolerance;
-//   * once the tolerance is wide enough to cut through the character's
-//     outline, the flood breaks through and starts swallowing the
-//     character, so the reach grows much faster.
-//
-// Measured on a real frame, the growth rate per unit of tolerance is
-// 0.14% of the frame while we are still in the fringe, and 4.85% at the
-// step where the flood breaks through -- a factor of 35. That gap is so
-// wide that the break is unmistakable.
-//
-// So the estimator fits the fringe's own linear growth, then finds the
-// first tolerance at which the measured reach departs from that line.
-// The fit is self-calibrating: it measures the slope from the image
-// being cut, so the same code works for a 400x500 sprite and a
-// 2160x2880 one, and for art with a wide outline as well as a thin one.
-//
-// Returns { threshold, coverage, flatness, tailEnd, breakAt }.
-function estimateAdaptiveThreshold(rgba, width, height, bg, samples) {
-  const src = samples || collectBorderSamples(rgba, width, height);
-  const count = src[0].length;
-  if (count === 0) {
-    return { threshold: DEFAULT_THRESHOLD, coverage: 0, flatness: 0, tailEnd: DEFAULT_THRESHOLD };
-  }
-
-  // The deviation of each border sample from the backdrop colour.
-  const devs = new Uint8Array(count);
-  for (let i = 0; i < count; i += 1) {
-    const dr = src[0][i] - bg[0];
-    const dg = src[1][i] - bg[1];
-    const db = src[2][i] - bg[2];
-    const ar = dr < 0 ? -dr : dr;
-    const ag = dg < 0 ? -dg : dg;
-    const ab = db < 0 ? -db : db;
-    let m = ar > ag ? ar : ag;
-    if (ab > m) m = ab;
-    devs[i] = m;
-  }
-
-  // Median deviation = how flat the backdrop is.
-  const sorted = Array.from(devs).sort((a, b) => a - b);
-  const flatness = sorted[sorted.length >> 1];
-
-  // The tolerance must also explain the border band, so a noisy or
-  // gradient backdrop still gets enough slack. This is a *floor* that
-  // applies only when the flood tells us nothing -- see below.
-  //
-  // The border band is not a reliable floor on its own: on a frame where
-  // the character reaches the image edge, the band is dominated by the
-  // character rather than by the backdrop, and the tolerance it demands
-  // can be much wider than the backdrop actually needs.
-  let floor = MIN_ADAPTIVE_THRESHOLD;
-  let coverage = 0;
-  for (; floor <= MAX_ADAPTIVE_THRESHOLD; floor += 1) {
-    let within = 0;
-    for (let i = 0; i < count; i += 1) {
-      if (devs[i] <= floor) within += 1;
-    }
-    coverage = within / count;
-    if (coverage >= BACKDROP_COVERAGE_TARGET) break;
-  }
-  if (floor > MAX_ADAPTIVE_THRESHOLD) floor = MAX_ADAPTIVE_THRESHOLD;
-
-  // Find the tolerance at which the flood breaks through the character's
-  // outline. This is the "no black hole" guarantee, and it is based on
-  // what the flood actually does rather than on any statistic of the
-  // border band, so it wins over the floor whenever it has an answer.
-  const { breakAt } = findFloodBreak(rgba, width, height, bg);
-
-  let threshold;
-  if (breakAt != null) {
-    // The flood broke through at `breakAt`, so the tolerance just below
-    // it is the widest one that provably keeps the character intact.
-    threshold = breakAt;
-  } else {
-    // The flood never broke through the outline within the allowed
-    // range. That means the character's outline is wide (or the backdrop
-    // and the character are far apart in colour), so no tolerance in the
-    // range can hollow the character out. We then use the border band to
-    // decide how wide the tolerance has to be to cover the backdrop.
-    threshold = Math.min(MAX_ADAPTIVE_THRESHOLD, Math.max(floor, DEFAULT_THRESHOLD));
-  }
-  if (threshold < MIN_ADAPTIVE_THRESHOLD) threshold = MIN_ADAPTIVE_THRESHOLD;
-  if (threshold > MAX_ADAPTIVE_THRESHOLD) threshold = MAX_ADAPTIVE_THRESHOLD;
-
-  return { threshold, coverage, flatness, tailEnd: breakAt, breakAt };
-}
-
-// Find the tolerance at which the flood that starts at the image border
-// breaks through the character's outline and starts eating the character.
-//
-// The reach curve
-// ---------------
-// For each tolerance t we flood the frame from the border through pixels
-// within t of the backdrop colour, and record what fraction of the frame
-// the flood reached.
-//
-// The flood at tolerance 0 already reaches the flat backdrop. As the
-// tolerance widens it picks up the anti-aliased fringe around the
-// character, and that fringe grows at a fairly steady rate. Once the
-// tolerance is wide enough to cut through the character's outline, the
-// flood starts reaching the character itself, and the growth rate jumps.
-//
-// The break detector
-// ------------------
-// We look at the *excess* reach -- the reach beyond the flat backdrop --
-// and fit it against a straight line over the early part of the curve,
-// which is the fringe. The fringe's excess is close to linear, so the
-// line describes it well. Then we look for the first tolerance at which
-// the measured excess sits clearly *above* that line.
-//
-// Why the excess, and not the reach
-// ---------------------------------
-// The raw reach curve starts with a huge flat backdrop and is dominated
-// by it, which flattens the very signal we are looking for. Subtracting
-// the tolerance-0 reach isolates "how much beyond the backdrop have we
-// eaten", which is the part that grows when the flood breaks through.
-//
-// Why a line, and not a local spike
-// ---------------------------------
-// The break is not always a single spike in the growth rate. On some
-// frames the flood finds one small gap in the outline and then widens it
-// step by step; on others it finds several separate gaps. Looking at the
-// departure from the fringe's *trend* catches all of those shapes, and it
-// also rejects the single-bucket noise that anti-aliasing throws off.
-//
-// The margin between the two is large. Measured on real frames, the
-// excess stays within 0.75% of the line all the way through the fringe,
-// and then departs by 1.8% to 4.6% in the very first step past the
-// break.
-//
-// Returns the widest tolerance that is still provably safe, or null when
-// the flood never broke through within the allowed range.
-function findFloodBreak(rgba, width, height, bg) {
-  // Walk the tolerance up one step at a time, because the break has to
-  // be localised to the tolerance.
-  const tolerances = [];
-  for (let t = MIN_ADAPTIVE_THRESHOLD; t <= MAX_ADAPTIVE_THRESHOLD; t += 1) {
-    tolerances.push(t);
-  }
-  if (tolerances.length < 6) return { breakAt: null, baseRate: 0 };
-
-  // The flat backdrop's extent. Everything the flood reaches beyond
-  // this is the fringe, and then the character.
-  const backdropReach = floodReachFraction(rgba, width, height, bg, 0);
-
-  const excess = new Float64Array(tolerances.length);
-  for (let i = 0; i < tolerances.length; i += 1) {
-    excess[i] = floodReachFraction(rgba, width, height, bg, tolerances[i]) - backdropReach;
-  }
-
-  // Fit the fringe's trend. We use the first half of the range, which is
-  // the fringe on every art we have measured, and we fit a line through
-  // its two endpoints -- the excess curve is close enough to linear that
-  // the endpoints are a better estimate than a least-squares fit, which
-  // a single outlying point could bend.
-  const fitCount = Math.max(3, Math.floor(tolerances.length / 2));
-  const dt = tolerances[fitCount - 1] - tolerances[0];
-  if (!(dt > 0)) return { breakAt: null, baseRate: 0 };
-  const slope = (excess[fitCount - 1] - excess[0]) / dt;
-  const intercept = excess[0] - slope * tolerances[0];
-
-  // How far above the trend the excess may get before we call it a
-  // break. It is a fraction of the frame, so it means the same thing at
-  // every resolution. The fringe's own noise stays within 0.75% of the
-  // trend and the break departs by at least 1.8%, so this sits in the
-  // gap.
-  const BREAK_MARGIN = 0.01;
-
-  for (let i = 1; i < tolerances.length; i += 1) {
-    const predicted = intercept + slope * tolerances[i];
-    if (excess[i] - predicted > BREAK_MARGIN) {
-      // The break happens somewhere between the previous tolerance and
-      // this one. We keep the *previous* tolerance, which is the widest
-      // one that is still provably safe.
-      return { breakAt: tolerances[i - 1], baseRate: slope };
-    }
-  }
-
-  // No break anywhere in the range: the character's outline is wide
-  // enough that no tolerance we allow can cut through it.
-  return { breakAt: null, baseRate: slope };
-}
-// Fraction of the frame that a flood starting at the image border can
-// reach through pixels within `threshold` of the backdrop colour.
-//
-// The flood is 8-connected, so it can squeeze through a diagonal gap in
-// an outline -- which is what makes it a faithful model of "can the
-// backdrop reach this pixel without crossing the character".
-function floodReachFraction(rgba, width, height, bg, threshold) {
-  const total = width * height;
-  const reached = new Uint8Array(total);
-  const stack = new Int32Array(total);
-  let sp = 0;
-
-  const push = (i) => {
-    if (reached[i]) return;
-    if (colorDistance(rgba, i, bg) > threshold) return;
-    reached[i] = 1;
-    stack[sp] = i;
-    sp += 1;
-  };
-  for (let x = 0; x < width; x += 1) {
-    push(x);
-    push((height - 1) * width + x);
-  }
-  for (let y = 0; y < height; y += 1) {
-    push(y * width);
-    push(y * width + width - 1);
-  }
-  const NX = [-1, 0, 1, -1, 1, -1, 0, 1];
-  const NY = [-1, -1, -1, 0, 0, 1, 1, 1];
-  while (sp > 0) {
-    sp -= 1;
-    const idx = stack[sp];
-    const x = idx % width;
-    const y = (idx - x) / width;
-    for (let k = 0; k < 8; k += 1) {
-      const nx = x + NX[k];
-      const ny = y + NY[k];
-      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-      push(ny * width + nx);
-    }
-  }
-
-  let count = 0;
-  for (let i = 0; i < total; i += 1) if (reached[i]) count += 1;
-  return count / total;
-}
-// Label the 8-connected components of the candidate set and return, for
-// each pixel, the label of its component (-1 = not a candidate).
-//
-// Implemented with an explicit stack rather than recursion so a large
-// frame can't blow the JS stack, and with a plain array for the labels so
-// the values stay small integers.
-//
-// A pixel is a candidate when it is within `threshold` of the backdrop
-// colour, measured as a per-channel Chebyshev distance. That is what makes
-// the tolerance knob meaningful: widening it absorbs a noisier or
-// gradient-shaded backdrop, narrowing it keeps only the exact flat colour.
-function labelCandidates(rgba, width, height, bg, threshold) {
-  const total = width * height;
-  const labels = new Int32Array(total).fill(-1);
-
-  const br = bg[0];
-  const bgc = bg[1];
-  const bb = bg[2];
-
-  // Is this pixel close enough to the backdrop colour?
-  const isCandidate = (i) => {
-    const o = i * 4;
-    const dr = rgba[o] - br;
-    const dg = rgba[o + 1] - bgc;
-    const db = rgba[o + 2] - bb;
-    const ar = dr < 0 ? -dr : dr;
-    const ag = dg < 0 ? -dg : dg;
-    const ab = db < 0 ? -db : db;
-    let m = ar > ag ? ar : ag;
-    if (ab > m) m = ab;
-    return m <= threshold;
-  };
-
-  // Perimeter of the 8-neighbourhood.
-  const NX = [-1, 0, 1, -1, 1, -1, 0, 1];
-  const NY = [-1, -1, -1, 0, 0, 1, 1, 1];
-
-  const stack = new Int32Array(total);
-  let nextLabel = 0;
-
-  for (let seed = 0; seed < total; seed += 1) {
-    if (labels[seed] !== -1) continue;
-    if (!isCandidate(seed)) continue;   // not a background candidate
-
-    // Flood this component.
-    const label = nextLabel;
-    nextLabel += 1;
-    let sp = 0;
-    stack[sp] = seed;
-    sp += 1;
-    labels[seed] = label;
-
-    while (sp > 0) {
-      sp -= 1;
-      const idx = stack[sp];
-      const x = idx % width;
-      const y = (idx - x) / width;
-      for (let k = 0; k < 8; k += 1) {
-        const nx = x + NX[k];
-        const ny = y + NY[k];
-        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-        const ni = ny * width + nx;
-        if (labels[ni] !== -1) continue;
-        if (!isCandidate(ni)) continue;
-        labels[ni] = label;
-        stack[sp] = ni;
-        sp += 1;
-      }
-    }
-  }
-
-  return { labels, componentCount: nextLabel };
 }
 
 // Repair the mask so the character can never end up hollow.
@@ -829,69 +442,6 @@ function fillHolesWithColor(rgba, holeMask, width, height) {
 // Returns { mask, backgroundColor, transparentPixels, total } where mask is
 // a Uint8Array with 1 = "this pixel is background (make it transparent)".
 //
-// The mask is built by keeping only the candidate components that touch the
-// image border. Components in the middle of the frame are enclosed by the
-// character and are therefore part of it — that is exactly what keeps the
-// character's black hair and clothing intact.
-//
-// `threshold` may be:
-//   - a number  — use it verbatim (the tool's "tolerance" slider)
-//   - undefined — derive it from the backdrop (adaptive; this is what
-//     the zip importer uses, because an uploaded pack must never come out
-//     with black holes)
-function buildBackgroundMask(rgba, width, height, threshold) {
-  const total = width * height;
-  const bg = estimateBorderColor(rgba, width, height);
-
-  let tol;
-  let adaptive = null;
-  if (Number.isFinite(threshold)) {
-    tol = Math.max(0, Math.min(255, threshold));
-  } else {
-    const samples = collectBorderSamples(rgba, width, height);
-    adaptive = estimateAdaptiveThreshold(rgba, width, height, bg, samples);
-    tol = adaptive.threshold;
-  }
-
-  const { labels, componentCount } = labelCandidates(rgba, width, height, bg, tol);
-
-  // Which components touch the border? A component that touches the edge
-  // is reachable from "outside the picture", so it is background.
-  const borderComponents = new Set();
-  const mark = (i) => {
-    const l = labels[i];
-    if (l >= 0) borderComponents.add(l);
-  };
-  for (let x = 0; x < width; x += 1) {
-    mark(x);
-    mark((height - 1) * width + x);
-  }
-  for (let y = 0; y < height; y += 1) {
-    mark(y * width);
-    mark(y * width + width - 1);
-  }
-
-  const mask = new Uint8Array(total);
-  let transparentPixels = 0;
-  for (let i = 0; i < total; i += 1) {
-    const l = labels[i];
-    if (l >= 0 && borderComponents.has(l)) {
-      mask[i] = 1;
-      transparentPixels += 1;
-    }
-  }
-
-  return {
-    mask,
-    backgroundColor: bg,
-    transparentPixels,
-    componentCount,
-    total,
-    threshold: tol,
-    adaptive,
-  };
-}
-
 // Remove the black holes a cut can leave behind.
 //
 // After the mask is applied, some regions that are visually *inside* the
@@ -1490,6 +1040,86 @@ async function encodePng(rgba, width, height, outPath, { cancelCheck } = {}) {
 }
 
 // ---------------------------------------------------------------------
+// The shared cutout pipeline
+// ---------------------------------------------------------------------
+
+// Run the whole cutout on an RGBA buffer.
+//
+//   rgba       — RGBA bytes, modified in place (the alpha channel is written)
+//   width/height — image dimensions
+//   ceiling    — cost ceiling, 0..1. See `main/png_bottleneck_flood.js`.
+//                Omit to use the default ("normal" preset).
+//   softness   — 0..4 edge-feathering ring count
+//   repair     — close holes the cut left inside the character
+//   defringe   — strip the white "sticker" outline
+//   cancelCheck— () => boolean, polled between the heavy steps
+//
+// The four steps run in a fixed order, and the order is load-bearing:
+//
+//   1. buildBottleneckMask — decide what is background. The background is
+//      the set of pixels that can be walked to from the image edge without
+//      passing through a pixel whose cost exceeds the ceiling.
+//
+//   2. applyMask — write the alpha channel and feather the cut.
+//
+//   3. defringeOutline — strip the white "sticker" stroke. It has to run
+//      *after* the cut, because it works by looking at the bright band
+//      that hugs the cut, and *before* the repair, because the repair
+//      would otherwise fill the stroke straight back in.
+//
+//   4. repairHoles — close the transparent regions that sit *inside* the
+//      character's silhouette, so the character can never come out
+//      hollow.
+//
+// Returns the mask plus the statistics both entry points report.
+function runCutoutPipeline(rgba, width, height, {
+  ceiling, softness = 0, repair = true, defringe = true, cancelCheck,
+} = {}) {
+  const cancelled = () => {
+    try { return !!(cancelCheck && cancelCheck()); } catch { return false; }
+  };
+
+  const usedCeiling = Number.isFinite(ceiling) ? ceiling : DEFAULT_CEIL;
+
+  const { mask, transparentPixels, backgroundColor, ceiling: effectiveCeiling } =
+    buildBottleneckMask(rgba, width, height, { ceiling: usedCeiling, cancelCheck });
+  if (transparentPixels === 0) {
+    const err = new Error('未识别到背景：请确认背景与主体颜色差异明显，必要时放宽「切割强度」');
+    err.noBackground = true;
+    throw err;
+  }
+  if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
+
+  // Soft cut: the anti-aliased outline between the character and the
+  // backdrop becomes a partial-alpha ramp instead of a hard edge, so the
+  // character's exact silhouette is preserved.
+  applyMask(rgba, mask, width, height, softness);
+
+  let defringed = 0;
+  if (defringe) {
+    const d = defringeOutline(rgba, mask, width, height);
+    defringed = d.removed;
+  }
+
+  let repaired = 0;
+  if (repair) {
+    const r = repairHoles(rgba, width, height);
+    repaired = r.repaired;
+  }
+
+  return {
+    mask,
+    backgroundColor,
+    transparentPixels,
+    total: width * height,
+    ceiling: effectiveCeiling,
+    requestedCeiling: usedCeiling,
+    repairedPixels: repaired,
+    defringedPixels: defringed,
+  };
+}
+
+// ---------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------
 
@@ -1497,14 +1127,14 @@ async function encodePng(rgba, width, height, outPath, { cancelCheck } = {}) {
 //
 //   inputPath   — absolute path to the source image
 //   outPath     — absolute path the RGBA PNG is written to
-//   threshold   — 0-255 colour distance from the estimated backdrop
+//   ceiling     — 0..1 cost ceiling; omit for the default ("normal") preset
 //   softness    — 0-4 edge-feathering ring count
 //   progressCb  — ({ phase, percent, note }) => void
 //   cancelCheck — () => boolean
 //
 // Returns { width, height, transparentRatio, backgroundColor, bytes }.
 async function cutoutToPng({
-  inputPath, outPath, threshold, softness, repair = true, defringe = true,
+  inputPath, outPath, ceiling, softness, repair = true, defringe = true,
   progressCb, cancelCheck,
 }) {
   const progress = (phase, percent, note) => {
@@ -1542,44 +1172,25 @@ async function cutoutToPng({
   if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
 
   progress('analyzing', 45, '正在识别背景');
-  const { mask, transparentPixels, backgroundColor, threshold: usedTol } =
-    buildBackgroundMask(rgba, width, height, threshold);
-  if (transparentPixels === 0) {
-    throw new Error('未识别到背景：请确认背景与主体颜色差异明显，必要时放宽「容差」');
-  }
+  const stats = runCutoutPipeline(rgba, width, height, {
+    ceiling, softness, repair, defringe, cancelCheck,
+  });
   if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
-
-  applyMask(rgba, mask, width, height, softness);
-
-  // Strip the white "sticker" outline, if the art has one. This has to run
-  // after the cut (it needs the background it hugs) and before the hole
-  // repair (the repair would otherwise fill the outline back in).
-  let defringed = 0;
-  if (defringe) {
-    const d = defringeOutline(rgba, mask, width, height);
-    defringed = d.removed;
-  }
-
-  // Close holes the cut left inside the character.
-  let repaired = 0;
-  if (repair) {
-    const r = repairHoles(rgba, width, height);
-    repaired = r.repaired;
-  }
 
   progress('encoding', 75, '正在导出 PNG');
   await encodePng(rgba, width, height, outPath, { cancelCheck });
 
-  const transparentRatio = transparentPixels / (width * height);
+  const transparentRatio = stats.transparentPixels / (width * height);
   progress('done', 100, `已完成，透明区域 ${(transparentRatio * 100).toFixed(1)}%`);
   return {
     width,
     height,
     transparentRatio,
-    backgroundColor,
-    threshold: usedTol,
-    repairedPixels: repaired,
-    defringedPixels: defringed,
+    backgroundColor: stats.backgroundColor,
+    ceiling: stats.ceiling,
+    requestedCeiling: stats.requestedCeiling,
+    repairedPixels: stats.repairedPixels,
+    defringedPixels: stats.defringedPixels,
     bytes: fs.statSync(outPath).size,
   };
 }
@@ -1592,7 +1203,7 @@ async function cutoutToPng({
 // reason to write an intermediate file either. The bytes are staged to a
 // temp file only because Windows ffmpeg will not read an image from
 // `pipe:0`.
-async function cutoutPngBuffer(bytes, { threshold, softness, repair = true, defringe = true } = {}) {
+async function cutoutPngBuffer(bytes, { ceiling, softness, repair = true, defringe = true } = {}) {
   if (!Buffer.isBuffer(bytes)) {
     throw new Error('cutoutPngBuffer 需要 Buffer 输入');
   }
@@ -1603,10 +1214,11 @@ async function cutoutPngBuffer(bytes, { threshold, softness, repair = true, defr
     throw new Error('PNG 太小，无法透明化');
   }
 
-  // `threshold` is deliberately left undefined here so the tolerance is
-  // derived from each frame's own backdrop. A fixed tolerance is what
-  // used to eat the character's black costume on a black backdrop; see
-  // `estimateAdaptiveThreshold` for the details.
+  // `ceiling` is deliberately left undefined here so every frame is cut
+  // with the default ("normal") preset. The cost-ceiling formulation is
+  // what makes that safe: a fixed *colour* tolerance is what used to eat
+  // the character's black costume on a black backdrop, while a fixed cost
+  // ceiling cannot reach past the character's outline.
 
   const nonce = crypto.randomBytes(8).toString('hex');
   const tmpDir = os.tmpdir();
@@ -1641,30 +1253,19 @@ async function cutoutPngBuffer(bytes, { threshold, softness, repair = true, defr
       throw new Error(`解码结果异常（${rgba ? rgba.length : 0} / ${expect} 字节）`);
     }
 
-    const { mask, transparentPixels, backgroundColor, threshold: usedTol } =
-      buildBackgroundMask(rgba, width, height, threshold);
-    if (transparentPixels === 0) {
-      // Nothing to remove — the frame is already fully opaque artwork, or
-      // the backdrop doesn't match what we estimated. Returning the input
-      // unchanged is the right call here: we are only removing a backdrop
-      // that a *solid* colorkey would have eaten into the character with.
-      return bytes;
+    let stats;
+    try {
+      stats = runCutoutPipeline(rgba, width, height, { ceiling, softness, repair, defringe });
+    } catch (err) {
+      if (err && err.noBackground) {
+        // Nothing to remove — the frame is already fully opaque artwork, or
+        // the backdrop doesn't match what we estimated. Returning the input
+        // unchanged is the right call here: we are only removing a backdrop
+        // that a *solid* colorkey would have eaten into the character with.
+        return bytes;
+      }
+      throw err;
     }
-
-    // Soft cut: the anti-aliased outline between the character and the
-    // backdrop becomes a partial-alpha ramp instead of a hard edge, so
-    // the character's exact silhouette is preserved — including the black
-    // parts that a hard cut would punch a hole through.
-    applyMask(rgba, mask, width, height, softness);
-
-    // Strip the white "sticker" outline, if the art has one. Same order as
-    // `cutoutToPng`: after the cut (it needs the background it hugs) and
-    // before the hole repair (which would fill the outline back in).
-    if (defringe) defringeOutline(rgba, mask, width, height);
-
-    // Close any hole the cut left inside the character, so an uploaded
-    // pack can never come out with a "black hole" in it.
-    if (repair) repairHoles(rgba, width, height);
 
     await encodePng(rgba, width, height, outPath);
     return fs.readFileSync(outPath);
@@ -1676,12 +1277,9 @@ async function cutoutPngBuffer(bytes, { threshold, softness, repair = true, defr
 module.exports = {
   cutoutToPng,
   cutoutPngBuffer,
+  runCutoutPipeline,
   estimateBorderColor,
-  estimateAdaptiveThreshold,
-  findFloodBreak,
-  floodReachFraction,
-  buildBackgroundMask,
-  labelCandidates,
+  collectBorderSamples,
   applyMask,
   defringeOutline,
   chooseDefringeLevel,
@@ -1689,9 +1287,6 @@ module.exports = {
   repairHoles,
   findEnclosedHoles,
   fillHolesWithColor,
-  DEFAULT_THRESHOLD,
-  MIN_ADAPTIVE_THRESHOLD,
-  MAX_ADAPTIVE_THRESHOLD,
   MAX_PIXELS,
   getFfmpegPath,
   // Shared with main/image_bg_remove.js, which reuses the same ffmpeg helpers.

@@ -343,6 +343,10 @@ async function installPetZip(zipPath, userDataPath) {
       }
 
       try {
+        // No ceiling is passed, so the frame is cut with the default
+        // ("normal") cost ceiling — the same preset the tool's 标准 option
+        // uses. That is what makes an imported frame come out identical to
+        // the same frame cut by hand in the tool.
         f.bytes = await transparentizePng(f.bytes);
         cutoutCount += 1;
       } catch (err) {

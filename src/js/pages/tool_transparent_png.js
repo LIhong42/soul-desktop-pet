@@ -1,18 +1,28 @@
 // src/js/pages/tool_transparent_png.js — detail page for /tools/transparent-png
 //
 // Detail UI for the background-removal tool: the user picks an image,
-// chooses how tolerant the background match should be and whether to
-// soften the cut edge, then main/image_bg_remove.js computes a transparent
-// PNG.
+// chooses how aggressively to cut and whether to soften the cut edge, then
+// main/image_bg_remove.js computes a transparent PNG.
 //
 // "Transparent everywhere outside the outline" is decided in main by
 // connectivity, not color — that's why this page doesn't offer a manual
 // color picker the way a colorkey tool would. Interior regions that share
 // the background color survive because the outline separates them from the
 // image border, and so do the character's black hair and clothing even
-// when the backdrop is black too. The tolerance control only widens how
-// far a pixel may stray from the estimated background color, so it's the
-// knob that matters for noisy or soft-shadowed sources.
+// when the backdrop is black too.
+//
+// The control here is a *cut strength*, not a color tolerance. Main
+// prices every pixel by two things — how far its color is from the
+// estimated backdrop, and how strong an edge it sits on — and the
+// background is what can be walked to from the image edge without
+// crossing a pixel that is too expensive. The strength sets that "too
+// expensive" line.
+//
+// The old control was a plain color distance, and on dark-on-dark art it
+// could not be set safely: wide enough to cover the anti-aliased fringe
+// also covered the character's own black costume, punching holes through
+// it. The gradient term is what makes the knob safe now — the fringe
+// around the character is expensive, so the flood stops there.
 //
 // State is module-scoped (single-page app), matching tool_video_frames.js.
 // Progress arrives on the shared `tools:progress` channel; we subscribe on
@@ -34,9 +44,9 @@ const state = {
 };
 
 const TOLERANCE_OPTIONS = [
-  { value: 'strict', label: '严格', hint: '背景干净、边界清晰时使用' },
+  { value: 'strict', label: '严格', hint: '最保守，只去掉最确定的背景，几乎不会碰到角色' },
   { value: 'normal', label: '标准', hint: '默认，适合大多数图片' },
-  { value: 'loose', label: '宽松', hint: '背景有噪点或渐变投影时使用' },
+  { value: 'loose', label: '宽松', hint: '背景有噪点或渐变投影时使用，会更靠近角色' },
 ];
 
 function unsubscribeIfAny() {
@@ -128,7 +138,7 @@ function render() {
       <h2>参数</h2>
       <div class="form-row">
         <div class="field">
-          <label for="tools-tolerance">容差</label>
+          <label for="tools-tolerance">切割强度</label>
           <select id="tools-tolerance" ${state.running ? 'disabled' : ''}>
             ${TOLERANCE_OPTIONS.map((o) => `
               <option value="${escapeHtml(o.value)}" ${o.value === state.tolerance ? 'selected' : ''}>
@@ -160,14 +170,14 @@ function render() {
     <div class="card tools-help">
       <h2>说明</h2>
       <ul class="meta">
-        <li>工作方式：先估计图片四边的背景颜色，再把与背景颜色相近的像素标记为「背景候选」；这些候选会分成若干连通区域，只有<b>与图片边缘相连</b>的那些才真正算背景并转为透明。</li>
+        <li>工作方式：先估计图片四边的背景颜色，再给每个像素算一个「代价」——由它<b>离背景色有多远</b>和<b>它处在多强的边缘上</b>共同决定。然后从图片边缘出发往里走，只要一路上没有遇到过代价太高的像素，就算背景并转为透明。</li>
         <li>因此，被轮廓线围住的区域一律保留——哪怕它和背景颜色完全一样。这正是与普通「按颜色抠图」的区别。</li>
-        <li>所以角色身上的<b>黑色头发、黑色衣服、黑色轮廓</b>不会被误删，哪怕背景同样是黑色。</li>
+        <li>角色身上紧贴外轮廓的那一圈<b>抗锯齿过渡像素</b>处在很强的边缘上、代价很高，所以泛洪会在这里停住，不会继续啃进角色——这就是<b>黑色头发、黑色衣服、黑色轮廓</b>不会被误删的原因，哪怕背景同样是黑色。</li>
         <li>如果原图在角色外围有一圈<b>白色「贴纸」描边</b>，它会一并被去掉——描边是按位置识别的（紧贴边缘的窄亮带），因此角色内部被包围的白色头发、衬衫和皮肤都会保留；角色本身是亮色时不会被误判。</li>
         <li>抠图在角色内部造成的空洞会被自动补上，不会留下黑洞。</li>
-        <li>若背景带有渐变投影或压缩噪点导致边缘残留，请把「容差」调到<b>宽松</b>再试。</li>
+        <li>若背景带有渐变投影或压缩噪点导致边缘残留，请把「切割强度」调到<b>宽松</b>再试；反过来，背景干净但角色边缘被啃掉时，调到<b>严格</b>。</li>
         <li>支持常见图片格式（png / jpg / bmp / webp 等），输出统一为透明 PNG，尺寸与原图一致。</li>
-        <li>处理时间与图片尺寸相关；超大图片（约 4000 万像素以上）请先缩小。</li>
+        <li>处理时间与图片尺寸相关；超大图片（约 2400 万像素以上）请先缩小。</li>
         <li>中途点击「取消」会立即终止处理。</li>
       </ul>
     </div>
@@ -220,7 +230,7 @@ async function onPick() {
   // Guard against a value we don't have a preset for (defensive — the
   // <select> can only emit known values, but state is module-scoped).
   if (!TOLERANCE_OPTIONS.some((o) => o.value === state.tolerance)) {
-    state.inputErrors.tolerance = '容差取值无效';
+    state.inputErrors.tolerance = '切割强度取值无效';
     render();
     return;
   }

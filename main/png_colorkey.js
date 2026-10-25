@@ -24,6 +24,14 @@
 // `main/png_border_cutout.js` (the JS port of
 // `opencv_border_cutout.py`).
 //
+// The connectivity rule is applied with a *cost ceiling* rather than a
+// plain colour threshold: each pixel is priced by how far its colour is
+// from the backdrop **and** by how strong an edge it sits on, and the
+// background is what the flood can reach without crossing a pixel above
+// the ceiling. The gradient term is what stops the flood at the
+// anti-aliased fringe around the character instead of eating into the
+// character's own black costume. See `main/png_bottleneck_flood.js`.
+//
 // Why a temp file instead of stdin/stdout pipes:
 //   Windows ffmpeg rejects explicit `pipe:0` / `pipe:1` filenames
 //   (it tries to open a literal file named "pipe:1"), and refuses to
@@ -37,9 +45,9 @@ const { cutoutPngBuffer } = require('./png_border_cutout');
 // re-encoded PNG (same width/height, now RGBA with the border-connected
 // background turned transparent).
 //
-// `threshold` is the colour distance from the estimated backdrop that
-// still counts as background; `softness` is the edge-feathering ring
-// count (0-4).
+// `ceiling` is the 0-1 cost ceiling — how expensive a pixel may be and
+// still count as walkable background. Omit it for the default ("normal")
+// preset. `softness` is the edge-feathering ring count (0-4).
 //
 // Throws on any failure; the message includes the underlying reason so
 // the user can see what actually went wrong.

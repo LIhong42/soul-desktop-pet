@@ -57,7 +57,7 @@
 - Every pet can be configured independently: click action / idle loop action / 6 cozy actions in the right-click menu;
 - Upload a frame-animation PNG package and **a new pet is generated automatically and ready to use**;
 - Built-in frame splitter: cut a video into a PNG sequence and zip it — DIY your own desktop pet;
-- **Background removal** ("Tools → Image Background Removal") turns a picture's backdrop transparent. It decides what counts as background by *connectivity*, not by colour: only the region that can be reached from the image border is removed, so the character's black hair, clothing and outlines survive even when the backdrop is black. The same cutout runs automatically on every frame of an imported pet package.
+- **Background removal** ("Tools → Image Background Removal") turns a picture's backdrop transparent. It decides what counts as background by *connectivity* plus *edge strength*, not by colour alone: every pixel is priced by how far its colour is from the backdrop **and** how strong an edge it sits on, and the background is whatever can be walked to from the image border without crossing a pixel that is too expensive. The anti-aliased fringe around the character sits on a strong edge, so the flood stops there instead of chewing into the character — which is why the black hair, clothing and outlines survive even when the backdrop is black. The same cutout runs automatically on every frame of an imported pet package, and produces byte-identical output to the tool's default setting.
 - **Two kinds of imported frames are accepted**: *opaque* PNGs (the default — flat backdrop, cut out automatically on upload) and *transparent* PNGs (already cut out — the cutout is **skipped**, so the edges are left exactly as you exported them). The type is detected per frame, so a single package may mix both.
 - **Outline stripping & hole repair**: many Live2D-style sprites are exported with a bright "sticker" stroke around the character. The cut removes that stroke too — and it locates it by *geometry*, not by brightness alone: the stroke is the narrow bright band hugging the cut edge, while the character's own white hair, shirt and skin are enclosed hundreds of pixels deep. So the black hat, cape, vest and boots survive, the enclosed white areas survive, and the halo is gone. A character that is simply *bright* at its edge is left alone — the bright band has to peak and fall again to count as a stroke. Any hole the cut opens inside the character is then closed again, so an imported package can never come out with a black hole in it.
 
@@ -137,7 +137,8 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  ├─ pet_controller.js   pet auto-behavior state machine
 │  ├─ pet_registry.js     pet asset registry
 │  ├─ pet_zip_import.js   user zip pet import
-│  ├─ png_border_cutout.js  border-connected background cutout (shared)
+│  ├─ png_border_cutout.js  the shared cutout pipeline (mask, defringe, hole repair)
+│  ├─ png_bottleneck_flood.js  cost field + edge-aware background flood
 │  ├─ png_colorkey.js     PNG transparency wrapper (uses the cutout above)
 │  ├─ png_alpha.js        detects frames that are already transparent
 │  ├─ image_bg_remove.js  background-removal tool pipeline
@@ -152,7 +153,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  └─ js/
 │     ├─ main.js, api.js, router.js, auth.js, pet.js
 │     └─ pages/            router pages (today / contacts / events / export …)
-├─ scripts/             ← utility scripts (including several smoke tests)
+├─ scripts/             ← utility scripts (incl. `verify-cutout.js`, the cutout regression check)
 ├─ docs/                ← documentation
 │  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)
 ├─ icons/               ← application icons (icon.ico + per-size PNGs)

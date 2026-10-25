@@ -2835,19 +2835,22 @@ function normFreeText(s) {
 
   // ---- Tools page: image → transparent PNG --------------------------------
   //
-  //   tools:remove_image_background — open + save dialogs → flood fill → PNG
+  //   tools:remove_image_background — open + save dialogs → cutout → PNG
   //
   // Shares the `activeToolsJobs` map, `tools:cancel` handler, and
   // `tools:progress` channel with the frame-splitter above: both are
   // cancellable, both report phase/percent, and neither should push image
-  // bytes through IPC (a 40 MPix source is ~160 MB of RGBA). The decode /
-  // label / re-encode pipeline lives in main/image_bg_remove.js, which
+  // bytes through IPC (a 24 MPix source is ~96 MB of RGBA). The decode /
+  // cutout / re-encode pipeline lives in main/image_bg_remove.js, which
   // shares its cutout algorithm with the zip importer via
   // main/png_border_cutout.js.
   ipcMain.handle('tools:remove_image_background', async (_e, payload = {}) => {
-    // tolerance is a named preset rather than a raw 0-255 so the renderer
-    // can't ask for a value the module has no tuning for. softness is the
-    // edge-feathering ring count, 0-4.
+    // `tolerance` is a named preset ("strict" / "normal" / "loose") rather
+    // than a raw number so the renderer can't ask for a value the module
+    // has no tuning for. It resolves to a 0-1 cost ceiling — how expensive
+    // a pixel may be and still count as walkable background — not a
+    // 0-255 colour distance. softness is the edge-feathering ring count,
+    // 0-4.
     const tolerance = imageBgRemove.toleranceFor(payload && payload.tolerance);
     const softnessRaw = Number(payload && payload.softness);
     const softness = Number.isFinite(softnessRaw) ? Math.max(0, Math.min(4, Math.round(softnessRaw))) : 0;

@@ -16,64 +16,76 @@
 //      (`-f rawvideo -pix_fmt rgba -`). Works for png/jpg/bmp/webp alike
 //      with no extra npm dependency — ffmpeg-static is already a
 //      dependency (used by album_video.js and video_frame_split.js).
-//   2. We estimate the background color from the outer perimeter and
-//      label the 8-connected components of the background-colored
-//      pixels. Only the components that touch the image border are
-//      removed; anything enclosed by the outline stays opaque.
-//   3. Optionally feather the hard cut into a soft edge, so anti-aliased
-//      pixels around the outline blend instead of showing a gray halo
-//      when the PNG is composited over a non-white desktop.
+//   2. Each pixel gets a *cost* combining how far its colour is from the
+//      estimated backdrop and how strong an edge it sits on. The
+//      background is the set of pixels that can be reached from the image
+//      border without passing through a pixel above the cost ceiling.
+//   3. The alpha channel is written, the cut edge optionally feathered,
+//      and the white "sticker" outline stripped.
 //   4. ffmpeg re-encodes the buffer as an RGBA PNG.
 //
 // ffmpeg's PNG *encoder* does write the alpha channel (we verified with
 // `-pix_fmt rgba`), so no separate PNG chunk writer is needed.
 //
-// The core algorithm lives in `main/png_border_cutout.js`, shared with the
-// zip importer so both paths cut backgrounds out identically. The
-// background-removal *tool* and the *importer* used to disagree — the
-// importer used a flat colorkey that ate the character's black parts,
-// while the tool used a flood fill that needed a perfectly sealed
-// outline. Both now use the same connectivity rule.
+// The core algorithm lives in `main/png_border_cutout.js` +
+// `main/png_bottleneck_flood.js`, shared with the zip importer so both
+// paths cut backgrounds out identically. The background-removal *tool*
+// and the *importer* used to disagree — the importer used a flat colorkey
+// that ate the character's black parts, while the tool used a flood fill
+// that needed a perfectly sealed outline. Both now use the same
+// cost-ceiling rule, so a frame cut by the tool and the same frame cut
+// during a zip import come out identical.
 //
-// Why connected components instead of a flood fill
+// Why a cost ceiling instead of a colour tolerance
 // -------------------------------------------------
-// A flood fill needs the object's outline to form a *sealed* wall. A
-// hand-drawn or AI-generated outline is often thin and slightly broken,
-// so the fill leaks in and erases the interior; the previous version
-// worked around that with a `chooseSeal` heuristic that dilated the
-// artwork until the leak stopped (and, when the heuristic misfired,
-// eroded thin artwork instead). Labelling components fails safe: a broken
-// outline merely leaves the interior as its own component, which is
-// *kept*. Keeping a bit too much is much less damaging than erasing the
-// character.
+// A single colour tolerance cannot serve both a flat black backdrop and a
+// noisy one, and picking a "safe" wide one is actively harmful. Measured
+// on a real 1080x1440 frame (black backdrop, character with a white
+// sticker outline), widening the tolerance from 21 to 32 deleted an extra
+// 118,758 pixels — 7.64% of the frame — and every one of them was in the
+// character's own black costume.
+//
+// The cost formulation fixes that. The gradient term prices the
+// anti-aliased fringe around the character as expensive, so the flood
+// stops at the fringe; the character's black costume is flat and close to
+// the backdrop colour, so it is *cheap* — but reaching it would mean
+// crossing that expensive rim, which the ceiling forbids.
+//
+// Keeping a bit too much is much less damaging than erasing the
+// character, and that is the direction the cost formulation errs in.
 
-const fs = require('node:fs');
-const path = require('node:path');
-const crypto = require('node:crypto');
 const { getFfmpegPath } = require('./video_frame_split');
 // The ffmpeg plumbing and the cutout algorithm both live in
 // main/png_border_cutout.js so this tool and the zip importer cut
 // backgrounds out in exactly the same way. Only the ffmpeg runners are
 // re-exported here, because this tool drives them directly.
 const {
+  cutoutToPng,
   estimateBorderColor,
-  buildBackgroundMask,
-  applyMask,
-  defringeOutline,
-  repairHoles,
   MAX_PIXELS,
   _internal,
 } = require('./png_border_cutout');
 const { runFfmpeg, probeSize } = _internal;
 
-// Tolerance presets exposed to the UI. `tolerance` is a per-channel
-// 0-255 distance from the estimated background color — higher catches
-// noisier/compressed backgrounds and soft drop-shadows, lower is
-// stricter for images with a clean flat backdrop.
+// Cut-strength presets exposed to the UI.
+//
+// The number is a *cost ceiling* (0-1), not a colour distance. It caps how
+// expensive a pixel may be and still count as "walkable background".
+//
+// The values are not arbitrary. Measured on a real frame, sweeping the
+// ceiling shows a sharp cliff:
+//
+//   ceiling  0.08  0.09  0.10  0.12  0.13  0.14  0.16
+//   worst     0.0%  0.0% 0.01% 0.19% 0.22% 0.24% 11.85%
+//
+// (the "worst" column is the share of the character's dark costume that
+// gets deleted). At 0.16 the character's dark hat brim — only ~13/255 away
+// from pure black — becomes cheap enough to walk through, and 11.85% of
+// the frame is eaten. The presets therefore stop at 0.14.
 const TOLERANCE_PRESETS = {
-  strict: 12,
-  normal: 32,
-  loose: 64,
+  strict: 0.09,
+  normal: 0.12,
+  loose: 0.14,
 };
 
 function toleranceFor(name) {
@@ -93,154 +105,37 @@ function estimateBackground(rgba, width, height) {
   return estimateBorderColor(rgba, width, height);
 }
 
-// Build the background mask for a decoded RGBA buffer.
-//
-// Returns { mask, transparentPixels } where mask is a Uint8Array with
-// 1 = "this pixel is background (make it transparent)". Only the
-// background-colored components that touch the image border are marked,
-// so an enclosed region sharing the backdrop color survives.
-function buildMask(rgba, width, height, tolerance) {
-  const { mask, transparentPixels, backgroundColor } = buildBackgroundMask(
-    rgba, width, height, tolerance,
-  );
-  return { mask, transparentPixels, backgroundColor };
-}
-
-// Walk the boundary between the transparent region and the object, and
-// give the first ring of still-opaque pixels a partial alpha. Without
-// this the cut is binary and the anti-aliased fringe that was baked into
-// the source (blend of outline and background) stays at alpha 255 — which
-// reads as a light halo when the sprite is drawn over a dark desktop.
-//
-// `softness` is how far in from the edge the ramp reaches; 1 means only
-// the outermost ring of object pixels fades, 2 reaches two rings in.
-function featherEdge(rgba, mask, width, height, softness) {
-  applyMask(rgba, mask, width, height, softness);
-}
-
 // Main entry point.
 //
 //   inputPath   — absolute path to the source image
 //   outPath     — absolute path the RGBA PNG is written to
-//   tolerance   — 0-255, see TOLERANCE_PRESETS
+//   tolerance   — 0-1 cost ceiling, see TOLERANCE_PRESETS
 //   softness    — 0-4, edge feathering ring count
 //   progressCb  — ({ phase, percent, note }) => void
 //   cancelCheck — () => boolean
+//
+// This is a thin wrapper over `cutoutToPng` in main/png_border_cutout.js.
+// It used to re-implement the whole pipeline; having two copies of the
+// same steps is exactly how the tool and the zip importer drifted apart in
+// the first place.
 function removeBackground({ inputPath, outPath, tolerance, softness, progressCb, cancelCheck }) {
-  return (async () => {
-    const progress = (phase, percent, note) => {
-      try {
-        if (typeof progressCb === 'function') progressCb({ phase, percent, note: note || null });
-      } catch (e) {
-        console.error('[image_bg_remove] progressCb threw:', e);
-      }
-    };
-
-    const cancelled = () => {
-      try { return !!(cancelCheck && cancelCheck()); } catch { return false; }
-    };
-
-    if (!inputPath || !fs.existsSync(inputPath)) {
-      throw new Error('图片文件不存在');
-    }
-
-    progress('probing', 0, '正在读取图片');
-    const { width, height } = await probeSize(inputPath);
-    if (width <= 0 || height <= 0) throw new Error('图片尺寸无效');
-    if (width * height > MAX_PIXELS) {
-      throw new Error(
-        `图片太大（${width}×${height}），请先缩小到 ${Math.floor(MAX_PIXELS / 1000 / 1000)} 百万像素以内`,
-      );
-    }
-    if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
-
-    progress('decoding', 5, '正在解码');
-    const rgba = await runFfmpeg(
-      ['-hide_banner', '-loglevel', 'error', '-i', inputPath, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'],
-      { cancelCheck },
-    );
-    const expect = width * height * 4;
-    if (!rgba || rgba.length !== expect) {
-      throw new Error(`解码结果异常（${rgba ? rgba.length : 0} / ${expect} 字节）`);
-    }
-    if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
-
-    progress('analyzing', 35, '正在识别背景');
-    const tol = Number.isFinite(tolerance) ? Math.max(0, Math.min(255, tolerance)) : TOLERANCE_PRESETS.normal;
-    // Label the background-colored components and keep only the ones that
-    // touch the image border. Enclosed regions — including ones that share
-    // the backdrop color exactly — survive.
-    const { mask, transparentPixels, backgroundColor } = buildMask(rgba, width, height, tol);
-
-    // Nothing found means the image is uniformly non-background (e.g. the
-    // whole frame is one object on a transparent-ish canvas, or our
-    // tolerance was set absurdly low). Surfacing this beats silently
-    // returning the input unchanged, which looks like the tool is broken.
-    if (transparentPixels === 0) {
-      throw new Error('未识别到背景：请确认背景与主体颜色差异明显，必要时放宽「容差」');
-    }
-    if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
-
-    // Set the alpha channel, then optionally soften the cut edge.
-    applyMask(rgba, mask, width, height, softness);
-
-    // Strip the white "sticker" outline, if the art has one. A lot of
-    // Live2D art is exported with a bright outline stroke around the
-    // character; left behind, it reads as a white halo over the desktop.
-    // This has to run before the hole repair, or the repair would fill the
-    // outline straight back in.
-    const defringed = defringeOutline(rgba, mask, width, height);
-
-    // Close holes the cut left inside the character.
-    const repaired = repairHoles(rgba, width, height);
-
-    progress('encoding', 70, '正在导出 PNG');
-    if (cancelled()) { const e = new Error('cancelled'); e.killed = true; throw e; }
-
-    // Encode through a temp file next to the destination, then rename.
-    // Windows ffmpeg won't emit PNG to a pipe, so this needs a real path
-    // (same constraint documented in png_colorkey.js). Renaming last
-    // means a failed encode never clobbers an existing file.
-    const dir = path.dirname(outPath);
-    const tmpPath = path.join(dir, `.bgremove-${crypto.randomBytes(6).toString('hex')}.png`);
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      await runFfmpeg(
-        ['-hide_banner', '-loglevel', 'error', '-y',
-          '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`, '-i', 'pipe:0',
-          '-c:v', 'png', '-pix_fmt', 'rgba', tmpPath],
-        { input: rgba, cancelCheck },
-      );
-      if (cancelled()) {
-        try { fs.unlinkSync(tmpPath); } catch {}
-        const e = new Error('cancelled'); e.killed = true; throw e;
-      }
-      fs.renameSync(tmpPath, outPath);
-    } catch (err) {
-      try { fs.unlinkSync(tmpPath); } catch {}
-      throw err;
-    }
-
-    const transparentRatio = transparentPixels / (width * height);
-    progress('done', 100, `已完成，透明区域 ${(transparentRatio * 100).toFixed(1)}%`);
-    return {
-      width,
-      height,
-      transparentRatio,
-      backgroundColor,
-      defringedPixels: defringed.removed,
-      repairedPixels: repaired.repaired,
-      bytes: fs.statSync(outPath).size,
-    };
-  })();
+  const ceiling = Number.isFinite(tolerance) ? tolerance : toleranceFor(null);
+  return cutoutToPng({
+    inputPath,
+    outPath,
+    ceiling,
+    softness,
+    repair: true,
+    defringe: true,
+    progressCb,
+    cancelCheck,
+  });
 }
 
 module.exports = {
   removeBackground,
   probeSize,
   estimateBackground,
-  buildMask,
-  featherEdge,
   toleranceFor,
   TOLERANCE_PRESETS,
   MAX_PIXELS,
