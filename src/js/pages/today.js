@@ -63,14 +63,28 @@ export async function render() {
         const sourceLabel = r.source === 'event' ? '事件' : '重要日期';
         const contactName = r.contact_name || '';
         const completed = !!r.dismissed_for_today || forceMuted;
-        const chipLabel = '今日提醒';
+        // The chip tells the user *when* the reminder is due. For a date
+        // that's counting down (a birthday with the advance window open)
+        // it says how many days are left; everything else just says
+        // "今日提醒".
+        const chipLabel = r.days_left != null
+          ? (r.days_left === 0 ? '就是今天' : r.days_left === 1 ? '就在明天' : `还有 ${r.days_left} 天`)
+          : '今日提醒';
         // The card is a single line: just the event description (or a
         // contact-name / source fallback when description is empty). No
         // second "meta" row — duplicating the same text twice adds
         // visual noise and doesn't carry extra information for a
         // reminder the user already has context on.
+        //
+        // When the event HAS a description we show it alone (it's the
+        // content the user wrote). When it doesn't, we fall back to the
+        // title — but the title alone is often a generic auto-generated
+        // label ("爷爷的提醒"), so we append the description when there
+        // is one. See eventDisplayTitle() in api.js for the shared rule.
         const description = (r.description || '').trim();
-        const titleText = description || contactName || sourceLabel;
+        const titleText = r.source === 'event'
+          ? (description ? description : (r.title || contactName || sourceLabel))
+          : (r.title || contactName || sourceLabel);
         // Preserve the event's real category (general / work) so the edit
         // page opens the right form. important_date has no category — it
         // doesn't have an editable form anyway, so default to general.

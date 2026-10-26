@@ -141,13 +141,10 @@ contextBridge.exposeInMainWorld('mp', {
   // 换开关——新增一条规则时这里不需要改动。
   //   getConfig()  → { rules: [{name,label,kind,description,enabled}], feedWindows }
   //   setEnabled({ meal: false, … })
-  //   say(text)    → 右键「说句话」输入的原文，立即以气泡显示
-  //   onSayPrompt(cb) → 主进程请求弹出输入框
   //   preview / force / getIdleSeconds
   bubbles: {
     getConfig:      ()         => ipcRenderer.invoke('bubbles:get_config'),
     setEnabled:     (map)      => ipcRenderer.invoke('bubbles:set_enabled', map || {}),
-    say:            (text)     => ipcRenderer.invoke('bubbles:say', text || ''),
     preview:        (ruleName) => ipcRenderer.invoke('bubbles:preview', ruleName || ''),
     force:          (ruleName) => ipcRenderer.invoke('bubbles:force', ruleName || ''),
     getIdleSeconds: ()         => ipcRenderer.invoke('bubbles:get_idle_seconds'),
@@ -242,10 +239,6 @@ contextBridge.exposeInMainWorld('mp', {
     getWeeklyBreakdown:()      => ipcRenderer.invoke('bond:get_weekly_breakdown'),
     getCozySnapshot:   ()      => ipcRenderer.invoke('bond:get_cozy_snapshot'),
     getFullState:      ()      => ipcRenderer.invoke('bond:get_full_state'),
-    celebrate:         ()      => ipcRenderer.invoke('bond:celebrate'),
-    legendaryDance:    ()      => ipcRenderer.invoke('bond:trigger_legendary_dance'),
-    setMuted:          (b)     => ipcRenderer.invoke('bond:set_muted', !!b),
-    getMuted:          ()      => ipcRenderer.invoke('bond:get_muted'),
     logContactViewed:  (id)    => ipcRenderer.invoke('bond:log_contact_viewed', id),
   },
 
@@ -256,7 +249,6 @@ contextBridge.exposeInMainWorld('mp', {
       'pet:size-changed',
       'main:open-reminder',
       'main:navigate',
-      'main:say-prompt',
       'export:progress',
       'tools:progress',
       'pet:import-progress',

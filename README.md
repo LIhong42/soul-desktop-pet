@@ -24,10 +24,13 @@
 ### 👥 Contact Management
 - Create / edit / delete contacts, with custom avatars, nicknames, and relationships;
 - Bind three tag categories per contact — **likes · taboos · gifts** — managed from a global tag library;
-- Record important dates in the Gregorian or the **Chinese lunar calendar**, either one-off or recurring yearly.
+- Record important dates in the Gregorian or the **Chinese lunar calendar**, either one-off or recurring yearly;
+- Each important date can set **how many days ahead to start reminding** (a week by default). The pet then reminds you once a day while the window is open, and tells you how many days are left.
 
 ### 📅 Recurring Reminders
 - Birthdays, anniversaries, and festivals trigger on a cycle;
+- Repeat options: **one-off / daily / weekly / every N days / monthly / yearly**. "Every N days" is counted from the start date you pick and advances on a fixed stride, so re-saving an event never shifts the schedule;
+- The list shows **both the title and the description**. An untagged reminder's title is generated for you (e.g. "爷爷的提醒"), and whatever you typed in the description field follows it — "爷爷的提醒 — 打电话" — so you never see a bare label with the actual content hidden;
 - **Lunar (traditional Chinese) calendar dates are supported**, with a built-in festival library: Valentine's Day, Teacher's Day, Qixi, Christmas, Father's Day… including floating festivals that are computed automatically;
 - The pet shows an unread reminder badge in the corner and wakes you up when the time comes.
 
@@ -198,7 +201,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 ### 5. Interact with the pet
 - **Single click**: triggers the "single-click action" configured for that pet (default: a gentle pet);
 - **Double click**: triggers the "double-click action" (default: head pat, unlocked at intimacy tier ≥ 5);
-- **Right click**: opens the cozy interaction menu — pet / pat head / feed / play / sleep / hug;
+- **Right click**: opens the cozy interaction menu — pet / pat head / feed / play / sleep / dance;
 - Under **Settings → Character Actions** you can freely switch the character animation bound to each trigger.
 
 ### 6. Switch pets / import a new pet

@@ -262,7 +262,7 @@ html, body {
 }
 
 /* ---- Contextual text bubble (main/pet_bubbles.js) ----
-   Meal / break / manual reminders. Purely presentational: the main process
+   Meal / break / action bubbles. Purely presentational: the main process
    decides *whether* and *what*, this only styles and fades. `data-kind` is
    the CSS hook a new rule gets for free by declaring a kind — a new rule
    never has to touch this file unless it wants a distinct color.
@@ -342,9 +342,7 @@ html, body {
    All three share the same construction — a very light tinted background, a
    matching 1px ring, and a darker version of the tint for the text — so they
    read as one family. Saturation is kept low deliberately: these are gentle
-   nudges ("have you eaten?"), and a saturated chip would feel like an alert.
-   The manual (user-typed) bubble is near-white so it reads as the pet
-   repeating your words rather than as another system notification. */
+   nudges ("have you eaten?"), and a saturated chip would feel like an alert. */
 .pet-bubble[data-kind="meal"] {
   background: #fff7ed;
   color: #8a5a2b;
@@ -358,13 +356,6 @@ html, body {
   border: 1px solid #d5e8dc;
 }
 .pet-bubble[data-kind="break"]::after { border-top-color: #f0f8f2; }
-
-.pet-bubble[data-kind="manual"] {
-  background: #ffffff;
-  color: #2f3b45;
-  border: 1px solid #e3e8ee;
-}
-.pet-bubble[data-kind="manual"]::after { border-top-color: #ffffff; }
 
 /* A line the pet picked for itself, from the texts the user bound to this
    action (main/pet_action_texts.js). Cooler and flatter than the two

@@ -1,5 +1,5 @@
 // src/js/pages/contact_detail.js — view a single contact + their dates + events
-import { api, escapeHtml, firstChar, displayName, eventKindAttr, contactColorIndex, fmtDate, fmtDateTime, formatRelative, countdownTo, categoryIcon, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, wireDateInputs } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, eventKindAttr, contactColorIndex, fmtDate, fmtDateTime, formatRelative, countdownTo, categoryIcon, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, wireDateInputs, repeatLabel, eventDisplayTitle } from '../api.js';
 import { iconSVG, suggestIconKind } from '../icons.js';
 import { register, navigate } from '../router.js';
 import {
@@ -527,7 +527,7 @@ async function render(args) {
           </div>
           <div class="lr-main">
             <div class="lr-title">${escapeHtml(d.label)} <span class="tag" style="margin-left:6px">${escapeHtml(kindLabel(d.kind))}</span></div>
-            <div class="lr-meta">每年 ${d.month}/${d.day}${d.year ? ' · ' + d.year + '年生' : ''} · 提醒 ${escapeHtml(d.remind_time || '09:00')}</div>
+            <div class="lr-meta">每年 ${d.month}/${d.day}${d.year ? ' · ' + d.year + '年生' : ''} · 提醒 ${escapeHtml(d.remind_time || '09:00')}${d.remind_enabled === 0 ? ' · 已关闭' : ''}${d.remind_enabled !== 0 && d.advance_days > 0 ? ` · 提前 ${d.advance_days} 天` : ''}</div>
           </div>
           <div class="lr-side">
             <div class="time-chip"><span class="chip-dot"></span>每年 ${d.month}-${d.day}</div>
@@ -572,8 +572,8 @@ async function render(args) {
             <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>
           </div>
           <div class="lr-main">
-            <div class="lr-title">${escapeHtml(e.title)}</div>
-            <div class="lr-meta">${escapeHtml(kindLabel(e.remind_kind))}${e.active ? '' : ' · 已结束'}</div>
+            <div class="lr-title">${escapeHtml(eventDisplayTitle(e) || '(无标题)')}</div>
+            <div class="lr-meta">${escapeHtml(repeatLabel(e))}${e.active ? '' : ' · 已结束'}</div>
           </div>
           <div class="lr-side">
             <div class="time-chip ${cd ? 'urgent' : ''}"><span class="chip-dot"></span>${escapeHtml(rel)}</div>
@@ -602,8 +602,10 @@ async function render(args) {
   });
 }
 
+// Label for an important-date row's `kind` column. (The event repeat
+// modes use the shared repeatLabel() from api.js instead.)
 function kindLabel(k) {
-  return ({ one_time: '一次', daily: '每天', yearly: '每年', birthday: '生日', anniversary: '纪念日', custom: '自定义' }[k]) || k || '';
+  return ({ birthday: '生日', anniversary: '纪念日', deceased_date: '忌日', custom: '自定义' }[k]) || k || '';
 }
 
 function showDateDialog(contactId) {
@@ -633,6 +635,18 @@ function showDateDialog(contactId) {
           </div>
         </div>
         <div class="field"><label>提醒时间</label><input type="time" id="d-time" value="09:00"/></div>
+        <div class="form-row">
+          <div class="field">
+            <label>提前提醒（天）</label>
+            <input type="number" id="d-advance" min="0" max="60" value="7"/>
+            <div class="meta">提前这么多天开始每天提醒一次，0 = 只在当天提醒</div>
+          </div>
+          <div class="field">
+            <label>提醒开关</label>
+            <label><input type="checkbox" id="d-remind-enabled" checked/> 启用提醒</label>
+            <div class="meta">关闭后保留这条日期记录，但不再提醒</div>
+          </div>
+        </div>
         <div class="row" style="margin-top:14px; gap:8px;">
           <button class="btn" id="save">保存</button>
           <button class="btn secondary" id="cancel">取消</button>
@@ -646,6 +660,7 @@ function showDateDialog(contactId) {
   modal.querySelector('#x').onclick = () => modal.remove();
   modal.querySelector('#cancel').onclick = () => modal.remove();
   modal.querySelector('#save').onclick = async () => {
+    const advanceDays = Math.floor(Number(modal.querySelector('#d-advance').value));
     const input = {
       label: modal.querySelector('#d-label').value.trim() || '生日',
       month: parseInt(modal.querySelector('#d-month').value, 10),
@@ -653,6 +668,8 @@ function showDateDialog(contactId) {
       year: modal.querySelector('#d-year').value ? parseInt(modal.querySelector('#d-year').value, 10) : null,
       kind: modal.querySelector('#d-kind').value,
       remind_time: modal.querySelector('#d-time').value || '09:00',
+      advance_days: Number.isFinite(advanceDays) && advanceDays >= 0 ? Math.min(advanceDays, 60) : 7,
+      remind_enabled: modal.querySelector('#d-remind-enabled').checked,
     };
     if (input.month < 1 || input.month > 12 || input.day < 1 || input.day > 31) {
       toast('日期不合法');

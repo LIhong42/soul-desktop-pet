@@ -10,7 +10,8 @@ const db = require('./db');
 const petInteractions = require('./pet_interactions');
 const petMood = require('./pet_mood');
 const autoBehaviors = require('./auto_behaviors');
-const { computeNextFireEvent, computeNextFireImportantDate, parseDateTime } = require('./time_util');
+const { computeNextFireEvent, parseDateTime,
+        importantDateOccurrence, fmtDateTime } = require('./time_util');
 
 const TICK_MS = 20_000;
 
@@ -18,6 +19,10 @@ class ReminderQueue {
   constructor() {
     this.items = [];
     this.listeners = new Set();
+    // The calendar day (YYYY-MM-DD) this queue's contents belong to.
+    // `rollDay` uses it to rebuild the queue at the day boundary so every
+    // source gets at most one nag per day.
+    this.dayStamp = null;
   }
   on(cb) { this.listeners.add(cb); return () => this.listeners.delete(cb); }
   emit() {
@@ -26,6 +31,25 @@ class ReminderQueue {
     // but it should not contribute to the pet nag count.
     const payload = { count: this.items.length, active_count: this.activeCount() };
     for (const cb of this.listeners) cb(payload);
+  }
+  // Rebuild the queue when the calendar day changes.
+  //
+  // The queue used to live until the app closed, which meant two things
+  // went wrong. First, a reminder that was already handled kept its slot
+  // forever. Second - and worse - `pushIfNew` refuses to add a source it
+  // already holds, so the *next* day's reminder for that source never
+  // fired at all. Rolling the queue at the day boundary gives every
+  // source exactly one nag per day: today's items are re-derived from the
+  // DB by the scan below, and yesterday's are dropped.
+  //
+  // Returns true when the queue was actually rebuilt.
+  rollDay(dayStr) {
+    if (this.dayStamp === dayStr) return false;
+    this.dayStamp = dayStr;
+    const had = this.items.length > 0;
+    this.items = [];
+    if (had) this.emit();
+    return had;
   }
   pushIfNew(r) {
     const exists = this.items.some((x) => x.source === r.source && x.source_id === r.source_id);
@@ -94,6 +118,12 @@ function scanAndFire({ queue, getPetState, setPetState, setActiveReminder, petCo
   const now_str = db.nowStr();
   const fired = [];
 
+  // Roll the queue at the day boundary before anything else. Every source
+  // gets at most one nag per calendar day, and the items below re-derive
+  // today's set from the DB. See ReminderQueue.rollDay for why this is
+  // load-bearing rather than cosmetic.
+  queue.rollDay(now_str.slice(0, 10));
+
   // --- Events with due next_fire_at ---
   const due_events = db.all(
     `SELECT * FROM events
@@ -153,13 +183,36 @@ function scanAndFire({ queue, getPetState, setPetState, setActiveReminder, petCo
     }
   }
 
-  // --- Important dates matching today's month/day ---
-  const todayMonth = now.getMonth() + 1;
-  const todayDay = now.getDate();
-  const id_rows = db.all('SELECT * FROM important_dates WHERE month = ? AND day = ?',
-    [todayMonth, todayDay]);
+  // --- Important dates inside their advance window ---
+  //
+  // An important date (birthday / anniversary / 忌日 / …) is anchored to a
+  // month + day that recurs every year. The user asked for these to start
+  // nagging a week ahead, so the match is no longer "the date is today" but
+  // "today falls inside the advance window of the next occurrence".
+  //
+  // The window is inclusive of the day itself: with advance_days = 7 the
+  // date fires on D-7, D-6, … D-1 and then again on D (days_left = 0).
+  // Each of those days is a separate nag — the queue rolls over at
+  // midnight (rollDay above), so a source is pushed at most once per day.
+  //
+  // `remind_enabled = 0` rows are skipped entirely: the user kept the
+  // record but opted out of the nagging.
+  const id_rows = db.all('SELECT * FROM important_dates WHERE remind_enabled = 1');
 
   for (const d of id_rows) {
+    const occ = importantDateOccurrence(d, now);
+    // Outside the advance window — nothing to nag about yet.
+    if (!occ) continue;
+
+    // A snooze pushes the next fire time forward; the ack row records it
+    // in `next_fire_at`. While that time is still in the future, the date
+    // stays quiet.
+    //
+    // A plain "完成" writes next_fire_at = NULL, so it does NOT suppress
+    // the nag here — that suppression comes from the per-day ack check
+    // further down (which looks at acked_at's date prefix). That's what
+    // makes each day of the advance window an independent nag: dismissing
+    // it today still lets tomorrow nag again.
     const ack = db.one(
       `SELECT next_fire_at FROM reminder_acks
        WHERE source='important_date' AND source_id=?
@@ -193,6 +246,12 @@ function scanAndFire({ queue, getPetState, setPetState, setActiveReminder, petCo
       remind_kind: null,
       category: null,
       dismissed_for_today: false,
+      // How many days until the date itself (0 = it is today). The renderer
+      // and the pet bubble turn this into "还有 N 天".
+      days_left: occ.days_left,
+      advance_days: occ.advance_days,
+      // The date we're counting down to, as YYYY-MM-DD.
+      target_date: fmtDateTime(occ.target).slice(0, 10),
     });
   }
 
@@ -235,7 +294,7 @@ function scanAndFire({ queue, getPetState, setPetState, setActiveReminder, petCo
   }
 }
 
-module.exports = { start, stop, ReminderQueue, startBondPipeline, stopBondPipeline };
+module.exports = { start, stop, ReminderQueue, startBondPipeline, stopBondPipeline, scanAndFire };
 
 // ---- Bond pipeline (1s tick) ----
 // Started by main.js after the windows + petController are ready. Stops

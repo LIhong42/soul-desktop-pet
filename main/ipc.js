@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const AdmZip = require('adm-zip');
 const db = require('./db');
-const { fmtDateTime, computeNextFireEvent } = require('./time_util');
+const { fmtDateTime, computeNextFireEvent, DEFAULT_ADVANCE_DAYS, importantDateOccurrence } = require('./time_util');
 const { validateLunar } = require('./lunar');
 const { listFestivals, festivalLabel } = require('./festivals');
 const {
@@ -56,6 +56,37 @@ function resolveName(input) {
     .filter(Boolean)
     .join(' ');
   return legacy || '';
+}
+
+// The "every N days" stride. Only meaningful for remind_kind='every_n_days',
+// so any other kind stores NULL — that keeps the column honest and stops a
+// stale stride from resurfacing if the user switches the repeat type back
+// and forth.
+function normalizeIntervalDays(v, remindKind) {
+  if (remindKind !== 'every_n_days') return null;
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(n, 365);
+}
+
+// How many days before the target date an event's reminder starts firing.
+// Events keep the historical behaviour (fire on the day itself) unless the
+// user explicitly asks for lead time, so the default here is 0 rather than
+// the important-dates default of 7.
+function normalizeAdvanceInput(v) {
+  if (v == null || v === '') return 0;
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(n, 365);
+}
+
+// Important dates lead time. Absent → a week (the user's "remind me a week
+// ahead" default). 0 is a legitimate value and means "only on the day".
+function normalizeImportantAdvance(v) {
+  if (v == null || v === '') return DEFAULT_ADVANCE_DAYS;
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(n, 365);
 }
 
 // Teardown callbacks pushed by register(). main.js's before-quit handler
@@ -518,13 +549,20 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   ipcMain.handle('important_dates:create', (_e, contact_id, input) => {
     const id = db.newId();
     const now = db.nowStr();
+    // advance_days: how many days before the date the reminder starts
+    // firing. Defaults to a week — the user asked for birthdays and
+    // anniversaries to nag early. remind_enabled lets the user keep the
+    // record but silence the nagging.
+    const advanceDays = normalizeImportantAdvance(input.advance_days);
+    const remindEnabled = input.remind_enabled === false || input.remind_enabled === 0 ? 0 : 1;
     db.run(
       `INSERT INTO important_dates(id, contact_id, label, day, month, year, kind,
-                                   remind_time, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                   remind_time, advance_days, remind_enabled,
+                                   created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, contact_id, input.label, input.day, input.month,
        input.year || null, input.kind || 'custom',
-       input.remind_time || '09:00', now, now]
+       input.remind_time || '09:00', advanceDays, remindEnabled, now, now]
     );
     db.upsertSearch('important_date', id, `${input.label} ${input.kind || ''}`);
     trackActivity('important_date_added');
@@ -533,11 +571,15 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
 
   ipcMain.handle('important_dates:update', (_e, id, input) => {
     const now = db.nowStr();
+    const advanceDays = normalizeImportantAdvance(input.advance_days);
+    const remindEnabled = input.remind_enabled === false || input.remind_enabled === 0 ? 0 : 1;
     db.run(
       `UPDATE important_dates SET label=?, day=?, month=?, year=?, kind=?,
-                                 remind_time=?, updated_at=? WHERE id=?`,
+                                 remind_time=?, advance_days=?, remind_enabled=?,
+                                 updated_at=? WHERE id=?`,
       [input.label, input.day, input.month, input.year || null,
-       input.kind || 'custom', input.remind_time || '09:00', now, id]
+       input.kind || 'custom', input.remind_time || '09:00',
+       advanceDays, remindEnabled, now, id]
     );
     db.upsertSearch('important_date', id, `${input.label} ${input.kind || ''}`);
     return db.one('SELECT * FROM important_dates WHERE id = ?', [id]);
@@ -677,18 +719,22 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
       lunar_month: lunarMonth,
       lunar_day: lunarDay,
     }, new Date());
+    const intervalDays = normalizeIntervalDays(input.interval_days, input.remind_kind);
+    const advanceDays = normalizeAdvanceInput(input.advance_days);
     db.run(
       `INSERT INTO events(id, contact_id, title, description, remind, remind_kind,
                           remind_time, remind_date, next_fire_at, last_fired_at, active,
                           category, tag_kind, lunar_month, lunar_day,
+                          interval_days, advance_days,
                           created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1,
-               ?, ?, ?, ?, ?, ?)`,
+               ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, input.contact_id || null, title, input.description || null,
        input.remind ? 1 : 0, input.remind_kind || 'none',
        input.remind_time || '09:00', input.remind_date || null,
        nf ? fmtDateTime(nf) : null,
-       category, tagKind, lunarMonth, lunarDay, now, now]
+       category, tagKind, lunarMonth, lunarDay,
+       intervalDays, advanceDays, now, now]
     );
     db.upsertSearch('event', id, `${title} ${input.description || ''} ${input.remind_kind || ''} ${category} ${tagKind || ''}`);
     trackActivity('event_created');
@@ -730,16 +776,20 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
       lunar_month: lunarMonth,
       lunar_day: lunarDay,
     }, new Date());
+    const intervalDays = normalizeIntervalDays(input.interval_days, input.remind_kind);
+    const advanceDays = normalizeAdvanceInput(input.advance_days);
     db.run(
       `UPDATE events SET contact_id=?, title=?, description=?, remind=?, remind_kind=?,
                          remind_time=?, remind_date=?, next_fire_at=?, active=1,
-                         category=?, tag_kind=?, lunar_month=?, lunar_day=?, updated_at=?
+                         category=?, tag_kind=?, lunar_month=?, lunar_day=?,
+                         interval_days=?, advance_days=?, updated_at=?
        WHERE id=?`,
       [input.contact_id || null, title, input.description || null,
        input.remind ? 1 : 0, input.remind_kind || 'none',
        input.remind_time || '09:00', input.remind_date || null,
        nf ? fmtDateTime(nf) : null,
-       category, tagKind, lunarMonth, lunarDay, now, id]
+       category, tagKind, lunarMonth, lunarDay,
+       intervalDays, advanceDays, now, id]
     );
     db.upsertSearch('event', id, `${title} ${input.description || ''} ${input.remind_kind || ''} ${category} ${tagKind || ''}`);
     return db.one('SELECT * FROM events WHERE id = ?', [id]);
@@ -1174,6 +1224,87 @@ function normFreeText(s) {
       }
     }
 
+    // Important dates inside their advance window (a birthday that is 5
+    // days out, say). These are the rows the scheduler pushes every day
+    // during the window, so they belong in the same list as the events.
+    // The queue already holds today's fired set, so we prefer the queue
+    // entries (they carry the computed days_left) and fall back to
+    // recomputing the window for dates the scheduler hasn't reached yet.
+    const importantDates = [];
+    {
+      const now = new Date();
+      const idRows = db.all('SELECT * FROM important_dates WHERE remind_enabled = 1');
+      const byId = new Map(idRows.map((r) => [r.id, r]));
+      const queued = queueItems.filter((q) => q.source === 'important_date');
+
+      // Which important dates the user already acknowledged TODAY. The
+      // queue path reads this off the queue entry, but the fallback path
+      // below covers dates the scheduler hasn't fired yet (the app started
+      // after the reminder time) — those still need today's ack state,
+      // otherwise an acknowledged date would reappear as pending.
+      const ackedImportantToday = new Set();
+      {
+        const rows = db.all(
+          `SELECT source_id FROM reminder_acks
+            WHERE source = 'important_date' AND acked_at LIKE ?`,
+          [today_prefix + '%']
+        );
+        for (const r of rows) ackedImportantToday.add(r.source_id);
+      }
+
+      for (const q of queued) {
+        const row = byId.get(q.source_id);
+        if (!row) continue;
+        importantDates.push({
+          source: 'important_date',
+          source_id: q.source_id,
+          title: q.title,
+          description: null,
+          contact_id: row.contact_id,
+          contact_name: q.contact_name || null,
+          next_fire_at: q.next_fire_at || today_start,
+          remind_kind: null,
+          category: null,
+          tag_kind: null,
+          kind: row.kind,
+          dismissed_for_today: !!q.dismissed_for_today,
+          days_left: q.days_left != null ? q.days_left : null,
+          advance_days: row.advance_days,
+        });
+      }
+      // Dates whose window is open but which the scheduler hasn't fired
+      // yet (e.g. the app started after the reminder time passed today).
+      for (const row of idRows) {
+        if (queued.some((q) => q.source_id === row.id)) continue;
+        const occ = importantDateOccurrence(row, now);
+        if (!occ) continue;
+        let titleStr = row.label;
+        if (row.year) {
+          const age = now.getFullYear() - row.year;
+          if (age > 0) titleStr = `${row.label} · ${age}岁`;
+        }
+        const c = row.contact_id
+          ? db.one('SELECT name FROM contacts WHERE id = ?', [row.contact_id])
+          : null;
+        importantDates.push({
+          source: 'important_date',
+          source_id: row.id,
+          title: titleStr,
+          description: null,
+          contact_id: row.contact_id,
+          contact_name: c && c.name ? c.name : null,
+          next_fire_at: today_start,
+          remind_kind: null,
+          category: null,
+          tag_kind: null,
+          kind: row.kind,
+          dismissed_for_today: ackedImportantToday.has(row.id),
+          days_left: occ.days_left,
+          advance_days: occ.advance_days,
+        });
+      }
+    }
+
     const decorate = (r) => ({
       source: 'event',
       source_id: r.source_id,
@@ -1209,6 +1340,7 @@ function normFreeText(s) {
         dismissed_for_today: ackedTodayIds.has(e.id),
       })),
       ...extras.map(decorate),
+      ...importantDates,
     ];
 
     // Pending items first, then completed — eye lands on what still needs
@@ -1216,6 +1348,15 @@ function normFreeText(s) {
     view.sort((a, b) => {
       if (a.dismissed_for_today !== b.dismissed_for_today) {
         return a.dismissed_for_today ? 1 : -1;
+      }
+      // Within a group, the soonest deadline comes first. A date that is
+      // counting down ("还有 3 天") sorts ahead of a plain event.
+      const aDays = a.days_left != null ? a.days_left : null;
+      const bDays = b.days_left != null ? b.days_left : null;
+      if (aDays !== bDays) {
+        if (aDays === null) return 1;
+        if (bDays === null) return -1;
+        return aDays - bDays;
       }
       return (a.next_fire_at || '').localeCompare(b.next_fire_at || '');
     });
@@ -2023,12 +2164,6 @@ function normFreeText(s) {
   // register(), via petBubbles.start().
   ipcMain.handle('bubbles:get_config', () => petBubbles.describeRules(db));
 
-  // Text typed into the main window's 说句话 prompt. Routed through the
-  // engine rather than broadcast here so the typed bubble gets the same
-  // override lifetime (and the same tick-suppression) as one sent any other
-  // way — otherwise the next tick would overwrite it within a second.
-  ipcMain.handle('bubbles:say', (_e, text) => petBubbles.say(text));
-
   ipcMain.handle('bubbles:set_enabled', (_e, map) => {
     const saved = petBubbles.saveEnabled(db, map || {});
     // Re-evaluate immediately so unchecking a rule makes its bubble vanish
@@ -2291,7 +2426,6 @@ function normFreeText(s) {
   // after unlock.
   ipcMain.handle('pet:context_menu', () => {
     // No bond-tier read here: every menu item is available at any tier.
-    const muted = db.getSetting('pet_muted') === '1';
     // fireBondAction wraps the IPC calls into a single helper so we can
     // route a click through to the pet renderer (which doubles as the
     // visual feedback layer for the cozy interaction).
@@ -2372,32 +2506,8 @@ function normFreeText(s) {
       },
       { type: 'separator' },
       {
-        label: '🏆 传说之舞',
-        click: () => {
-          fireVariant('default', 5000);
-          sendParticle('🌟');
-        },
-      },
-      { type: 'separator' },
-      {
-        label: '💬 说句话',
-        click: () => {
-          // Electron's native Menu has no text-input item type, and
-          // dialog.showMessageBox can't supply one either: `inputFieldType`
-          // doesn't exist until Electron 36 (this app runs 32.3.3), so on
-          // 32 it silently degrades to a button-only dialog that throws.
-          //
-          // The input therefore has to be our own HTML, which means it has to
-          // live in a window that can take keyboard focus. The pet window is
-          // created `focusable: false` (mouse-through by design), so it can't.
-          // So: surface the main window and let it render the prompt; it sends
-          // the text straight back through say().
-          if (winMain && !winMain.isDestroyed()) {
-            if (!winMain.isVisible()) winMain.show();
-            winMain.focus();
-            winMain.webContents.send('main:say-prompt');
-          }
-        },
+        label: '💃 跳舞',
+        click: () => fireBondAction('cuddle'),
       },
       { type: 'separator' },
       {
@@ -2420,11 +2530,6 @@ function normFreeText(s) {
             ).catch(() => {});
           }
         },
-      },
-      { type: 'separator' },
-      {
-        label: muted ? '🔈 取消静音' : '🔇 静音',
-        click: () => { db.setSetting('pet_muted', muted ? '0' : '1'); },
       },
       { type: 'separator' },
       {
@@ -2509,36 +2614,6 @@ function normFreeText(s) {
       return out;
     });
   }
-
-  // Celebrate hook — called by the renderer after high-value moments
-  // (5 events/day threshold, memorial recorded, etc.) so the pet flashes
-  // a brief "proud" beat. The today_event flag is set so the next mood
-  // tick resolves to "proud" without a real round of event creates.
-  ipcMain.handle('bond:celebrate', () => {
-    const id = db.getSetting('pet_id');
-    try { petInteractions.celebrate(db, id, db.nowStr.bind(db)); } catch {}
-    try { db.setSetting(`today_event:${id || 'vup'}`, '1'); } catch {}
-    fireVariant('default', 4000);
-    sendParticle('🎉');
-    return { ok: true };
-  });
-
-  // Tier 7 dance: refuses unless the user has reached legendary.
-  ipcMain.handle('bond:trigger_legendary_dance', () => {
-    // Not tier-gated — like every other right-click action, the dance is
-    // available to any pet.
-    fireVariant('default', 5000);
-    sendParticle('🌟');
-    return { ok: true };
-  });
-
-  // Mute / unmute — v1 has no audio yet, but we still store the flag so
-  // the menu reads the right state and future audio hooks can respect it.
-  ipcMain.handle('bond:set_muted', (_e, m) => {
-    db.setSetting('pet_muted', m ? '1' : '0');
-    return true;
-  });
-  ipcMain.handle('bond:get_muted', () => db.getSetting('pet_muted') === '1');
 
   // Logged by the renderer when the user dwells on a contact (>5s on the
   // detail page). One record per contact per week — duplicates are

@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS important_dates (
   year        INTEGER,
   kind        TEXT NOT NULL DEFAULT 'birthday',
   remind_time TEXT,
+  -- advance_days: how many days BEFORE the date the reminder starts firing.
+  -- 7 = "start a week early". 0 = only on the day itself.
+  -- remind_enabled: 0 = the row is kept but never fires (user opt-out).
+  advance_days   INTEGER NOT NULL DEFAULT 7,
+  remind_enabled INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
@@ -61,6 +66,13 @@ CREATE TABLE IF NOT EXISTS events (
   tag_kind      TEXT,
   lunar_month   INTEGER,
   lunar_day     INTEGER,
+  -- interval_days: the "every N days" stride. Only meaningful when
+  -- remind_kind = 'every_n_days' (NULL otherwise).
+  interval_days INTEGER,
+  -- advance_days: how many days BEFORE the target date the reminder starts
+  -- firing. Only meaningful for date-anchored kinds (yearly / monthly /
+  -- weekly / every_n_days) whose anchor is a real calendar date.
+  advance_days  INTEGER,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -249,12 +261,14 @@ async function open(dbPathArg) {
   migrateEventsCategoryV1();
   migrateEventsTagKindV1();
   migrateEventsContactCascadeV1();
+  migrateReminderGranularityV1();
   migrateMemorialEventsV1();
   migrateMemorialEventsV2();
   seedDefaultFestivals();
   migratePinV1();
   migrateBondV1();
   migratePetIdRenameV1();
+  purgeObsoleteSettings();
 
   // Settings defaults
   const s = db.prepare('SELECT value FROM settings WHERE key = ?');
@@ -365,6 +379,27 @@ function getSetting(key) {
 function setSetting(key, value) {
   run('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, value]);
   markDirty();
+}
+
+// ---- Obsolete settings cleanup ----
+// Settings rows left behind by features that have since been deleted. The
+// DELETE is idempotent, so this runs on every open instead of being guarded
+// by a version marker the way the schema migrations are.
+//
+//   pet_muted — a placeholder for an audio switch. The app has no audio
+//               layer at all, so the flag never gated anything; the menu
+//               item that wrote it is gone.
+const OBSOLETE_SETTING_KEYS = ['pet_muted'];
+
+function purgeObsoleteSettings() {
+  if (!db) return;
+  for (const key of OBSOLETE_SETTING_KEYS) {
+    try {
+      run('DELETE FROM settings WHERE key = ?', [key]);
+    } catch (e) {
+      console.error('obsolete settings cleanup failed:', e);
+    }
+  }
 }
 
 // ---- Contacts v2 migration ----
@@ -844,6 +879,55 @@ function migrateEventsTagKindV1() {
     setSetting('events_tag_kind_v1_applied', '1');
   } catch (e) {
     console.error('events tag_kind v1 migration failed:', e);
+  }
+}
+
+// ---- reminder granularity migration ----
+// Adds the columns backing the finer-grained repeat options and the
+// "remind me N days early" feature:
+//
+//   events.interval_days  — the "every N days" stride (remind_kind='every_n_days')
+//   events.advance_days   — days-before-the-date the reminder starts firing
+//   important_dates.advance_days   — same idea for date-anchored important dates
+//   important_dates.remind_enabled — per-row opt-out
+//
+// Existing rows keep their current behaviour: interval_days NULL (no stride
+// needed by the old kinds), advance_days NULL (the scheduler falls back to
+// the "on the day only" default), and important dates get advance_days=7 —
+// the user asked for birthdays/anniversaries to start nagging a week ahead,
+// and that applies to the rows that already exist.
+function migrateReminderGranularityV1() {
+  if (!db) return;
+  if (getSetting('reminder_granularity_v1_applied') === '1') return;
+
+  const addColumnIfMissing = (table, column, ddl) => {
+    const cols = db.prepare(`PRAGMA table_info(${table})`);
+    const names = new Set();
+    while (cols.step()) names.add(cols.get()[1]);
+    cols.free();
+    if (names.has(column)) return;
+    db.run(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  };
+
+  try {
+    addColumnIfMissing('events', 'interval_days', 'interval_days INTEGER');
+    addColumnIfMissing('events', 'advance_days',  'advance_days  INTEGER');
+
+    // important_dates.advance_days is NOT NULL DEFAULT 7 in the schema.
+    // ALTER TABLE can't add a NOT NULL column without a default, so the
+    // DDL carries the default explicitly and SQLite backfills existing rows.
+    addColumnIfMissing(
+      'important_dates', 'advance_days',
+      'advance_days INTEGER NOT NULL DEFAULT 7'
+    );
+    addColumnIfMissing(
+      'important_dates', 'remind_enabled',
+      'remind_enabled INTEGER NOT NULL DEFAULT 1'
+    );
+
+    setSetting('reminder_granularity_v1_applied', '1');
+  } catch (e) {
+    console.error('reminder granularity v1 migration failed:', e);
   }
 }
 

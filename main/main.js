@@ -58,10 +58,15 @@ function broadcastPetState() {
     // Carry enough of `head` that the pet window can render a meaningful
     // speech bubble without an extra round-trip back to us. Fields are
     // already on the head object (see scheduler.ReminderQueue → scanAndFire).
+    //
+    // `days_left` is present only for date-anchored reminders that are
+    // counting down to a future day (a birthday with the advance window
+    // open). null for everything else.
     head: activeHead ? {
       title: activeHead.title,
       contact_name: activeHead.contact_name || null,
       description: activeHead.description || null,
+      days_left: activeHead.days_left != null ? activeHead.days_left : null,
     } : null,
   };
   if (winPet && !winPet.isDestroyed()) winPet.webContents.send('pet:state-changed', payload);

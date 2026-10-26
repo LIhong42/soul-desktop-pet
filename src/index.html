@@ -52,28 +52,6 @@
     </div>
   </div>
 
-  <!-- 说句话 prompt (pet right-click → 💬 说句话).
-       Must live in the main window, not the pet window: the pet window is
-       created `focusable: false` and cannot take keyboard focus, so a text
-       field there can never receive the caret. -->
-  <div class="modal-backdrop hidden" id="say-modal">
-    <div class="modal">
-      <div class="modal-header">
-        <h3>想让桌宠说什么？</h3>
-        <button class="icon-btn" id="say-close">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="reminder-meta">输入的文字会以文本气泡显示在桌宠上方，持续 10 分钟。</p>
-        <input type="text" id="say-input" maxlength="60" placeholder="今天吃撒"
-               autocomplete="off" />
-        <div class="modal-actions">
-          <button class="btn" id="say-submit">显示</button>
-          <button class="btn secondary" id="say-cancel">取消</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- PIN lock modal: shown on every main-window show.
        No close button on purpose — clicking X must not bypass auth. -->
   <div class="modal-backdrop" id="pin-modal" data-no-close="1">

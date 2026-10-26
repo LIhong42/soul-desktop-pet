@@ -1,5 +1,5 @@
 // src/js/pages/events_work.js — 工作事件 list (category='work')
-import { api, escapeHtml, firstChar, displayName, fmtDateTime, formatRelative, countdownTo, categoryIcon, contactColorIndex, toast } from '../api.js';
+import { api, escapeHtml, firstChar, displayName, fmtDateTime, formatRelative, countdownTo, categoryIcon, contactColorIndex, toast, repeatLabel } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
@@ -318,11 +318,7 @@ function workRowInner(e, cById) {
 }
 
 function kindLabel(k) {
-  return ({ one_time: '一次', daily: '每天', monthly: '每月', yearly: '每年', none: '不提醒' }[k]) || k || '';
-}
-
-function tagKindLabel(k) {
-  return ({ birthday: '生日', anniversary: '纪念日', festival: '节日' }[k]) || '';
+  return repeatLabel(k);
 }
 
 // Local search predicate for work events. Work events have far fewer

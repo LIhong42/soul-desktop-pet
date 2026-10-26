@@ -128,6 +128,18 @@ async function render(args) {
         <label>提醒时间</label>
         <input type="time" id="d-time" value="${escapeHtml(found.remind_time || '09:00')}"/>
       </div>
+      <div class="form-row">
+        <div class="field">
+          <label>提前提醒（天）</label>
+          <input type="number" id="d-advance" min="0" max="60" value="${escapeHtml(String(found.advance_days != null ? found.advance_days : 7))}"/>
+          <div class="meta">提前这么多天开始每天提醒一次，0 = 只在当天提醒</div>
+        </div>
+        <div class="field">
+          <label>提醒开关</label>
+          <label><input type="checkbox" id="d-remind-enabled" ${found.remind_enabled === 0 ? '' : 'checked'}/> 启用提醒</label>
+          <div class="meta">关闭后保留这条日期记录，但不再提醒</div>
+        </div>
+      </div>
       <div class="row" style="margin-top:14px; gap:8px;">
         <button class="btn" id="save">保存</button>
         <button class="btn danger" id="del">删除</button>
@@ -154,10 +166,15 @@ async function render(args) {
     const year = yearRaw ? parseInt(yearRaw, 10) : null;
     const kind = document.getElementById('d-kind').value;
     const remindTime = document.getElementById('d-time').value || '09:00';
+    const advanceDays = Math.floor(Number(document.getElementById('d-advance').value));
+    const remindEnabled = document.getElementById('d-remind-enabled').checked;
     if (month < 1 || month > 12 || day < 1 || day > 31) { toast('日期不合法'); return; }
+    if (!Number.isFinite(advanceDays) || advanceDays < 0) { toast('提前提醒天数不合法'); return; }
     try {
       await api.importantDates.update(found.id, {
         label, month, day, year, kind, remind_time: remindTime,
+        advance_days: Math.min(advanceDays, 60),
+        remind_enabled: remindEnabled,
       });
       toast('已保存');
     } catch (e) {

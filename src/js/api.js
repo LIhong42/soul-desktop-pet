@@ -78,10 +78,6 @@ export const api = {
     getSnapshot:       () => M.bond.getSnapshot?.() || Promise.resolve(null),
     getCozySnapshot:   () => M.bond.getCozySnapshot?.() || Promise.resolve(null),
     getWeeklyBreakdown:() => M.bond.getWeeklyBreakdown?.() || Promise.resolve(null),
-    celebrate:         () => M.bond.celebrate?.(),
-    legendaryDance:    () => M.bond.legendaryDance?.(),
-    setMuted:          (b) => M.bond.setMuted?.(!!b),
-    getMuted:          () => M.bond.getMuted?.(),
   },
   pet: {
     getState: () => M.pet.getState(),
@@ -136,7 +132,6 @@ export const api = {
   bubbles: {
     getConfig:      ()     => M.bubbles?.getConfig?.() || Promise.resolve({ rules: [], feedWindows: {} }),
     setEnabled:     (map)  => M.bubbles?.setEnabled?.(map || {}),
-    say:            (t)    => M.bubbles?.say?.(t || ''),
     preview:        (r)    => M.bubbles?.preview?.(r || ''),
     force:          (r)    => M.bubbles?.force?.(r || ''),
     getIdleSeconds: ()     => M.bubbles?.getIdleSeconds?.(),
@@ -405,6 +400,57 @@ export function eventKindAttr(e) {
   if (e.tag_kind === 'anniversary') return 'anniversary';
   if (e.tag_kind === 'festival')    return 'festival';
   return 'general';
+}
+
+// The human label for an event's repeat mode.
+//
+// Shared by every page that lists events (提醒日期 / 工作事件 / 联系人详情)
+// so a "每 3 天" reminder reads the same wherever it shows up. The plain
+// kind→label map can't cover 'every_n_days' on its own, because that label
+// carries the stride the user chose.
+//
+// `e` may be an event row or a bare remind_kind string.
+export function repeatLabel(e) {
+  const kind = typeof e === 'string' ? e : (e && e.remind_kind);
+  if (kind === 'every_n_days') {
+    const n = (e && e.interval_days) || 1;
+    return `每 ${n} 天`;
+  }
+  return ({
+    one_time: '一次', daily: '每天', weekly: '每周', monthly: '每月',
+    yearly: '每年', none: '不提醒',
+  }[kind]) || kind || '';
+}
+
+// The display title for an event row, with the user's description folded in.
+//
+// The server auto-fills an event's title from the linked contact ("爷爷的提醒")
+// or a generic "新建提醒" — the title is a *label*, not the content. The
+// content the user actually typed lives in `description`.
+//
+// For a *tagged* event (生日 / 纪念日 / 节日) the label alone is meaningful —
+// "刘杰的生日" says everything — so the description is appended after an
+// em-dash only when there is one, and the tag chip still carries the type.
+//
+// For an *untagged* event the label is generic ("爷爷的提醒"), so the
+// description is the only real information. Appending it as "爷爷的提醒 —
+// 打电话" keeps the auto-generated label (which identifies *whose* reminder
+// this is) while surfacing the content the user wrote.
+//
+// Returns a single string; callers that want the two parts separately can
+// use `eventDescription(e)` directly.
+export function eventDisplayTitle(e, displayTitle) {
+  const base = (displayTitle != null ? displayTitle : (e && e.title)) || '';
+  const desc = eventDescription(e);
+  if (!desc) return base;
+  if (!base) return desc;
+  return `${base} — ${desc}`;
+}
+
+// The trimmed description of an event, or '' when it has none.
+export function eventDescription(e) {
+  if (!e) return '';
+  return (e.description || '').trim();
 }
 
 // Single source of truth for "how do we show this contact's name"? Used by

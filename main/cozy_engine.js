@@ -11,7 +11,7 @@
 // Interaction deltas and cooldowns. These actions are deliberately NOT
 // gated on bond tier — every one of them is available from the right-click
 // menu on a fresh pet. The bond ladder still exists as long-term progression
-// (tier label + 亲密度 + 传说之舞), it just no longer withholds the basic
+// (tier label + 亲密度 + 跳舞), it just no longer withholds the basic
 // ways to play with the pet.
 const COZY_DELTAS = {
   pet:    { delta:  4, cooldownMs:   8_000 },

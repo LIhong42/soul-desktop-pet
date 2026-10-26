@@ -480,31 +480,13 @@ let intervalMs = REFRESH_MS;
 let broadcastFn = null;
 let lastBroadcastKey = null;   // dedupe: don't re-push an unchanged bubble
 
-// A user-typed bubble takes over the single bubble slot until it expires.
-// It has to, or the very next tick (≤1s later) would overwrite what the user
-// just typed with whatever rule happened to be due — the message would flash
-// and vanish, which reads as a bug. Expiry keeps the slot from being held
-// forever, after which the normal rule-driven bubble resumes as if nothing
-// happened.
-//
-// Not persisted: it's a transient UI override with a 10-minute life, and
-// writing it to `settings` would mean a restart re-showing a message the
-// user typed a while ago.
-let manual = null;   // { text, kind, rule, durationMs, expiresAtMs }
-
-// How long a typed bubble stays up. Long enough to read a sentence (the
-// bubble is `nowrap` and capped at 280px in CSS, so long text wraps to a few
-// lines), short enough that a forgotten message isn't still on screen at
-// lunchtime.
-const MANUAL_DURATION_MS = 10 * 60_000;
-
 function push(payload) {
   lastBroadcastKey = payload.text == null ? '' : `${payload.kind}|${payload.rule}|${payload.text}`;
   if (!broadcastFn) return;
-  // Stamp the 文本框 onto every bubble that goes out — rule, manual and the
-  // clear alike. Doing it here rather than at each of the three push call
-  // sites is what guarantees a box can't be attached to one kind of bubble and
-  // forgotten on another; there is no path to `broadcastFn` that skips this.
+  // Stamp the 文本框 onto every bubble that goes out — the rule bubble and
+  // the clear alike. Doing it here rather than at each push call site is what
+  // guarantees a box can't be attached to one kind of bubble and forgotten on
+  // another; there is no path to `broadcastFn` that skips this.
   //
   // The clear payload carries a null box too, so the renderer drops the
   // artwork when the bubble goes rather than leaving it behind.
@@ -574,59 +556,8 @@ function resetRuntime() {
   petActionTexts.clearRuntime();
 }
 
-// Show `text` in the bubble slot, overriding the rule engine until it
-// expires. Called from the right-click menu's "说句话" item.
-//
-// Deliberately bypasses `tick()`: the user asked for this bubble, so it goes
-// out immediately rather than waiting up to a second, and it does not
-// consult the enable toggles (turning 吃饭提醒 off shouldn't stop the user
-// from typing at their pet).
-function say(text, opts) {
-  const t = String(text == null ? '' : text).trim();
-  if (!t) return false;
-  const o = opts || {};
-  manual = {
-    text: t,
-    kind: o.kind || 'manual',
-    rule: o.rule || 'manual',
-    durationMs: Number.isFinite(o.durationMs) ? o.durationMs : MANUAL_DURATION_MS,
-    expiresAtMs: Date.now() + (Number.isFinite(o.durationMs) ? o.durationMs : MANUAL_DURATION_MS),
-  };
-  push({ text: manual.text, kind: manual.kind, rule: manual.rule, durationMs: manual.durationMs });
-  return true;
-}
-
-// Dismiss the typed bubble early (context menu → 收起气泡, or any future
-// dismiss affordance). Falls through to the rule-driven bubble on the next
-// tick rather than blanking the slot, so dismissing a manual bubble doesn't
-// also swallow a 吃饭提醒 that is currently due.
-function clearManual() {
-  if (!manual) return false;
-  manual = null;
-  // Force the next tick to re-broadcast: lastBroadcastKey still holds the
-  // manual text, and if a rule happened to be showing that identical string
-  // we'd wrongly skip the push.
-  lastBroadcastKey = null;
-  return true;
-}
-
 function tick() {
   if (!db.get()) return;
-
-  // A live manual bubble wins over the rule engine for as long as it lasts.
-  if (manual) {
-    if (Date.now() < manual.expiresAtMs) {
-      push({
-        text: manual.text,
-        kind: manual.kind,
-        rule: manual.rule,
-        durationMs: manual.durationMs,
-      });
-      return;
-    }
-    manual = null;
-    lastBroadcastKey = null;   // let the rule result repaint
-  }
 
   let state;
   let enabledMap;
@@ -708,7 +639,6 @@ function stop() {
   if (timer) { clearInterval(timer); timer = null; }
   if (warmupTimer) { clearTimeout(warmupTimer); warmupTimer = null; }
   lastBroadcastKey = null;
-  manual = null;
   // Drop the plugged-in rule lines too, so a stop()/start() cycle (or the
   // smoke tests) can't leave a 吃饭提醒 line stranded in the `default`
   // action's pool with no rule behind it to remove it.
@@ -751,8 +681,6 @@ module.exports = {
   tick,
   setIdleSeconds,
   emit,
-  say,
-  clearManual,
   invalidateRuleBox,
 
   // config / introspection

@@ -6,7 +6,7 @@
 //
 // Both filter values are reflected in the URL hash so the page can be
 // bookmarked / shared. Changing either triggers a re-fetch via events:list.
-import { api, escapeHtml, displayName, eventKindAttr, formatRelative, countdownTo, categoryIcon } from '../api.js';
+import { api, escapeHtml, displayName, eventKindAttr, formatRelative, countdownTo, categoryIcon, repeatLabel, eventDisplayTitle } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
@@ -226,7 +226,7 @@ function renderRowInner(e, displayTitle, cById) {
   const kind = eventKindAttr(e);
   const metaParts = [];
   if (e.lunar_month && e.lunar_day) metaParts.push(`农历 ${e.lunar_month}-${e.lunar_day}`);
-  metaParts.push(kindLabel(e.remind_kind));
+  metaParts.push(repeatLabel(e));
   if (!e.active) metaParts.push('已结束');
   const meta = metaParts.join(' · ');
   // Time chip on the right: relative date + countdown.
@@ -234,12 +234,17 @@ function renderRowInner(e, displayTitle, cById) {
   const rel = formatRelative(target);
   const cd  = countdownTo(target);
   const tagLabel = e.tag_kind ? tagKindLabel(e.tag_kind) : null;
+  // Fold the user's description into the title. An untagged reminder's title
+  // is auto-generated ("爷爷的提醒"), so the description is the only real
+  // content — without this the list shows a label and hides what the user
+  // actually wrote.
+  const titleText = eventDisplayTitle(e, displayTitle) || '(无标题)';
   return `
     <div class="lr-id">
       <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>
     </div>
     <div class="lr-main">
-      <div class="lr-title">${escapeHtml(displayTitle || '(无标题)')}${tagLabel ? ` <span class="tag" style="margin-left:6px">${escapeHtml(tagLabel)}</span>` : ''}</div>
+      <div class="lr-title">${escapeHtml(titleText)}${tagLabel ? ` <span class="tag" style="margin-left:6px">${escapeHtml(tagLabel)}</span>` : ''}</div>
       <div class="lr-meta">${meta}</div>
     </div>
     <div class="lr-side">
@@ -252,10 +257,6 @@ function renderRowInner(e, displayTitle, cById) {
 // Map a tag_kind code to its short label.
 function tagKindLabel(k) {
   return ({ birthday: '生日', anniversary: '纪念日', festival: '节日' }[k]) || '';
-}
-
-function kindLabel(k) {
-  return ({ one_time: '一次', daily: '每天', monthly: '每月', yearly: '每年', none: '不提醒' }[k]) || k || '';
 }
 
 register('/reminders', render);

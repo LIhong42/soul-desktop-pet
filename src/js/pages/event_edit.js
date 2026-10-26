@@ -59,6 +59,8 @@ async function renderEdit(args, params) {
     lunar_month: null,
     lunar_day: null,
     tag_kind: null,
+    interval_days: null,
+    advance_days: null,
   };
   if (!isNew) {
     ev = await api.events.get(args.id);
@@ -116,9 +118,16 @@ async function renderEdit(args, params) {
             <select id="e-kind">
               <option value="one_time" ${ev.remind_kind==='one_time'?'selected':''}>只一次</option>
               <option value="daily"    ${ev.remind_kind==='daily'?'selected':''}>每天</option>
+              <option value="weekly"   ${ev.remind_kind==='weekly'?'selected':''}>每周</option>
+              <option value="every_n_days" ${ev.remind_kind==='every_n_days'?'selected':''}>每 N 天</option>
               <option value="monthly"  ${ev.remind_kind==='monthly'?'selected':''}>每月</option>
               <option value="yearly"   ${ev.remind_kind==='yearly'?'selected':''}>每年</option>
             </select>
+          </div>
+          <div class="field ${ev.remind_kind === 'every_n_days' ? '' : 'hidden'}" id="e-interval-field">
+            <label>间隔天数</label>
+            <input type="number" id="e-interval-days" min="1" max="365" value="${escapeHtml(String(ev.interval_days || 3))}"/>
+            <div class="meta">每隔 N 天提醒一次（从起始日期算起）</div>
           </div>
           <div class="field">
             <label>日期类型</label>
@@ -172,19 +181,30 @@ async function renderEdit(args, params) {
       k === 'one_time' ? '日期' :
       k === 'yearly' ? '周年日期' :
       k === 'monthly' ? '每月几号' :
+      k === 'weekly' ? '起始日期（每周一次）' :
+      k === 'every_n_days' ? '起始日期' :
       k === 'daily' ? '起始日期（可选）' : '日期';
+    // The "每 N 天" stride input only applies to that one repeat kind.
+    const intervalField = document.getElementById('e-interval-field');
+    if (intervalField) intervalField.classList.toggle('hidden', k !== 'every_n_days');
   }
   // Show/hide the solar vs lunar field set, and gate the lunar radio when
-  // the user picks "每天" (a daily reminder has no meaningful lunar anchor).
+  // the user picks a repeat kind that has no meaningful lunar anchor.
+  //
+  // "每天" has no anchor at all, and the two stride-based kinds (每周 /
+  // 每 N 天) count days from an anchor date — a lunar anchor there would
+  // mean "every 7 lunar days", which the scheduler doesn't implement, so
+  // the radio is disabled for them too.
   function toggleCalMode() {
     const mode = document.querySelector('input[name="e-cal-mode"]:checked')?.value || 'solar';
-    const isDaily = document.getElementById('e-kind').value === 'daily';
+    const kind = document.getElementById('e-kind').value;
+    const noLunar = kind === 'daily' || kind === 'weekly' || kind === 'every_n_days';
     document.getElementById('solar-fields').classList.toggle('hidden', mode !== 'solar');
     document.getElementById('lunar-fields').classList.toggle('hidden', mode !== 'lunar');
     const lunarRadio = document.querySelector('input[name="e-cal-mode"][value="lunar"]');
     if (lunarRadio) {
-      lunarRadio.disabled = isDaily;
-      if (isDaily && lunarRadio.checked) {
+      lunarRadio.disabled = noLunar;
+      if (noLunar && lunarRadio.checked) {
         document.querySelector('input[name="e-cal-mode"][value="solar"]').checked = true;
         toggleCalMode();
       }
@@ -238,6 +258,22 @@ async function renderEdit(args, params) {
     if (kind === 'daily' && mode === 'lunar') {
       toast('每天重复不支持农历日期');
       return;
+    }
+    if ((kind === 'weekly' || kind === 'every_n_days') && mode === 'lunar') {
+      toast(kind === 'weekly' ? '每周重复不支持农历日期' : '每 N 天重复不支持农历日期');
+      return;
+    }
+    // The stride only applies to "每 N 天". Everything else stores null so
+    // a stale value can't resurface if the user switches back and forth.
+    if (kind === 'every_n_days') {
+      const n = Math.floor(Number(document.getElementById('e-interval-days').value));
+      if (!Number.isFinite(n) || n < 1) {
+        toast('间隔天数需要是大于 0 的整数');
+        return;
+      }
+      base.interval_days = Math.min(n, 365);
+    } else {
+      base.interval_days = null;
     }
     let input;
     if (mode === 'lunar') {

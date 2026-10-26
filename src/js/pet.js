@@ -188,6 +188,16 @@ function setState(state, count, head) {
       const parts = [];
       if (head.title) parts.push(head.title);
       if (head.contact_name) parts.push(head.contact_name);
+      // A date that's counting down carries its countdown in the bubble:
+      // "刘杰的生日 · 还有 3 天". days_left is null for every other kind
+      // of reminder, which leaves the bubble unchanged.
+      if (head.days_left != null) {
+        parts.push(head.days_left === 0
+          ? '就是今天'
+          : head.days_left === 1
+            ? '就在明天'
+            : `还有 ${head.days_left} 天`);
+      }
       bubble.textContent = parts.join(' · ');
       bubble.classList.remove('hidden');
       bubble.classList.remove('fade');
@@ -223,7 +233,7 @@ function clearReminderBubble() {
 // The payload is `{ text, kind, rule }`; `text: null` means "clear".
 //
 // Two producers share this one slot:
-//   * the rule engine (吃饭提醒 / 休息提醒 / 说句话), via `pet:bubble-changed`
+//   * the rule engine (吃饭提醒 / 休息提醒), via `pet:bubble-changed`
 //   * the action picker (动作绑定的文本), via the `text` field on
 //     `pet:action-changed`
 // They coexist because the second only ever *adds* to the same bubble and

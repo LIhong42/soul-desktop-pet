@@ -59,7 +59,6 @@ contextBridge.exposeInMainWorld('mp', {
     play:     () => ipcRenderer.invoke('bond:play'),
     sleep:    () => ipcRenderer.invoke('bond:sleep'),
     cuddle:   () => ipcRenderer.invoke('bond:cuddle'),
-    celebrate:() => ipcRenderer.invoke('bond:celebrate'),
   },
   on: (channel, cb) => {
     const allowed = [

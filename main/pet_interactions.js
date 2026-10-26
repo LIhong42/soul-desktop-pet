@@ -95,21 +95,6 @@ function runSettlementIfDue(db, nowStr, petId) {
   return bond.maybeRunSettlement(db, currentPet, nowStr);
 }
 
-// ---- Celebrate hook ----
-// Sets the "new_event_today" flag so the next mood tick resolves to
-// `proud`, and bumps the event_created dimension by 1 (a small reward
-// for hitting the celebration trigger). Capped via the dimension
-// saturation in computeWeeklyScore, so spamming celebrate doesn't
-// inflate the bond tier.
-function celebrate(db, petId, nowStr) {
-  const currentPet = petId || db.getSetting('pet_id');
-  if (!currentPet) return;
-  const stamp = (nowStr && nowStr()) || new Date().toISOString();
-  bond.incrementWeekDimension(db, currentPet, 'event_created', 1, nowStr);
-  db.setSetting(`today_event:${currentPet}`, '1');
-  return { ok: true, at: stamp };
-}
-
 module.exports = {
   trackActivity,
   logContactReviewed,
@@ -119,5 +104,4 @@ module.exports = {
   getCozySnapshot,
   computeMood,
   runSettlementIfDue,
-  celebrate,
 };

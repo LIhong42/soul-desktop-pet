@@ -644,7 +644,7 @@ async function renderActionTextsCard() {
       </p>` : ''}
     ${_textBoxes.length ? `
       <p class="meta" style="margin:12px 0 6px;">
-        提醒气泡（吃饭 / 休息 / 说句话）的文本框：
+        提醒气泡（吃饭 / 休息）的文本框：
         ${renderTextBoxSelect('rule', _actionTextsForm.ruleBox)}
       </p>` : ''}
     <div class="action-texts-list" id="action-texts-list">
