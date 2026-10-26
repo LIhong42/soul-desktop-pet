@@ -718,9 +718,19 @@ async function renderActionTextsCard() {
 // so every action is visible in its "未绑定" state — the user can see what
 // they *haven't* configured, not just what they have.
 function renderActionTextsRow(a) {
-  const bound = (_actionTextsForm && _actionTextsForm.texts[a.action]) || a.texts || [];
+  // The form is the ONLY source of truth here — no fallback to the row
+  // skeleton's `a.texts` / `a.box`.
+  //
+  // The skeleton is a snapshot taken at load time, and a removed chip deletes
+  // the action's key from the form entirely ("no lines" is an absent key, see
+  // the remove handler). With a fallback, an empty form value would fall
+  // through to the stale snapshot and the deleted chip would spring straight
+  // back — deleting the last line of an action looked like the × did nothing
+  // at all. The form already holds a full copy of the saved config (see
+  // renderActionTextsCard), so it never needs the snapshot to fill gaps.
+  const bound = _actionTextsForm ? _actionTextsForm.texts[a.action] : undefined;
   const lines = Array.isArray(bound) ? bound : [];
-  const box = (_actionTextsForm && _actionTextsForm.boxes[a.action]) ?? a.box ?? '';
+  const box = (_actionTextsForm && _actionTextsForm.boxes[a.action]) || '';
   return `
     <div class="action-texts-row">
       <div class="action-texts-label" title="${escapeHtml(a.action)}">${escapeHtml(a.label)}</div>
@@ -735,7 +745,7 @@ function renderActionTextsRow(a) {
             ${lines.map((t, i) => `
               <span class="action-texts-chip">
                 <span class="action-texts-chip-text">${escapeHtml(t)}</span>
-                <button class="action-texts-chip-x" data-text-remove="${escapeHtml(a.action)}" data-text-idx="${i}" title="移除">×</button>
+                <button type="button" class="action-texts-chip-x" data-text-remove="${escapeHtml(a.action)}" data-text-idx="${i}" title="移除">×</button>
               </span>
             `).join('')}
           </div>`
