@@ -10,6 +10,7 @@
     "dev": "node scripts/run-electron.js . --dev",
     "doctor": "node scripts/doctor.js",
     "verify:cutout": "node scripts/verify-cutout.js",
+    "test:pet-drag": "node scripts/test-pet-drag.js && node scripts/test-pet-drag-main.js && node scripts/run-electron.js scripts/test-pet-drag-e2e.js && node scripts/run-electron.js scripts/test-pet-drag-live.js",
     "measure:text-boxes": "node scripts/measure-text-boxes.js",
     "install:bin": "node scripts/install-electron-bin.js",
     "postinstall": "node scripts/install.js",

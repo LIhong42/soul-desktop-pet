@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld('mp', {
     showMain: () => ipcRenderer.invoke('window:show_main'),
     openReminder: () => ipcRenderer.invoke('window:open_reminder'),
     moveBy: (dx, dy) => ipcRenderer.invoke('pet:move_by', dx, dy),
+    // Main-process drag. `dragStart(grabDX, grabDY)` hands the main process
+    // the offset between the pointer and the window's top-left; from then on
+    // the main process follows the cursor itself (screen.getCursorScreenPoint),
+    // so the drag keeps working after the pointer leaves the 220 px pet
+    // window. `dragEnd()` releases it.
+    dragStart: (grabDX, grabDY) => ipcRenderer.invoke('pet:drag_start', grabDX, grabDY),
+    dragEnd: () => ipcRenderer.invoke('pet:drag_end'),
     setPaused: (ms) => ipcRenderer.invoke('pet:set_paused', ms),
     openContextMenu: () => ipcRenderer.invoke('pet:context_menu'),
     triggerAction: (action, ms) => ipcRenderer.invoke('pet:trigger_action', action, ms),

@@ -1272,7 +1272,13 @@ function normFreeText(s) {
   });
 
   ipcMain.handle('reminders:snooze', (_e, source, sourceId, minutes) => {
-    const newFire = new Date(Date.now() + minutes * 60_000);
+    // A non-numeric `minutes` would make the new fire time an Invalid Date,
+    // and `fmtDateTime` would then write a garbage string into
+    // `events.next_fire_at` — the reminder becomes unschedulable with no
+    // visible error. Coerce and bound it instead.
+    const mins = Math.round(Number(minutes));
+    if (!Number.isFinite(mins) || mins <= 0 || mins > 24 * 60) return false;
+    const newFire = new Date(Date.now() + mins * 60_000);
     const newFireStr = fmtDateTime(newFire);
     // A snooze is NOT a "complete" — it just pushes the next fire time.
     // Earlier builds also INSERTed into reminder_acks here, which
@@ -1340,10 +1346,15 @@ function normFreeText(s) {
   });
 
   ipcMain.handle('pet:set_position', (_e, x, y) => {
-    db.setSetting('pet_x', String(x));
-    db.setSetting('pet_y', String(y));
+    // `setPosition` throws "conversion failure" on a fractional or NaN
+    // coordinate, so coerce to a finite integer before using it.
+    const px = Math.round(Number(x));
+    const py = Math.round(Number(y));
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return false;
+    db.setSetting('pet_x', String(px));
+    db.setSetting('pet_y', String(py));
     if (winPet && !winPet.isDestroyed()) {
-      winPet.setPosition(x, y);
+      winPet.setPosition(px, py);
     }
     return true;
   });
@@ -1832,8 +1843,13 @@ function normFreeText(s) {
   });
 
   ipcMain.handle('pet:set_paused', (_e, ms) => {
+    // `setPaused` writes `Date.now() + ms` into the settings table. A
+    // non-numeric `ms` would persist the string "NaN", and every later
+    // comparison against it is false — silently breaking the pause.
+    const dur = Math.round(Number(ms));
+    if (!Number.isFinite(dur) || dur < 0) return false;
     if (petController && typeof petController.setPaused === 'function') {
-      petController.setPaused(ms);
+      petController.setPaused(dur);
     }
     return true;
   });
@@ -1855,8 +1871,13 @@ function normFreeText(s) {
   // action-changed IPC for `ms` milliseconds, then the renderer restores
   // the underlying state automatically.
   ipcMain.handle('pet:trigger_action', (_e, action, ms) => {
+    // A NaN `ms` would make `Math.max(durationMs, ms)` NaN inside
+    // triggerOneShot, and the renderer would then be told the one-shot lasts
+    // NaN milliseconds. Coerce and bound it.
+    const dur = Math.round(Number(ms));
+    const oneShotMs = Number.isFinite(dur) && dur > 0 ? dur : 1800;
     if (petController && typeof petController.triggerOneShot === 'function') {
-      petController.triggerOneShot(action, ms);
+      petController.triggerOneShot(action, oneShotMs);
     }
     return true;
   });
@@ -2097,17 +2118,26 @@ function normFreeText(s) {
   // each tick and the window would run away from the cursor.)
   ipcMain.handle('pet:move_by', (_e, dx, dy) => {
     if (!winPet || winPet.isDestroyed()) return false;
+    // A non-numeric delta would make `nx`/`ny` NaN, and `setPosition(NaN, NaN)`
+    // throws "conversion failure" — which takes down the whole handler and
+    // leaves the pet frozen. Coerce and reject instead.
+    const ddx = Number(dx), ddy = Number(dy);
+    if (!Number.isFinite(ddx) || !Number.isFinite(ddy)) return false;
     const [x, y] = winPet.getPosition();
     const w = winPet.getBounds().width;
     const h = winPet.getBounds().height;
-    const nx = x + dx;
-    const ny = y + dy;
+    const nx = x + ddx;
+    const ny = y + ddy;
     const display = screen.getDisplayMatching({ x: nx, y: ny, width: w, height: h })
       || screen.getPrimaryDisplay();
     const wa = display.workArea;
     const cx = Math.max(wa.x, Math.min(wa.x + wa.width - w, nx));
     const cy = Math.max(wa.y, Math.min(wa.y + wa.height - h, ny));
-    winPet.setPosition(cx, cy);
+    // `setPosition` takes INTEGER coordinates and throws "conversion failure"
+    // on a fractional one. The mouse deltas the renderer reports are
+    // integers, but the accumulated position can still drift into a
+    // fraction over many small moves — round before handing it over.
+    winPet.setPosition(Math.round(cx), Math.round(cy));
     // Pause autonomous movement for ~2 s so the pet doesn't run away right
     // after the user releases the drag. The renderer also calls setPaused at
     // the start of every drag (see src/js/pet.js) — this is a safety net
@@ -2115,6 +2145,139 @@ function normFreeText(s) {
     if (petController && typeof petController.setPaused === 'function') {
       petController.setPaused(2000);
     }
+    return true;
+  });
+
+  // ---- Pet drag: main-process cursor tracking ----
+  //
+  // Why this exists, and why it can't live in the renderer:
+  //
+  // The pet window is `focusable: false` and only ~220 px across. A
+  // `mousemove` listener in the renderer only fires while the pointer is
+  // INSIDE that 220 px rectangle — the moment the user drags the pet toward
+  // a screen edge the pointer leaves the rectangle and the renderer stops
+  // receiving moves, so the drag appears to freeze. The follow-up `mouseup`
+  // is lost the same way, which left the renderer's `pressing` flag stuck
+  // true forever and made every later mouse move inside the window teleport
+  // the pet.
+  //
+  // The fix is to track the CURSOR in the main process, where
+  // `screen.getCursorScreenPoint()` reports the pointer's absolute position
+  // no matter what has focus or where the pointer is. The renderer still
+  // owns the *gesture* (it decides when a drag starts and ends, and it knows
+  // where on the sprite the user grabbed), so it sends a `pet:drag_start`
+  // carrying that grab offset; from then on the main process follows the
+  // cursor and keeps the same offset, which makes the drag work at 1:1
+  // across the whole desktop instead of just inside the window.
+  //
+  // The renderer does NOT also apply a relative delta while this is active —
+  // it would compound with the absolute position written here. It only falls
+  // back to reporting deltas itself if the takeover fails (an older main
+  // process with no `pet:drag_start` handler); see src/js/pet.js.
+  const petDrag = {
+    active: false,
+    timer: null,
+    // Offset from the pointer to the window's top-left, in screen px.
+    grabDX: 0,
+    grabDY: 0,
+  };
+
+  // How often the main process samples the cursor while a drag is active.
+  // ~60 Hz: fast enough that the pet tracks the pointer smoothly, slow
+  // enough that the polling costs nothing measurable.
+  const DRAG_POLL_MS = 16;
+
+  // Move the pet window so the cursor stays at the same offset from its
+  // top-left corner, clamped to the display's work area.
+  //
+  // The clamp mirrors `pet:move_by`'s: the window is taller than the sprite
+  // (bubble headroom above it) and wider than it (side room), so the
+  // window's box — not the sprite's — is what has to stay on screen.
+  function applyDragPosition(cursorX, cursorY) {
+    if (!winPet || winPet.isDestroyed()) return;
+    const w = winPet.getBounds().width;
+    const h = winPet.getBounds().height;
+    const nx = cursorX - petDrag.grabDX;
+    const ny = cursorY - petDrag.grabDY;
+    const display = screen.getDisplayMatching({ x: nx, y: ny, width: w, height: h })
+      || screen.getPrimaryDisplay();
+    const wa = display.workArea;
+    const cx = Math.max(wa.x, Math.min(wa.x + wa.width - w, nx));
+    const cy = Math.max(wa.y, Math.min(wa.y + wa.height - h, ny));
+    // `setPosition` takes INTEGER coordinates and throws "conversion failure"
+    // on a fractional one. The cursor is reported in whole pixels, but the
+    // grab offset is whatever the renderer measured — often fractional, and
+    // on a HiDPI display the two are in different units to begin with. So
+    // round before handing the value over.
+    //
+    // `Math.round` (not `Math.floor`) keeps the window centred on the
+    // cursor within half a pixel instead of drifting a pixel in one
+    // direction.
+    winPet.setPosition(Math.round(cx), Math.round(cy));
+  }
+
+  function stopPetDrag() {
+    if (petDrag.timer) {
+      clearInterval(petDrag.timer);
+      petDrag.timer = null;
+    }
+    if (!petDrag.active) return;
+    petDrag.active = false;
+    // Release the controller's drag mutex so the pet resumes its normal
+    // autonomous life. Without this the pet would stand still forever.
+    if (petController && typeof petController.setDragging === 'function') {
+      petController.setDragging(false);
+    }
+    // Let the pet settle for a moment before it walks off again.
+    if (petController && typeof petController.setPaused === 'function') {
+      petController.setPaused(2000);
+    }
+  }
+
+  ipcMain.handle('pet:drag_start', (_e, grabDX, grabDY) => {
+    if (!winPet || winPet.isDestroyed()) return false;
+    const [wx, wy] = winPet.getPosition();
+    // `screen.getCursorScreenPoint()` returns a Point OBJECT ({x, y}), not an
+    // array — destructuring it as one throws "object is not iterable".
+    const cursor = screen.getCursorScreenPoint();
+    const cx = cursor.x, cy = cursor.y;
+    // The renderer sends the offset between the pointer and the WINDOW's
+    // top-left, which is what `applyDragPosition` needs: it positions the
+    // window, not the sprite inside it. Fall back to a cursor-relative
+    // estimate if the value is missing or nonsensical.
+    let dx = Number(grabDX), dy = Number(grabDY);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) {
+      dx = cx - wx;
+      dy = cy - wy;
+    }
+    petDrag.grabDX = dx;
+    petDrag.grabDY = dy;
+    petDrag.active = true;
+    // Take the mutex BEFORE the first position write, so no controller tick
+    // can interleave and move the window between the grab and the first
+    // follow.
+    if (petController && typeof petController.setDragging === 'function') {
+      petController.setDragging(true);
+    }
+    if (!petDrag.timer) {
+      petDrag.timer = setInterval(() => {
+        if (!petDrag.active) return;
+        if (!winPet || winPet.isDestroyed()) {
+          stopPetDrag();
+          return;
+        }
+        const cursor = screen.getCursorScreenPoint();
+        applyDragPosition(cursor.x, cursor.y);
+      }, DRAG_POLL_MS);
+    }
+    // Place the window under the cursor right away, so the first frame of
+    // the drag is already aligned instead of snapping one poll later.
+    applyDragPosition(cx, cy);
+    return true;
+  });
+
+  ipcMain.handle('pet:drag_end', () => {
+    stopPetDrag();
     return true;
   });
 
@@ -3133,6 +3296,10 @@ function normFreeText(s) {
   shutdownFns.push(() => {
     clearInterval(idleSampler);
     petBubbles.stop();
+    // The drag poller keeps the event loop alive on its own, so it has to be
+    // torn down explicitly — otherwise the app would refuse to exit while a
+    // drag was in flight.
+    stopPetDrag();
   });
 
   // Sweep out data left behind by pets that no longer exist. Deleting a

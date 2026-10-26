@@ -638,42 +638,76 @@ function showContextBubble(payload) {
 }
 
 // ---- Drag implementation ----
+//
+// Three layers, because the naive version had a failure mode that made the
+// pet undraggable for the rest of the session:
+//
+//   1. **Pointer capture + an explicit end-of-gesture reset.** The pet window
+//      is `focusable: false` and only ~220 px across, so a `mouseup` that
+//      happens outside that rectangle never reaches the renderer. The old
+//      code left its `pressing` flag stuck true forever, and every later
+//      mouse move inside the window then computed its delta against a stale
+//      `lastX/lastY` — teleporting the pet across the screen and leaving
+//      drag permanently broken.
+//
+//   2. **Main-process cursor tracking.** Once the pointer leaves the pet's
+//      rectangle, the renderer stops receiving `mousemove` at all — the
+//      window is simply not under the cursor any more. The main process
+//      solves this by polling `screen.getCursorScreenPoint()`, which reports
+//      the pointer's absolute position regardless of what has focus. It owns
+//      the window position for the duration of the drag.
+//
+//   3. **A renderer fallback for an older main process.** If `pet:drag_start`
+//      isn't available, the renderer falls back to reporting relative deltas
+//      itself — the original behaviour. It only works while the pointer
+//      stays inside the window, but it is strictly better than a pet that
+//      cannot be dragged at all.
 const DRAG_THRESHOLD_PX = 4;
 let pressing = false;
 let didDrag = false;
 let lastX = 0, lastY = 0, downX = 0, downY = 0;
+// The pointer id that started the current gesture, so `pointermove` /
+// `pointerup` from a different pointer (a stray touch, a pen) can't hijack
+// the drag.
+let dragPointerId = null;
 
-sprite.addEventListener('mousedown', (e) => {
-  if (e.button !== 0) return;
-  pressing = true;
-  didDrag = false;
-  downX = e.screenX;
-  downY = e.screenY;
-  lastX = e.screenX;
-  lastY = e.screenY;
-  e.preventDefault();
-});
+// Who owns the window position during the current drag.
+//
+//   'none'   — no drag in progress.
+//   'pending'— the takeover has been requested but the IPC hasn't answered
+//              yet. The renderer holds still: emitting a delta now would
+//              double-apply the movement once the main process takes over.
+//   'main'   — the main process polls the cursor and writes the absolute
+//              window position. The renderer must not touch the position.
+//   'local'  — the main process could not take over (an older main process
+//              with no `pet:drag_start` handler), so the renderer reports
+//              relative deltas itself.
+//
+// The mode is an enum rather than a boolean because the decision is
+// asynchronous: the `pet:drag_start` IPC resolves a tick or two later. A
+// boolean would have let the first few moves slip into the wrong branch and
+// double-apply the movement.
+let dragOwner = 'none';
 
-window.addEventListener('mousemove', (e) => {
-  if (!pressing) return;
-  if (!didDrag) {
-    if (Math.hypot(e.screenX - downX, e.screenY - downY) < DRAG_THRESHOLD_PX) return;
-    didDrag = true;
-    sprite.classList.add('dragging');
-    try { M.pet.setPaused(2000); } catch {}
-  }
-  const dx = e.screenX - lastX;
-  const dy = e.screenY - lastY;
-  M.pet.moveBy(dx, dy);
-  lastX = e.screenX;
-  lastY = e.screenY;
-});
-
-window.addEventListener('mouseup', async () => {
+// End the gesture no matter how it ended — a normal release, a lost
+// capture, the window losing focus, or the app being backgrounded.
+//
+// This is the fix for the "permanently undraggable" symptom: any exit path
+// that skipped this left `pressing` true, and a stuck `pressing` turns every
+// subsequent mouse move inside the window into a bogus drag delta.
+function endDrag() {
   if (!pressing) return;
   pressing = false;
+  dragPointerId = null;
+  dragOwner = 'none';
   sprite.classList.remove('dragging');
-  if (didDrag) return;
+  // Tell the main process to stop following the cursor and to release the
+  // controller's drag mutex.
+  try { M.pet.dragEnd(); } catch {}
+  if (didDrag) {
+    didDrag = false;
+    return;
+  }
   // Non-drag single click is now a no-op — the main window is gated by a
   // 4-digit PIN and must be opened via right-click → "打开主窗口". We
   // still pause movement briefly for tactile feedback, and in REMINDER
@@ -681,11 +715,104 @@ window.addEventListener('mouseup', async () => {
   // to the pet until acknowledged).
   try { M.pet.setPaused(2000); } catch {}
   try {
-    const s = await M.pet.getState();
-    if (s && s.state === 'REMINDER') {
-      clearReminderBubble();
-    }
+    M.pet.getState().then((s) => {
+      if (s && s.state === 'REMINDER') clearReminderBubble();
+    }).catch(() => {});
   } catch {}
+}
+
+sprite.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  pressing = true;
+  didDrag = false;
+  // Ownership is decided when the drag threshold is crossed, not here — but
+  // it must start from a clean slate in case a previous gesture ended
+  // without going through `endDrag`.
+  dragOwner = 'none';
+  downX = e.screenX;
+  downY = e.screenY;
+  lastX = e.screenX;
+  lastY = e.screenY;
+  dragPointerId = e.pointerId;
+  // Capture the pointer so this element keeps receiving move/up events even
+  // if the pointer travels outside the window. Without this the gesture
+  // simply evaporates the moment the cursor leaves the 220 px box.
+  try { sprite.setPointerCapture(e.pointerId); } catch {}
+  e.preventDefault();
+});
+
+window.addEventListener('pointermove', (e) => {
+  if (!pressing) return;
+  if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
+  if (!didDrag) {
+    if (Math.hypot(e.screenX - downX, e.screenY - downY) < DRAG_THRESHOLD_PX) return;
+    didDrag = true;
+    sprite.classList.add('dragging');
+    try { M.pet.setPaused(2000); } catch {}
+    // Hand the drag over to the main process. The offset is between the
+    // pointer and the WINDOW's top-left, so the pet stays exactly where the
+    // user grabbed it instead of jumping its centre to the cursor.
+    //
+    // It has to be the window and not the sprite: the window is bigger than
+    // the sprite (bubble headroom above it, side room beside it), and the
+    // main process positions the *window* — `setPosition` moves the window,
+    // not the sprite inside it. Measuring against the sprite would offset
+    // the window by the headroom the moment the drag starts.
+    //
+    // Until the IPC resolves we don't know whether the main process took
+    // over, so the position is left alone for these few frames. The main
+    // process places the window under the cursor immediately on
+    // `drag_start`, so nothing is lost by not guessing here — and guessing
+    // would double-apply the movement once the takeover does land.
+    try {
+      const grabDX = e.screenX - window.screenX;
+      const grabDY = e.screenY - window.screenY;
+      dragOwner = 'pending';
+      Promise.resolve(M.pet.dragStart(grabDX, grabDY)).then(
+        () => { if (pressing && dragOwner === 'pending') dragOwner = 'main'; },
+        () => { if (pressing && dragOwner === 'pending') dragOwner = 'local'; }
+      );
+    } catch {
+      dragOwner = 'local';
+    }
+  }
+
+  // The window position is owned by the main process for the duration of
+  // the drag — it polls the cursor and writes the absolute position. The
+  // renderer must NOT also apply a relative delta on top of that: the two
+  // would compound and the pet would race away from the cursor.
+  if (dragOwner === 'local') {
+    const dx = e.screenX - lastX;
+    const dy = e.screenY - lastY;
+    if (dx !== 0 || dy !== 0) {
+      try { M.pet.moveBy(dx, dy); } catch {}
+    }
+  }
+  lastX = e.screenX;
+  lastY = e.screenY;
+});
+
+window.addEventListener('pointerup', (e) => {
+  if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
+  try { sprite.releasePointerCapture(e.pointerId); } catch {}
+  endDrag();
+});
+
+// `pointercancel` fires when the gesture is torn down by the platform (a
+// touch being hijacked, a pen leaving range). It is the pointer-events
+// equivalent of a lost `mouseup`.
+window.addEventListener('pointercancel', (e) => {
+  if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
+  endDrag();
+});
+
+// The window is `focusable: false`, so it never takes keyboard focus and
+// `blur` is not a reliable signal on its own — but `visibilitychange` (the
+// app being minimised or another window covering it) is. Both are wired up
+// so a gesture can never survive the app losing the foreground.
+window.addEventListener('blur', endDrag);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) endDrag();
 });
 
 window.addEventListener('contextmenu', (e) => {

@@ -307,6 +307,19 @@ class PetController {
       db.setSetting('pet_id', this.petId);
     }
     this._reminderOn = false;
+    // True while the user is dragging the pet by hand. See `setDragging()`.
+    //
+    // The drag mutex exists because two things were fighting over the window
+    // position: the renderer (which reports mouse deltas) and this controller
+    // (which walks the pet on its own). `_stepWalk()` calls
+    // `win.setPosition()` directly, so a tick that landed between the
+    // renderer's `mousedown` and its first `move_by` would yank the window
+    // out from under the cursor — the drag then started from the wrong place
+    // and the pet appeared to jump.
+    //
+    // While this is set, `tick()` returns before any autonomous movement, so
+    // the renderer is the only thing that may move the window.
+    this._dragging = false;
     // Bond tier 1..7, synced from main bond_engine on each scheduler tick.
     // Used to gate one-shot variants that require a higher tier.
     this.bondTier = 1;
@@ -671,6 +684,25 @@ class PetController {
     this.db.setSetting('pet_paused_until', String(Date.now() + (ms || 0)));
   }
 
+  // Drag mutex. Called by the drag handlers in main/ipc.js when a hand-drag
+  // starts and ends.
+  //
+  // `on` = true means "the renderer owns the window position now" — the
+  // controller must not walk the pet until the drag ends. `on` = false
+  // releases it and re-arms the idle loop, so the pet resumes its normal
+  // life once the user lets go.
+  //
+  // The pause is also set on the way in: the renderer used to call
+  // `setPaused(2000)` itself, but that only covered a 2 s window and only
+  // started *after* the first move delta arrived — which is exactly the gap
+  // this mutex closes.
+  setDragging(on) {
+    const next = !!on;
+    if (this._dragging === next) return;
+    this._dragging = next;
+    if (next) this.setPaused(2000);
+  }
+
   // Called by the renderer when a one-shot (or movement segment) finishes
   // playing its frame sequence — `M.pet.actionEnded()` →
   // `ipcMain.handle('pet:action_ended')` → this method. Drops the
@@ -829,6 +861,13 @@ class PetController {
     }
     if (this._reminderOn) {
       // Reminder overrides autonomous motion; just hold position.
+      return;
+    }
+    // A hand-drag owns the window position. Bail out before ANY autonomous
+    // action — including the re-roll in the `default` branch below, which
+    // would otherwise swap the animation out from under the user's cursor
+    // mid-drag.
+    if (this._dragging) {
       return;
     }
     if (this._paused()) {

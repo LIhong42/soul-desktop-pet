@@ -172,6 +172,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 
 - **Main process** (`main/`): all database / filesystem / scheduling logic lives here; the renderer can only reach it through the whitelisted IPC exposed by `preload.js`;
 - The **pet window** runs in its own process with a transparent, borderless, always-on-top window that never steals focus;
+- **Dragging is driven from the main process**: the pet window is only ~220 px across and never takes focus, so the renderer's `mousemove` only fires while the pointer is *inside* that rectangle — the moment it leaves, the drag appears to freeze, and the lost `mouseup` leaves the drag state stuck forever (the pet becomes undraggable for the rest of the session). The gesture is therefore still detected in the renderer (press, 4 px threshold, release), but the **window position is followed by the main process via `screen.getCursorScreenPoint()`**, so the drag keeps working across the whole desktop. While a drag is in progress the main process also holds the autonomous-walk state machine still, so it doesn't fight the user for the window position;
 - The **three-layer intimacy model** is described under [Core Features](#-core-features) above.
 
 ---
