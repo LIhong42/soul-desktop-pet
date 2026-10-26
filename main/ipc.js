@@ -27,6 +27,8 @@ const petBubbles = require('./pet_bubbles');
 // 文本框 catalog (resources/text_boxes) — scanned, not hard-coded.
 const petTextBoxes = require('./pet_text_boxes');
 const videoFrameSplit = require('./video_frame_split');
+// 快速记录窗口（桌宠右键菜单 → 📝 记录）。独立于 PIN 门禁的主窗口。
+const quickRecord = require('./quick_record');
 const autostart = require('./autostart');
 const imageBgRemove = require('./image_bg_remove');
 const imageBatchResize = require('./image_batch_resize');
@@ -2416,6 +2418,16 @@ function normFreeText(s) {
     return true;
   });
 
+  // ---- 快速记录窗口 ----
+  // Which record kind the quick-record window should open. The renderer
+  // pulls this on boot (rather than the main process pushing it) so the
+  // answer can't be lost to a listener-not-registered-yet race — the
+  // renderer is an ES module and its `on(...)` call runs after
+  // `did-finish-load` has already fired.
+  //
+  // See main/quick_record.js for the window itself.
+  ipcMain.handle('quick-record:get_kind', () => quickRecord.getKind());
+
   // ---- Pet right-click context menu (native Electron Menu at cursor) ----
   // Two actionable items only: open the (PIN-gated) main window, or quit.
   // The previous "设置…" entry was removed because settings should only be
@@ -2482,6 +2494,21 @@ function normFreeText(s) {
     };
     const menu = Menu.buildFromTemplate([
       { label: '🐾 SoulDesktopPet', enabled: false },
+      { type: 'separator' },
+      {
+        // 记录 — the quick-capture submenu. First actionable row, because
+        // capturing a note is the most frequent thing a user does with the
+        // pet; everything below it is a pet interaction.
+        //
+        // It opens its OWN window (main/quick_record.js) rather than the
+        // main window: the main window is PIN-gated, and this flow exists
+        // precisely so a record can be taken without unlocking it.
+        label: '📝 记录',
+        submenu: quickRecord.RECORD_KINDS.map((k) => ({
+          label: `${k.icon} ${k.label}`,
+          click: () => { quickRecord.show(k.id); },
+        })),
+      },
       { type: 'separator' },
       {
         label: '🥰 摸一下',

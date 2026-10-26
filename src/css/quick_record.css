@@ -1,0 +1,298 @@
+/* src/css/quick_record.css — the 快速记录 window.
+   A standalone stylesheet rather than a slice of styles.css: this window is
+   a separate page (src/quick_record.html) with its own CSP and its own
+   layout needs (no topbar, single column, form-first). The colour tokens
+   below are copied from styles.css so the two windows read as one app. */
+* { box-sizing: border-box; }
+:root {
+  --bg: #f8f7f3;
+  --panel: #ffffff;
+  --border: #e6e3dc;
+  --text: #2a2a2a;
+  --muted: #8a8478;
+  --accent: #d97757;
+  --accent-soft: #fbeee5;
+  --danger: #d23f3f;
+  --shadow-sm: 0 1px 2px rgba(40, 30, 20, 0.04), 0 1px 4px rgba(40, 30, 20, 0.04);
+  --shadow-md: 0 4px 8px rgba(40, 30, 20, 0.06), 0 8px 24px rgba(40, 30, 20, 0.06);
+  --radius: 10px;
+  --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  /* Category accents, mirroring styles.css. Each record kind paints its own
+     tile / header with the matching colour so the type is recognisable at a
+     glance without reading the label. */
+  --cat-like:     #5fa96f;
+  --cat-taboo:    #a89998;
+  --cat-gift:     #d8a878;
+  --cat-general:  #d97757;
+  --cat-memorial: #f4a8a0;
+  --cat-work:     #8aa8d8;
+}
+html, body {
+  margin: 0; padding: 0;
+  height: 100%;
+  font-family: var(--font-stack);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+}
+body { display: flex; }
+
+.qr {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px 12px;
+  overflow-y: auto;
+}
+
+/* ---- Header ---- */
+.qr-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+.qr-icon {
+  width: 36px; height: 36px;
+  flex: none;
+  display: grid; place-items: center;
+  font-size: 19px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  /* Per-kind tint, set by the renderer as --qr-tint. */
+  color: var(--qr-tint, var(--accent));
+  background: color-mix(in srgb, var(--qr-tint, var(--accent)) 14%, white);
+}
+.qr-head-text { min-width: 0; }
+.qr-title { font-size: 16px; font-weight: 700; }
+.qr-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* ---- Type picker ---- */
+.qr-picker {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.qr-picker.hidden { display: none; }
+.qr-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: all 120ms;
+}
+.qr-tile:hover {
+  border-color: var(--qr-tint, var(--accent));
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+.qr-tile:active { transform: translateY(0); }
+.qr-tile-emoji { font-size: 20px; flex: none; }
+.qr-tile-label { font-weight: 600; font-size: 13px; }
+.qr-tile-hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ---- Form ---- */
+.qr-form { display: flex; flex-direction: column; gap: 12px; }
+.qr-form.hidden { display: none; }
+
+.qr-field { display: flex; flex-direction: column; gap: 5px; }
+.qr-field > label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+}
+.qr-field .qr-hint { font-size: 11px; color: var(--muted); }
+
+.qr-form input[type="text"],
+.qr-form input[type="number"],
+.qr-form input[type="date"],
+.qr-form input[type="time"],
+.qr-form input[type="datetime-local"],
+.qr-form select,
+.qr-form textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.qr-form textarea { resize: vertical; min-height: 60px; }
+.qr-form input:focus,
+.qr-form select:focus,
+.qr-form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.qr-row { display: flex; gap: 10px; }
+.qr-row > * { flex: 1; min-width: 0; }
+
+/* A checkbox row (启用提醒) and a radio group (阳历 / 农历) share one
+   layout: the controls sit on a single line, left-aligned, and the label
+   text sits next to its own control rather than above the whole group. */
+.qr-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.qr-check input { width: auto; margin: 0; accent-color: var(--accent); }
+.qr-radios {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.qr-radios .qr-check { font-size: 13px; }
+/* A disabled radio (农历 while the repeat kind has no lunar anchor) is
+   dimmed rather than hidden, so the user can see the option exists. */
+.qr-check input:disabled + span { opacity: 0.45; }
+.qr-check.disabled { opacity: 0.5; cursor: default; }
+
+/* Sub-block that is shown only when its parent toggle is on (启用提醒 →
+   the repeat / date / time group). */
+.qr-sub.hidden { display: none; }
+
+/* Contact picker — a scrollable list of chips rather than a <select>, so
+   the user can see who they already have at a glance. */
+.qr-contacts {
+  max-height: 148px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.qr-contacts-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px;
+  line-height: 1.6;
+}
+.qr-chip {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 120ms;
+}
+.qr-chip:hover { border-color: var(--accent); }
+.qr-chip.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+/* Toolbar above the contact picker (全选 / 清空 + the selected count).
+   Mirrors the main window's memorial contact picker. */
+.qr-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.qr-tiny-btn {
+  padding: 3px 9px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+}
+.qr-tiny-btn:hover { border-color: var(--accent); color: var(--accent); }
+.qr-count { font-size: 11px; color: var(--muted); }
+
+/* ---- Photo picker (回忆事件) ----
+   Thumbnails of the files the user just picked, shown before the save so
+   they can confirm they grabbed the right images. */
+.qr-photo-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.qr-photo-preview:empty { display: none; }
+.qr-photo-item {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.qr-photo-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ---- Actions ---- */
+.qr-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.qr-btn {
+  flex: 1;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 120ms;
+}
+.qr-btn:hover { filter: brightness(1.05); }
+.qr-btn:active { transform: translateY(1px); }
+.qr-btn.secondary {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+}
+.qr-btn.secondary:hover { border-color: var(--accent); color: var(--accent); }
+.qr-btn:disabled { opacity: 0.55; cursor: default; filter: none; }
+
+/* ---- Message line (success / error) ---- */
+.qr-msg {
+  margin-top: 10px;
+  font-size: 12px;
+  min-height: 17px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.qr-msg.error { color: var(--danger); }
+.qr-msg.ok { color: #3f8f52; }

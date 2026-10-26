@@ -230,6 +230,14 @@ contextBridge.exposeInMainWorld('mp', {
     revealInFolder: (path) => ipcRenderer.invoke('tools:reveal_in_folder', path),
   },
 
+  // 快速记录窗口 (src/quick_record.html). The window asks which record
+  // kind to open once it has booted — a pull, not a push, so the answer
+  // can't be lost to a listener-not-registered-yet race (the renderer is
+  // an ES module, so its `on(...)` call runs after `did-finish-load`).
+  quickRecord: {
+    getKind: () => ipcRenderer.invoke('quick-record:get_kind'),
+  },
+
   // Bond / Cozy / Mood API surface for the main window. The /pets page
   // uses these to render the tier label, weekly breakdown, today flag,
   // and current mood. Renderer-side wrappers around the same `mp.pet.*`

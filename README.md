@@ -44,6 +44,17 @@
 - One-off or **cron-scheduled recurring** work reminders;
 - Shown on a separate channel from personal events — never in the way, never missed.
 
+### 📝 Quick Record (right-click → 记录)
+- **Right-click the pet → 📝 记录** opens a small dedicated window listing the six record kinds: **likes · taboos · gifts · reminder dates · memory events · work events**;
+- Pick a kind and the matching form appears right there — fill it in and **保存** writes the record immediately;
+- **The forms are field-for-field the same as the main window's** — the same labels, options, defaults and validation rules. Reminders get 启用提醒 / 重复 / **每 N 天间隔** / **阳历·农历切换** / 农历月·日 / 提醒时间; memory events get 穿着 / 活动 / **照片上传（带缩略图预览）**. A record captured from the pet is indistinguishable from one captured in the main window;
+- **Not kept in sync by hand** — both windows build their forms from one shared module (`src/js/form_fields.js`), so a new field only has to be added once, and a regression test compares the two renderings field by field;
+- **Lunar (traditional Chinese) calendar dates are supported** here too — pick 农历 and the date becomes a lunar month/day anchor, exactly as in the main window;
+- **No main window, no PIN.** The whole point is to capture something in a few seconds without unlocking anything. The window is **write-only**: it shows no lists and no browsing surface, so it can't be used to peek at the data the PIN protects;
+- Likes / taboos / gifts require a **linked contact** (the first contact is pre-selected — one click on 保存 is enough), matching the main window's own form;
+- Records are written through the **same IPC handlers** the main window uses, so validation, search indexing and intimacy tracking stay in one place;
+- After saving, the window **stays open** on the same form so several things can be logged in a row.
+
 ### 🐾 The Pet Itself
 - Translucent, borderless, always-on-top window that walks, idles, and falls asleep on its own;
 - **Single click / double click / right click** interactions: pet the head, pat the head, feed, play, sleep, hug;
@@ -155,13 +166,17 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  ├─ album_pdf.js        PDF album export
 │  ├─ album_video.js      MP4 video album export
 │  ├─ app_update.js       auto-update (GitHub Releases + SHA-256 verification)
+│  ├─ quick_record.js     the 快速记录 window (right-click → 📝 记录)
 │  └─ festivals.js        festival library
 ├─ pet/                 ← pet window preload
 ├─ src/                 ← renderer process (main window)
 │  ├─ index.html
 │  ├─ pet.html           ← pet window HTML
+│  ├─ quick_record.html  ← 快速记录 window HTML
 │  └─ js/
 │     ├─ main.js, api.js, router.js, auth.js, pet.js
+│     ├─ form_fields.js   ← shared form builders / wiring / validation (main window + 快速记录)
+│     ├─ quick_record.js  ← 快速记录 window renderer
 │     └─ pages/            router pages (today / contacts / events / export …)
 ├─ scripts/             ← utility scripts (incl. `verify-cutout.js`, the cutout regression check)
 ├─ docs/                ← documentation
@@ -176,7 +191,9 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 - **Main process** (`main/`): all database / filesystem / scheduling logic lives here; the renderer can only reach it through the whitelisted IPC exposed by `preload.js`;
 - The **pet window** runs in its own process with a transparent, borderless, always-on-top window that never steals focus;
 - **Dragging is driven from the main process**: the pet window is only ~220 px across and never takes focus, so the renderer's `mousemove` only fires while the pointer is *inside* that rectangle — the moment it leaves, the drag appears to freeze, and the lost `mouseup` leaves the drag state stuck forever (the pet becomes undraggable for the rest of the session). The gesture is therefore still detected in the renderer (press, 4 px threshold, release), but the **window position is followed by the main process via `screen.getCursorScreenPoint()`**, so the drag keeps working across the whole desktop. While a drag is in progress the main process also holds the autonomous-walk state machine still, so it doesn't fight the user for the window position;
-- The **three-layer intimacy model** is described under [Core Features](#-core-features) above.
+- The **three-layer intimacy model** is described under [Core Features](#-core-features) above;
+- The **quick-record window** is a separate 400×640 window rather than a popup inside the pet window: the pet window is only ~220 px wide and could not physically hold a form with a contact picker and date fields. It asks the main process *which* kind to open with a **pull** (`quick-record:get_kind`) rather than a push on `did-finish-load` — the renderer is an ES module, so its listener is registered after that event fires and a pushed message would be dropped;
+- **Both windows' event and memorial forms come from one module** (`src/js/form_fields.js`): the markup, the show/hide rules (启用提醒, 间隔天数, 阳历/农历) and the validation all live there, so the quick-record form is the main-window form rather than a copy of it. Adding a field means editing one file. `scripts/test-form-parity.js` compares the two windows' rendered forms field by field, so a field added to one and forgotten in the other fails the build.
 
 ---
 
@@ -201,14 +218,19 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 ### 5. Interact with the pet
 - **Single click**: triggers the "single-click action" configured for that pet (default: a gentle pet);
 - **Double click**: triggers the "double-click action" (default: head pat, unlocked at intimacy tier ≥ 5);
-- **Right click**: opens the cozy interaction menu — pet / pat head / feed / play / sleep / dance;
+- **Right click**: opens the cozy interaction menu — pet / pat head / feed / play / sleep / dance, plus **📝 记录** for a quick record;
 - Under **Settings → Character Actions** you can freely switch the character animation bound to each trigger.
 
-### 6. Switch pets / import a new pet
+### 6. Record something without unlocking anything
+- **Right-click the pet → 📝 记录** → pick a kind (likes / taboos / gifts / reminder dates / memory events / work events) → fill in the form → **保存**;
+- The window never asks for the PIN, and never shows your existing records — it only writes;
+- Liked this? Add a contact first (step 2), since likes / taboos / gifts must be attached to one.
+
+### 7. Switch pets / import a new pet
 - **Settings → Desktop Pet Appearance** → pick one from the dropdown, or upload a frame-animation archive;
 - 📘 Want to build your own? 👉 See the **[Character Creation & Replacement Guide](docs/角色制作与更换指南.md)**.
 
-### 7. Back up and migrate
+### 8. Back up and migrate
 - **Settings → Data Migration → Export Backup** produces a zip with the database, all photos, and settings;
 - **Import Backup** on another machine restores everything.
 

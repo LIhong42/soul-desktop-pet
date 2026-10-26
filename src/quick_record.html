@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Same CSP shape as the main window: `default-src 'self'` covers
+       script-src / style-src, and `style-src 'unsafe-inline'` allows the
+       inline styles the form uses. No remote resources are loaded.
+       `img-src` additionally allows `blob:` because the photo picker
+       previews the just-picked files through local object URLs. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: file: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>快速记录</title>
+  <link rel="stylesheet" href="css/quick_record.css" />
+</head>
+<body>
+  <main id="qr" class="qr">
+    <!-- Header: record-kind chip + title. The kind name is set by the
+         renderer once it has asked the main process which kind to open. -->
+    <header class="qr-head">
+      <span class="qr-icon" id="qr-icon">📝</span>
+      <div class="qr-head-text">
+        <div class="qr-title" id="qr-title">快速记录</div>
+        <div class="qr-sub" id="qr-sub">选择要记录的类型</div>
+      </div>
+    </header>
+
+    <!-- Step 1: the type picker. Shown first so the user picks what they're
+         recording; each tile then swaps the panel for the matching form. -->
+    <div id="qr-picker" class="qr-picker"></div>
+
+    <!-- Step 2: the form for the chosen kind. Filled in by the renderer. -->
+    <form id="qr-form" class="qr-form hidden" autocomplete="off"></form>
+
+    <!-- Toast + inline error area. The form reports failures here rather
+         than in a native dialog, so the window stays focused. -->
+    <div class="qr-msg" id="qr-msg"></div>
+  </main>
+  <script type="module" src="js/quick_record.js"></script>
+</body>
+</html>
