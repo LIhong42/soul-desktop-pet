@@ -588,13 +588,13 @@ async function render(args) {
   document.getElementById('add-date').onclick = () => showDateDialog(args.id);
   document.getElementById('add-event').onclick = () => navigate('/events/new?category=general&contact_id=' + args.id);
   const addMemorial = document.getElementById('add-memorial');
-  if (addMemorial) addMemorial.onclick = () => navigate('/events/new?category=memorial&contact_id=' + args.id);
+  if (addMemorial) addMemorial.onclick = () => navigate('/diary/new?contact_id=' + encodeURIComponent(args.id));
   app.querySelectorAll('.card.clickable').forEach((el) => {
     el.onclick = () => {
       if (el.dataset.important) {
         navigate('/important-dates/' + el.dataset.important);
       } else if (el.dataset.memorial) {
-        navigate('/events/' + el.dataset.memorial + '?category=memorial');
+        navigate('/diary/' + encodeURIComponent(el.dataset.memorial));
       } else if (el.dataset.id) {
         navigate('/events/' + el.dataset.id + '?category=' + (el.dataset.category || 'general'));
       }

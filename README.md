@@ -36,7 +36,11 @@
 
 ### 📷 Memory Events & Album Export
 - "Memory events" record moments on a timeline, keeping every important highlight;
+- **A diary, not a form** — "新建" opens a dedicated diary page where the title, the body and the photos all live on one sheet of paper. Write first, save second;
+- **Text and images interleave** — the body isn't one big text box but a sequence of text and image blocks. Put the caret where you want a picture and click "插入图片"; the picture lands right there and the text splits above and below it. Keep writing under the image. The saved document keeps the page order exactly;
+- **Six paper styles** — Light / Dark / Shiro / Shadow / Helena / Poonam, each with a coloured header bar and three accent dots, matching the reference artwork. They're pure CSS gradients, so no image assets are involved;
 - One event can hold multiple photos — perfect for ritual moments like *"our first trip together"*;
+- Each row on the list shows its paper colour, so you can see at a glance which sheet an entry was written on;
 - One-click export to a **PDF album** or an **MP4 video album**, with multiple templates and a live WYSIWYG preview;
 - **Annual album**: automatically gathers all memories from a given year for a year-in-review.
 
@@ -176,9 +180,13 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  └─ js/
 │     ├─ main.js, api.js, router.js, auth.js, pet.js
 │     ├─ form_fields.js   ← shared form builders / wiring / validation (main window + 快速记录)
+│     ├─ diary_themes.js  ← the six diary paper styles (single source of truth)
 │     ├─ quick_record.js  ← 快速记录 window renderer
 │     └─ pages/            router pages (today / contacts / events / export …)
+│                        └─ diary_edit.js  ← the diary editor (/diary/new, /diary/:id)
 ├─ scripts/             ← utility scripts (incl. `verify-cutout.js`, the cutout regression check)
+│  ├─ verify-diary-db.js       ← DB regression check for the diary fields (background / content)
+│  └─ test-diary-editor.js     ← UI regression check for the diary editor
 ├─ docs/                ← documentation
 │  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)
 ├─ icons/               ← application icons (icon.ico + per-size PNGs)
@@ -207,9 +215,10 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 - Go to **Contacts → New Contact**, fill in a name and relationship, pick or upload an avatar;
 - In the contact detail page you can keep adding likes, taboos, gifts, and important dates.
 
-### 3. Create a memory event and upload photos
-- **Memory Events → New** → fill in a title, date, and linked contacts;
-- In the detail page, upload photos in bulk, then export a PDF / MP4 album with one click.
+### 3. Write a diary entry
+- **Memory Events → New** → a diary page opens; write the title and pick a paper style on the right;
+- Type the body directly. To add a picture, put the caret where it should go and click "插入图片" — the picture lands there and the text splits above and below it; keep writing under the image;
+- Click **保存** → the mixed text-and-image document is stored in page order, ready for a one-click PDF / MP4 album export.
 
 ### 4. Wait for pet reminders
 - The pet shows an unread reminder count in the corner and pops up automatically when the time comes;

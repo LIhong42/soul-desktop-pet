@@ -3194,3 +3194,282 @@ body.locked #pin-modal.hidden { display: none !important; }
 .pet-stat[data-mood="proud"] .ps-mood,
 .pet-stat[data-mood="festive"] .ps-mood { color: var(--accent); }
 .pet-stat[data-mood="reminder"] .ps-mood { color: var(--cat-general); }
+
+/* ---- Diary editor (回忆事件 / 日记) ------------------------------------
+   The writing surface and the side panel of /diary/:id.
+
+   The writing surface's colors come from CSS custom properties that the
+   renderer writes inline (--diary-bg, --diary-text, …) — one write per
+   property, so switching the background style repaints the page without
+   re-rendering it. The defaults below are the 'light' style, so the page
+   is readable even before the inline variables land. */
+.diary-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .diary-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.diary-page {
+  --diary-header-bg: #c9b458;
+  --diary-bg: linear-gradient(180deg, #fdf6e3 0%, #fbf1dc 55%, #f5ead4 100%);
+  --diary-text: #3a3222;
+  --diary-muted: #9a8f74;
+  --diary-rule: #e2d5b8;
+  background: var(--diary-bg);
+  color: var(--diary-text);
+  border: 1px solid var(--diary-rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+/* The colored strip across the top of the page. */
+.diary-page-header {
+  background: var(--diary-header-bg);
+  color: #fff;
+  text-align: center;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  padding: 10px 0;
+}
+
+.diary-page-body { padding: 26px 30px 30px; }
+
+/* The title is part of the diary page, not a form box. The global
+   `input[type="text"]` rule is more specific than a bare class, so these
+   selectors are scoped to .diary-page to win over it. */
+.diary-page .diary-title {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--diary-rule);
+  border-radius: 0;
+  background: transparent;
+  font-size: 26px;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--diary-text);
+  padding: 0 0 8px;
+}
+.diary-page .diary-title::placeholder { color: var(--diary-muted); opacity: 0.7; }
+.diary-page .diary-title:focus {
+  outline: none;
+  border-bottom-color: var(--diary-muted);
+  box-shadow: none;
+}
+
+.diary-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 2px;
+}
+.diary-meta-row input[type="datetime-local"] {
+  border: none;
+  border-bottom: 1px dashed var(--diary-rule);
+  border-radius: 0;
+  padding: 2px 2px 4px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--diary-muted);
+  background: transparent;
+}
+.diary-meta-row input[type="datetime-local"]:focus {
+  outline: none;
+  border-bottom-color: var(--diary-muted);
+  color: var(--diary-text);
+}
+.diary-date-hint { color: var(--diary-muted); font-size: 12px; }
+
+/* ---- The mixed document ------------------------------------------------ */
+/*
+   The body is a list of blocks rather than one textarea: text blocks and
+   image blocks interleave, so the page reads top-to-bottom exactly as it
+   will be saved. The text blocks are textareas (real editing surface, IME
+   friendly); the image blocks are a figure with the photo.
+*/
+.diary-blocks {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+}
+.diary-block { position: relative; }
+.diary-block-bar {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.diary-block:hover .diary-block-bar,
+.diary-block:focus-within .diary-block-bar { opacity: 1; }
+.diary-block-bar .btn-tiny {
+  background: var(--diary-bg);
+  color: var(--diary-muted);
+  border-color: var(--diary-rule);
+}
+.diary-block-bar .btn-tiny:hover {
+  color: var(--diary-text);
+  border-color: var(--diary-muted);
+}
+
+/* A text block. It auto-grows with its content so the page has no inner
+   scrollbar — the writing surface scrolls as one document. */
+.diary-block-text {
+  width: 100%;
+  border: none;
+  background: transparent;
+  resize: none;
+  overflow: hidden;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--diary-text);
+  padding: 6px 0;
+  min-height: 1.75em;
+}
+.diary-block-text::placeholder { color: var(--diary-muted); opacity: 0.7; }
+.diary-block-text:focus { outline: none; }
+
+/* An image block. The photo keeps its own aspect ratio (no cropping) so a
+   portrait shot and a landscape shot both look right on the page. */
+.diary-block-image {
+  position: relative;
+  margin: 6px 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--diary-rule);
+  background: rgba(0, 0, 0, 0.04);
+  /* Size the figure to the image inside it, so the border hugs the photo
+     rather than the full column width. */
+  width: fit-content;
+  max-width: 100%;
+}
+.diary-block-image img {
+  display: block;
+  /* Keep the photo's own size. A small picture stays small; a big one is
+     capped so it can't push the rest of the page off screen. */
+  max-width: 100%;
+  max-height: 420px;
+  width: auto;
+  height: auto;
+  cursor: zoom-in;
+}
+.diary-block-image .photo-x {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 22px;
+  padding: 0;
+}
+.diary-block-image .photo-x:hover { background: var(--danger); }
+.diary-block-image-bar {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.diary-block:hover .diary-block-image-bar,
+.diary-block:focus-within .diary-block-image-bar { opacity: 1; }
+.diary-block-image-bar .btn-tiny {
+  background: var(--diary-bg);
+  color: var(--diary-muted);
+  border-color: var(--diary-rule);
+}
+.diary-block-image-bar .btn-tiny:hover {
+  color: var(--diary-text);
+  border-color: var(--diary-muted);
+}
+
+.diary-block-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.diary-block-add input[type="file"] { display: none; }
+.diary-block-add .meta { color: var(--diary-muted); }
+
+/* ---- Side panel -------------------------------------------------------- */
+.diary-side { display: flex; flex-direction: column; gap: 12px; }
+.diary-side-card h2 { margin: 0 0 10px; font-size: 14px; }
+.diary-side-card .contact-picker { max-height: 220px; overflow-y: auto; }
+
+/* The six background style tiles. Each tile previews the style: the
+   header bar, the page background and the three accent dots. */
+.diary-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.diary-theme-tile {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: none;
+  text-align: left;
+  font-family: inherit;
+}
+.diary-theme-tile:hover { border-color: var(--accent-soft); }
+.diary-theme-tile.selected { border-color: var(--accent); }
+.diary-theme-bar {
+  display: block;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  padding: 3px 0;
+}
+.diary-theme-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 7px;
+}
+.diary-theme-dots { display: inline-flex; gap: 3px; }
+.diary-theme-dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  display: block;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+.diary-theme-name { font-size: 11px; font-weight: 600; }
+.diary-theme-check {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+}
+.diary-theme-tile.selected .diary-theme-check { opacity: 1; }
+
+/* The background-style swatch on a 回忆事件 list row: a small bar in the
+   color of the diary page's header, so the list reads like a shelf of
+   diary pages. */
+.mr-bg-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 6px;
+  border-radius: 999px;
+  vertical-align: middle;
+  flex: none;
+}

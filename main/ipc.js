@@ -864,6 +864,38 @@ function normFreeText(s) {
   return (typeof s === 'string' && s.trim()) ? s.trim() : null;
 }
 
+// Validate the diary's mixed text/image document.
+//
+// The renderer sends an array of blocks, each either:
+//   { type: 'text',  text: '…' }
+//   { type: 'image', photo_id: '…' }
+//
+// We re-serialize it ourselves rather than storing the renderer's JSON
+// verbatim: that keeps the stored shape canonical (so two clients writing
+// the same document produce the same bytes), drops empty text blocks, and
+// guarantees the JSON never contains anything but strings.
+//
+// Returns the JSON string, or null when there is no document. Throws when
+// the payload is not an array — a malformed document is a programming
+// error, not something to silently drop.
+function normDiaryContent(input) {
+  if (input === null || input === undefined) return null;
+  if (!Array.isArray(input)) throw new Error('日记内容格式错误');
+  const blocks = [];
+  for (const b of input) {
+    if (!b || typeof b !== 'object') continue;
+    if (b.type === 'text') {
+      const text = typeof b.text === 'string' ? b.text : '';
+      if (text.length) blocks.push({ type: 'text', text });
+    } else if (b.type === 'image') {
+      const photoId = typeof b.photo_id === 'string' ? b.photo_id.trim() : '';
+      if (photoId.length) blocks.push({ type: 'image', photo_id: photoId });
+    }
+  }
+  if (!blocks.length) return null;
+  return JSON.stringify(blocks);
+}
+
 // Accept both YYYY-MM-DD and YYYY-MM-DD HH:MM[:SS] from the renderer
   // (datetime-local produces the former shape, the form fills the seconds
   // before posting). Anything else throws so the user sees a clear error
@@ -902,17 +934,24 @@ function normFreeText(s) {
     const activities = normFreeText(input && input.activities);
     const notes      = normFreeText(input && input.notes);
     const occurredAt = normalizeOccurredAt(input && input.occurred_at);
+    // The diary background style id (one of the six presets) and the
+    // mixed text/image document. Both are optional; an absent key means
+    // "leave it unset" rather than "clear it".
+    const background = (input && typeof input.background === 'string' && input.background)
+      ? input.background : null;
+    const content = normDiaryContent(input && input.content);
     const contactIds = Array.isArray(input && input.contact_ids)
       ? Array.from(new Set(input.contact_ids.filter((x) => typeof x === 'string' && x.length)))
       : [];
     db.run(
       `INSERT INTO memorial_events(id, kind, title,
                                    place, food, outfit, activities, notes,
-                                   occurred_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                   occurred_at, background, content,
+                                   created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, kind, title,
        place, food, outfit, activities, notes,
-       occurredAt, now, now]
+       occurredAt, background, content, now, now]
     );
     setMemorialEventContacts(id, contactIds);
     db.upsertSearch('memorial_event', id,
@@ -944,6 +983,16 @@ function normFreeText(s) {
     const notes      = (input && Object.prototype.hasOwnProperty.call(input, 'notes'))
       ? normFreeText(input.notes) : cur.notes;
     const occurredAt = normalizeOccurredAt(input && input.occurred_at, cur.occurred_at);
+    // Background + content: an absent key keeps the existing value; an
+    // explicit null clears it. The background is a free-form preset id
+    // (the renderer falls back to the default for unknown ids), the
+    // content is the mixed text/image document.
+    const background = (input && Object.prototype.hasOwnProperty.call(input, 'background'))
+      ? (typeof input.background === 'string' && input.background ? input.background : null)
+      : cur.background;
+    const content = (input && Object.prototype.hasOwnProperty.call(input, 'content'))
+      ? normDiaryContent(input.content)
+      : cur.content;
     const contactIds = Array.isArray(input && input.contact_ids)
       ? Array.from(new Set(input.contact_ids.filter((x) => typeof x === 'string' && x.length)))
       : db.all('SELECT contact_id FROM memorial_event_contacts WHERE memorial_event_id = ?', [id])
@@ -952,11 +1001,11 @@ function normFreeText(s) {
       `UPDATE memorial_events
           SET kind=?, title=?,
               place=?, food=?, outfit=?, activities=?, notes=?,
-              occurred_at=?, updated_at=?
+              occurred_at=?, background=?, content=?, updated_at=?
         WHERE id=?`,
       [kind, title,
        place, food, outfit, activities, notes,
-       occurredAt, now, id]
+       occurredAt, background, content, now, id]
     );
     setMemorialEventContacts(id, contactIds);
     db.upsertSearch('memorial_event', id,

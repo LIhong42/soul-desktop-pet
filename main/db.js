@@ -130,11 +130,21 @@ CREATE TABLE IF NOT EXISTS memorial_events (
   activities  TEXT,
   notes       TEXT,
   occurred_at TEXT NOT NULL,
+  -- The diary background style (see src/js/diary_themes.js). One of the
+  -- six preset ids, or NULL for the default. Stored as a plain TEXT so a
+  -- future preset can be added without another table rebuild.
+  background  TEXT,
+  -- The diary body as an ordered document: a JSON array of blocks, where
+  -- each block is {"type":"text","text":"…"} or {"type":"image","photo_id":"…"}.
+  -- This is what makes text and images interleave in the editor. NULL means
+  -- "no document yet" — the renderer falls back to the plain notes text.
+  content     TEXT,
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memorial_events_occurred_at ON memorial_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_memorial_events_kind        ON memorial_events(kind);
+
 
 CREATE TABLE IF NOT EXISTS memorial_event_contacts (
   memorial_event_id TEXT NOT NULL REFERENCES memorial_events(id) ON DELETE CASCADE,
@@ -264,6 +274,7 @@ async function open(dbPathArg) {
   migrateReminderGranularityV1();
   migrateMemorialEventsV1();
   migrateMemorialEventsV2();
+  migrateMemorialEventsV3();
   seedDefaultFestivals();
   migratePinV1();
   migrateBondV1();
@@ -1175,6 +1186,88 @@ function migrateMemorialEventsV2() {
   }
 }
 
+// ---- memorial events v3 migration ----
+// Adds the column the diary editor writes:
+//   background — the chosen diary background style (one of the six preset
+//     ids in src/js/diary_themes.js, or NULL for the default)
+//
+// It also adds the `content` column that holds the mixed text/image
+// document, and drops the `tag_kind` column that an earlier iteration of
+// the diary editor used for its (now removed) save-time tag dialog.
+//
+// The column is nullable and defaults to NULL, so existing rows keep
+// rendering exactly as they did before the diary editor landed. This uses
+// the plain ALTER TABLE ADD COLUMN shape (like migrateEventsTagKindV1)
+// rather than the table-rebuild shape — adding columns doesn't invalidate
+// the existing rows, so there's nothing to copy.
+//
+// Dropping a column needs the table-rebuild shape (SQLite before 3.35 has
+// no DROP COLUMN), so that part rebuilds memorial_events and copies the
+// rows across. The rebuild is skipped when the column isn't there.
+//
+// Guard key `memorial_events_v3_applied` so the probe runs exactly once
+// per DB.
+const MEMORIAL_EVENTS_V3_KEY = 'memorial_events_v3_applied';
+
+function migrateMemorialEventsV3() {
+  if (!db) return;
+  if (getSetting(MEMORIAL_EVENTS_V3_KEY) === '1') return;
+
+  const cols = db.prepare('PRAGMA table_info(memorial_events)');
+  const names = new Set();
+  while (cols.step()) names.add(cols.get()[1]);
+  cols.free();
+
+  try {
+    if (!names.has('background')) {
+      db.run('ALTER TABLE memorial_events ADD COLUMN background TEXT');
+    }
+    if (!names.has('content')) {
+      db.run('ALTER TABLE memorial_events ADD COLUMN content TEXT');
+    }
+    // Drop the retired tag column. SQLite's ALTER TABLE ... DROP COLUMN
+    // only exists from 3.35 and can't run inside a transaction, so we use
+    // the table-rebuild shape instead: create the new table, copy the
+    // surviving columns across, swap the names.
+    if (names.has('tag_kind')) {
+      db.run('PRAGMA foreign_keys = OFF');
+      try {
+        db.run(`CREATE TABLE memorial_events_new (
+          id          TEXT PRIMARY KEY,
+          kind        TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('first_time','other')),
+          title       TEXT NOT NULL,
+          place       TEXT,
+          food        TEXT,
+          outfit      TEXT,
+          activities  TEXT,
+          notes       TEXT,
+          occurred_at TEXT NOT NULL,
+          background  TEXT,
+          content     TEXT,
+          created_at  TEXT NOT NULL,
+          updated_at  TEXT NOT NULL
+        )`);
+        db.run(`INSERT INTO memorial_events_new
+                  (id, kind, title, place, food, outfit, activities, notes,
+                   occurred_at, background, content, created_at, updated_at)
+                SELECT id, kind, title, place, food, outfit, activities, notes,
+                       occurred_at, background, content, created_at, updated_at
+                  FROM memorial_events`);
+        db.run('DROP TABLE memorial_events');
+        db.run('ALTER TABLE memorial_events_new RENAME TO memorial_events');
+        db.run('CREATE INDEX IF NOT EXISTS idx_memorial_events_occurred_at ON memorial_events(occurred_at)');
+        db.run('CREATE INDEX IF NOT EXISTS idx_memorial_events_kind        ON memorial_events(kind)');
+      } finally {
+        try { db.run('PRAGMA foreign_keys = ON'); } catch {}
+      }
+    }
+    setSetting(MEMORIAL_EVENTS_V3_KEY, '1');
+    markDirty();
+  } catch (e) {
+    console.error('memorial_events v3 migration failed:', e);
+  }
+}
+
 // ---- memorial event queries ----
 // Each returned row is decorated with:
 //   - contact_ids[]: ordered list of associated contact ids
@@ -1314,6 +1407,7 @@ function listMemorialEventsForExport(opts = {}) {
   const rows = all(
     `SELECT me.id, me.kind, me.title, me.place, me.food, me.outfit,
             me.activities, me.notes, me.occurred_at,
+            me.background, me.content,
             COALESCE(
               (SELECT JSON_GROUP_ARRAY(mc.contact_id)
                  FROM memorial_event_contacts mc

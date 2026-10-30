@@ -2,13 +2,17 @@
 //
 // Reads from `memorial_events` (independent of the reminder events table).
 // Each row carries its own kind ('first_time' / 'other'), occurrence time,
-// multi-contact list, and an optional thumbnail of the first uploaded photo.
+// multi-contact list, the diary background style it was written on, and an
+// optional thumbnail of the first uploaded photo.
+//
+// Clicking a row opens the diary editor (src/js/pages/diary_edit.js).
 import { api, escapeHtml, categoryIcon, memorialPhotoUrl, fetchPhotoDataUrl } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
   wireBulkEnter, wireBulkToolbar, wireBulkRowChecks,
 } from '../bulk_delete.js';
+import { getDiaryTheme } from '../diary_themes.js';
 
 // selectMode is per-page state so toggling bulk-delete mode doesn't lose
 // the user's checkbox selections on re-render. `q` mirrors the current
@@ -21,7 +25,9 @@ const pageState = {
   basePath: '/events/memorial',
 };
 
-async function render(args, params) {
+// Exported so the test harness (scripts/test-diary-editor.js) can drive
+// the list directly, the way the router does.
+export async function render(args, params) {
   const app = document.getElementById('app');
   app.innerHTML = `<div class="empty">载入中…</div>`;
 
@@ -37,7 +43,12 @@ async function render(args, params) {
   }
   pageState.allEvents = events;
   pageState.q = ((params && params.q) || '').trim().toLowerCase();
-  pageState.basePath = '/events/memorial' + (params.contact_id ? '?contact_id=' + encodeURIComponent(params.contact_id) : '');
+  // The URL is the single source of truth for the filter state, so it
+  // carries the contact filter alongside the search query.
+  const baseParams = new URLSearchParams();
+  if (params.contact_id) baseParams.set('contact_id', params.contact_id);
+  const baseQs = baseParams.toString();
+  pageState.basePath = '/events/memorial' + (baseQs ? '?' + baseQs : '');
 
   // Same static-shell-plus-replaceable-subtree pattern as the work page
   // and the gift page: the search input lives OUTSIDE the rewritten list,
@@ -73,7 +84,7 @@ async function render(args, params) {
   // 静态头部按钮一次性绑定；行级 click handler 由 rerenderList() 在每次
   // 列表重绘时重新绑定，避免初次 mount 后又被覆盖。
   document.getElementById('new-event').onclick = () =>
-    navigate('/events/new?category=memorial' + (params.contact_id ? '&contact_id=' + params.contact_id : ''));
+    navigate('/diary/new' + (params.contact_id ? '?contact_id=' + encodeURIComponent(params.contact_id) : ''));
   const exportBtn = document.getElementById('open-export');
   if (exportBtn) exportBtn.onclick = () => navigate('/export');
 
@@ -118,7 +129,7 @@ function rerenderList() {
 
   if (!pageState.selectMode.active) {
     host.querySelectorAll('.card.clickable').forEach((el) => {
-      el.onclick = () => navigate('/events/' + el.dataset.id + '?category=memorial');
+      el.onclick = () => navigate('/diary/' + encodeURIComponent(el.dataset.id));
     });
   }
   if (pageState.selectMode.active) {
@@ -203,9 +214,12 @@ function wireBulk() {
   const handlers = {
     onDelete: async (ids) => {
       const result = await api.memorialEvents.deleteMany(ids);
-      // 删除后重新拉取数据；保留输入框的当前值。
-      const params = { q: pageState.q, contact_id: pageState.basePath.includes('contact_id=') ? new URLSearchParams(pageState.basePath.split('?')[1]).get('contact_id') : undefined };
-      await reloadAndRender(params);
+      // 删除后重新拉取数据；保留输入框的当前值和筛选条件。
+      const base = new URLSearchParams(pageState.basePath.split('?')[1] || '');
+      await reloadAndRender({
+        q: pageState.q,
+        contact_id: base.get('contact_id') || undefined,
+      });
       return result;
     },
     onExit: () => {
@@ -217,8 +231,9 @@ function wireBulk() {
       const header = document.getElementById('page-header');
       if (pageState.allEvents.length === 0) return;
       if (header) {
-        const contactQp = pageState.basePath.includes('contact_id=')
-          ? '&contact_id=' + new URLSearchParams(pageState.basePath.split('?')[1]).get('contact_id')
+        const base = new URLSearchParams(pageState.basePath.split('?')[1] || '');
+        const contactQp = base.get('contact_id')
+          ? '?contact_id=' + encodeURIComponent(base.get('contact_id'))
           : '';
         const newHeader = document.createElement('div');
         newHeader.id = 'page-header';
@@ -232,7 +247,7 @@ function wireBulk() {
         `;
         header.replaceWith(newHeader);
         document.getElementById('new-event').onclick = () =>
-          navigate('/events/new?category=memorial' + contactQp);
+          navigate('/diary/new' + contactQp);
         const eb = document.getElementById('open-export');
         if (eb) eb.onclick = () => navigate('/export');
         wireBulkEnter(newHeader, () => {
@@ -275,7 +290,6 @@ function wireBulk() {
 }
 
 async function reloadAndRender(params = {}) {
-  const app = document.getElementById('app');
   const opts = {};
   if (params.contact_id) opts.contact_id = params.contact_id;
   const events = await api.memorialEvents.list(opts);
@@ -285,7 +299,10 @@ async function reloadAndRender(params = {}) {
   }
   pageState.allEvents = events;
   pageState.q = ((params && params.q) || '').trim().toLowerCase();
-  render([], { contact_id: params.contact_id, q: pageState.q });
+  render([], {
+    contact_id: params.contact_id,
+    q: pageState.q,
+  });
 }
 
 function kindTagLabel(kind) {
@@ -350,6 +367,9 @@ function rowInner(e) {
 function memorialRowInner(e) {
   const names = (e.contact_names || []).filter(Boolean);
   const contactText = contactSummary(e);
+  // A small swatch of the background style the entry was written on, so
+  // the list reads at a glance like a shelf of diary pages.
+  const theme = getDiaryTheme(e.background);
   return `
     <div class="mr-title">
       <span class="cat-icon" data-tone="memorial">${escapeHtml(categoryIcon('memorial', null))}</span>
@@ -359,6 +379,7 @@ function memorialRowInner(e) {
     <div class="mr-mid">
       <span class="contact-text">${escapeHtml(contactText)}</span>
       <span class="contact-time"><span class="chip-dot"></span>${escapeHtml(formatDateOnly(e.occurred_at))}</span>
+      <span class="mr-bg-swatch" title="${escapeHtml(theme.name)}" style="background:${escapeHtml(theme.headerBg)}"></span>
     </div>
     <div class="mr-thumbs">
       ${thumbsHtml(e)}

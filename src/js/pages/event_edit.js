@@ -7,16 +7,16 @@
 //      历 or 农历 / 日期 / 时间. They continue to be persisted via the
 //      `events` table and the `api.events.*` namespace.
 //
-//   2. Memorial events (category 'memorial'). These use the new memorial
-//      flow: 类型 (第一次/其他) / 标题 / 描述 / 事件发生时间 / 多联系人 /
-//      照片上传. They are persisted via `memorial_events` and
-//      `memorial_event_photos` tables and the `api.memorialEvents.*`
-//      namespace.
+//   2. Memorial events (category 'memorial'). These live in the
+//      `memorial_events` table and are edited by the diary editor
+//      (src/js/pages/diary_edit.js) — a full page where the user writes
+//      free-form text, adds photos and picks one of six background
+//      styles, then tags the entry on save. Memorial routes therefore
+//      redirect out of this file.
 //
 // The branch is decided at the top of `renderEdit` based on the URL's
-// ?category=… param. Keeping both flows in one file avoids duplicating the
-// route table and the constants shared by all three categories.
-import { api, escapeHtml, displayName, fmtDateTime, toast, memorialPhotoUrl, fetchPhotoDataUrl, invalidatePhotoDataUrl, todayYmd, nowDatetimeLocal, wireDateInputs } from '../api.js';
+// ?category=… param.
+import { api, toast, todayYmd, wireDateInputs } from '../api.js';
 import { register, navigate, getReferrerPath } from '../router.js';
 import {
   MAIN_THEME,
@@ -24,8 +24,6 @@ import {
   wireEventForm,
   validateEventForm,
   eventPayload,
-  buildMemorialForm,
-  readMemorialForm,
 } from '../form_fields.js';
 
 const CATEGORIES = ['general', 'memorial', 'work'];
@@ -41,12 +39,15 @@ function categoryTitle(c) { return CATEGORY_TITLE[c] || '提醒日期'; }
 function categoryListRoute(c) { return CATEGORY_LIST_ROUTE[c] || '/reminders'; }
 
 async function renderEdit(args, params) {
-  // Memorial events use a different form, table, and API namespace.
-  // Dispatch into the dedicated handler. The general/work branches below
-  // are byte-for-byte the legacy reminder form.
+  // Memorial events live in their own table and use their own editor.
+  // The diary editor (src/js/pages/diary_edit.js) replaced the old
+  // one-field-per-slot form, so memorial links point there instead of
+  // rendering a form on this page.
   const category = resolveCategory(params);
   if (category === 'memorial') {
-    return renderMemorialEdit(args, params);
+    const q = params.contact_id ? '?contact_id=' + encodeURIComponent(params.contact_id) : '';
+    navigate(args.id ? '/diary/' + encodeURIComponent(args.id) + q : '/diary/new' + q);
+    return;
   }
 
   const app = document.getElementById('app');
@@ -163,356 +164,12 @@ async function renderEdit(args, params) {
   }
 }
 
-// ---- Memorial event form ----
-// Layout: 类型 (第一次 / 其他) → 标题 → 描述 → 事件发生时间 → 关联联系人 (多选 +
-// 可空) → 照片上传 (多张, 可空). No reminder controls.
+// ---- Memorial events ----
 //
-// Save order: create the row first (so we have an id to attach photos to),
-// then upload each picked file. On edit we replace the contact set in one
-// shot — the server diffs against the existing rows so we don't need to
-// tombstone the old ones client-side.
-async function renderMemorialEdit(args, params) {
-  const app = document.getElementById('app');
-  const isNew = !args.id;
-  // Honor the page the user came from for the "back" link & post-save
-  // navigation. Fall back to the memorial list when there is no referrer
-  // (deep link, cold start, etc.).
-  const returnTo = getReferrerPath() || categoryListRoute('memorial');
-  const listHref = '#' + returnTo;
-  const preselectedContactId = params.contact_id || '';
-
-  let ev = {
-    kind: 'other',
-    title: '',
-    // Five free-text fields the user fills out independently. All default to
-    // empty strings so the template can render textareas unconditionally;
-    // the save handler turns empty strings into null.
-    place: '',
-    food: '',
-    outfit: '',
-    activities: '',
-    notes: '',
-    occurred_at: '',
-    contact_ids: [],
-    photos: [],
-  };
-  let existingPhotos = [];
-  if (!isNew) {
-    ev = await api.memorialEvents.get(args.id);
-    existingPhotos = ev.photos || [];
-  }
-  const contacts = await api.contacts.list();
-
-  const occurredLocal = ev.occurred_at
-    ? (ev.occurred_at.length >= 16 ? ev.occurred_at.slice(0, 16) : ev.occurred_at)
-    : nowDatetimeLocal();
-
-  // The contact picker and the photo block differ mechanically between the
-  // main window and the 快速记录 window (this one also edits an existing
-  // row and lists its already-uploaded photos), so they are supplied as
-  // markup. Everything else comes from the shared builder.
-  const contactPickerMarkup = `
-    <div class="contact-picker-toolbar">
-      <button type="button" class="btn secondary btn-tiny" id="e-contacts-all">全选</button>
-      <button type="button" class="btn secondary btn-tiny" id="e-contacts-none">清空</button>
-      <span class="meta" id="e-contacts-count"></span>
-    </div>
-    <div class="contact-picker" id="e-contact-picker">
-      ${contacts.length === 0
-        ? `<div class="empty">还没有联系人可选择</div>`
-        : contacts.map((c) => `
-          <div class="contact-pick" data-id="${escapeHtml(c.id)}">
-            <span class="contact-pick-check" aria-hidden="true">✓</span>
-            <span class="contact-pick-name">${escapeHtml(displayName(c))}</span>
-            ${c.relationship ? `<span class="contact-pick-meta">${escapeHtml(c.relationship)}</span>` : ''}
-          </div>
-        `).join('')}
-    </div>
-  `;
-
-  const memorialForm = buildMemorialForm({
-    theme: MAIN_THEME,
-    id: 'e',
-    ev,
-    contactPickerHtml: contactPickerMarkup,
-    photoPickerHtml: '<div class="photo-preview" id="e-photo-preview"></div>',
-    showPhotoExisting: !isNew,
-    photoExistingHtml: '<div class="photo-existing" id="e-photo-existing"></div>',
-  });
-
-  app.innerHTML = `
-    <div class="row between">
-      <h1>${isNew ? '新建回忆事件' : '编辑回忆事件'}</h1>
-      <a class="inline-link" href="${listHref}">← 返回列表</a>
-    </div>
-    <div class="card">
-      ${memorialForm.html}
-      <div class="row" style="margin-top:14px; gap:8px;">
-        <button class="btn" id="save">${isNew ? '创建' : '保存'}</button>
-        ${!isNew ? '<button class="btn danger" id="del">删除</button>' : ''}
-      </div>
-    </div>
-  `;
-
-  // ---- Multi-contact picker wiring ----
-  // State of truth is `selectedIds` (a Set<id>). Each card toggles in/out on
-  // click; the toolbar (全选 / 清空) and the initial pre-population all funnel
-  // through the same toggleSelected() entry to avoid the previous chip-row bugs
-  // (event handlers leaking, ctrl-click confusion on native <select multiple>).
-  const selectedIds = new Set();
-  const pickerEl = document.getElementById('e-contact-picker');
-  const countEl = document.getElementById('e-contacts-count');
-
-  function refreshPickerUi() {
-    if (!pickerEl) return;
-    pickerEl.querySelectorAll('.contact-pick').forEach((el) => {
-      el.classList.toggle('selected', selectedIds.has(el.dataset.id));
-    });
-    if (countEl) {
-      countEl.textContent = selectedIds.size === 0
-        ? '未选'
-        : `已选 ${selectedIds.size} 人`;
-    }
-  }
-  function toggleSelected(id) {
-    if (!id) return;
-    if (selectedIds.has(id)) selectedIds.delete(id);
-    else selectedIds.add(id);
-    refreshPickerUi();
-  }
-  if (pickerEl) {
-    pickerEl.querySelectorAll('.contact-pick').forEach((el) => {
-      el.addEventListener('click', () => toggleSelected(el.dataset.id));
-    });
-  }
-  const allBtn = document.getElementById('e-contacts-all');
-  const noneBtn = document.getElementById('e-contacts-none');
-  if (allBtn) allBtn.onclick = () => {
-    pickerEl.querySelectorAll('.contact-pick').forEach((el) => selectedIds.add(el.dataset.id));
-    refreshPickerUi();
-  };
-  if (noneBtn) noneBtn.onclick = () => {
-    selectedIds.clear();
-    refreshPickerUi();
-  };
-
-  // Pre-select the contact passed via ?contact_id=… (used when the user
-  // starts from a contact-detail page), then pre-populate from the existing
-  // event on edit.
-  if (preselectedContactId) selectedIds.add(preselectedContactId);
-  if (!isNew && Array.isArray(ev.contact_ids)) {
-    for (const cid of ev.contact_ids) selectedIds.add(cid);
-  }
-  refreshPickerUi();
-
-  // ---- Photo picker (local previews only; final URLs come from the server) ----
-  // The file input sits above the .photo-preview container — we look up the
-  // file input directly by id (no parentElement gymnastics) and store all
-  // createdObjectURL'd URLs in pendingObjectUrls so we can revoke them on
-  // submit/delete to avoid leaking between renders.
-  const photoPreviewEl = document.getElementById('e-photo-preview');
-  const photoFileInput = document.getElementById('e-photos');
-  let pendingObjectUrls = [];
-  function rerenderPhotoPreview() {
-    photoPreviewEl.innerHTML = '';
-    // Drop previously-allocated object URLs before adding fresh ones. Each
-    // change event replaces the FileList wholesale, so the old URLs are no
-    // longer referenced by any <img> in the DOM.
-    for (const u of pendingObjectUrls) URL.revokeObjectURL(u);
-    pendingObjectUrls = [];
-    const files = Array.from(photoFileInput.files || []);
-    for (const f of files) {
-      const url = URL.createObjectURL(f);
-      pendingObjectUrls.push(url);
-      const div = document.createElement('div');
-      div.className = 'photo-item';
-      div.style.cssText = 'position:relative;width:96px;height:96px;';
-      div.innerHTML = `<img src="${escapeHtml(url)}" alt="${escapeHtml(f.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:6px;border:1px solid var(--border);"/>`;
-      photoPreviewEl.appendChild(div);
-    }
-  }
-  photoFileInput.addEventListener('change', rerenderPhotoPreview);
-
-  // ---- Existing photos (edit mode) ----
-  // Two interactions per photo:
-  //   1. Click the image → opens a lightbox modal with the full-size image.
-  //   2. Click the small ✕ corner → asks for confirm, then deletes via IPC.
-  // The lightbox is a single shared element so opening another photo just
-  // swaps its <img src=…>; we don't re-create the modal markup every time.
-  function openLightbox(url, altName) {
-    let lb = document.getElementById('photo-lightbox');
-    if (!lb) {
-      lb = document.createElement('div');
-      lb.id = 'photo-lightbox';
-      lb.className = 'photo-lightbox';
-      lb.innerHTML = `
-        <div class="photo-lightbox-card">
-          <button type="button" class="photo-lightbox-x" title="关闭">✕</button>
-          <img id="photo-lightbox-img" alt=""/>
-          <div class="photo-lightbox-caption" id="photo-lightbox-caption"></div>
-        </div>
-      `;
-      document.body.appendChild(lb);
-      const close = () => { lb.classList.remove('open'); };
-      lb.querySelector('.photo-lightbox-x').onclick = close;
-      lb.addEventListener('click', (e) => { if (e.target === lb) close(); });
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && lb.classList.contains('open')) close();
-      });
-    }
-    lb.querySelector('#photo-lightbox-img').src = url;
-    lb.querySelector('#photo-lightbox-img').alt = altName || '';
-    lb.querySelector('#photo-lightbox-caption').textContent = altName || '';
-    lb.classList.add('open');
-  }
-
-  if (!isNew) {
-    const existingEl = document.getElementById('e-photo-existing');
-    function rerenderExisting() {
-      if (existingPhotos.length === 0) {
-        existingEl.innerHTML = '<div class="meta">暂无照片</div>';
-        return;
-      }
-      existingEl.innerHTML = existingPhotos.map((p) => {
-        // Try the cache first so the first paint shows the thumbnail; if
-        // not cached yet we still emit an <img> and let the cache fill in
-        // on the next tick (the same node will be re-rendered when the
-        // IPC promise resolves).
-        const cachedUrl = memorialPhotoUrl(p.id);
-        if (!cachedUrl) fetchPhotoDataUrl(p.id);
-        return `
-        <div class="photo-item" data-id="${escapeHtml(p.id)}">
-          <img src="${escapeHtml(cachedUrl)}" data-photo-id="${escapeHtml(p.id)}" alt="${escapeHtml(p.original_name || '')}" loading="lazy" data-view-name="${escapeHtml(p.original_name || '')}"/>
-          <button type="button" class="photo-x" data-id="${escapeHtml(p.id)}" title="删除">✕</button>
-        </div>
-      `;
-      }).join('');
-      // Once the data URLs arrive, swap the <img src=…> in place so the
-      // thumbnail repaints without losing layout.
-      for (const p of existingPhotos) {
-        if (!p.id) continue;
-        fetchPhotoDataUrl(p.id).then((url) => {
-          if (!url) return;
-          existingEl.querySelectorAll('img').forEach((imgEl) => {
-            if (imgEl.dataset.photoId === p.id && imgEl.src !== url) imgEl.src = url;
-          });
-        });
-      }
-      // Click on the image → lightbox; click on the ✕ → delete.
-      existingEl.querySelectorAll('.photo-item').forEach((item) => {
-        const id = item.dataset.id;
-        const img = item.querySelector('img');
-        const x = item.querySelector('.photo-x');
-        if (img) {
-          img.onclick = async (e) => {
-            e.stopPropagation();
-            const url = await fetchPhotoDataUrl(id);
-            if (url) openLightbox(url, img.dataset.viewName);
-          };
-        }
-        if (x) {
-          x.onclick = async (e) => {
-            e.stopPropagation();
-            if (!confirm('删除该照片？')) return;
-            try {
-              await api.memorialEvents.photos.delete(id);
-              invalidatePhotoDataUrl(id);
-              toast('已删除');
-            } catch (err) {
-              toast('删除失败：' + (err.message || err));
-              return;
-            }
-            existingPhotos = existingPhotos.filter((p) => p.id !== id);
-            rerenderExisting();
-          };
-        }
-      });
-    }
-    rerenderExisting();
-  }
-
-  // ---- Save / delete handlers ----
-  document.getElementById('save').onclick = async () => {
-    const { error, payload } = readMemorialForm(app, memorialForm.ids);
-    if (error) {
-      toast(error);
-      if (error === '请填写标题') document.getElementById('e-title').focus();
-      return;
-    }
-    payload.contact_ids = Array.from(selectedIds);
-
-    let saved;
-    try {
-      saved = isNew
-        ? await api.memorialEvents.create(payload)
-        : await api.memorialEvents.update(ev.id, payload);
-    } catch (e) {
-      toast((e && e.message) || '保存失败');
-      return;
-    }
-
-    // Upload any newly picked files. We don't bail on the first failure —
-    // each photo is independent — but we do surface a count summary so the
-    // user knows something went wrong.
-    const files = Array.from(photoFileInput.files || []);
-    if (files.length) {
-      let okCount = 0;
-      let failCount = 0;
-      for (const f of files) {
-        // Defensive size cap. Skip with a clear toast rather than ship a
-        // multi-megabyte blob through IPC silently.
-        if (f.size > 20 * 1024 * 1024) {
-          toast(`照片 ${f.name} 超过 20MB，已跳过`);
-          failCount += 1;
-          continue;
-        }
-        try {
-          const ab = await f.arrayBuffer();
-          await api.memorialEvents.photos.upload(saved.id, {
-            filename: f.name,
-            mime: f.type,
-            bytes: ab,
-          });
-          okCount += 1;
-        } catch (e) {
-          console.error('photo upload failed:', e);
-          failCount += 1;
-        }
-      }
-      if (failCount > 0 && okCount === 0) {
-        toast(`照片上传失败（${failCount} 张）`);
-      } else if (failCount > 0) {
-        toast(`已上传 ${okCount} 张，${failCount} 张失败`);
-      }
-    }
-
-    // Free the preview object URLs now that the user is leaving the page.
-    for (const u of pendingObjectUrls) URL.revokeObjectURL(u);
-    pendingObjectUrls = [];
-
-    toast(isNew ? '已创建' : '已保存');
-    navigate(returnTo);
-  };
-
-  if (!isNew) {
-    document.getElementById('del').onclick = async () => {
-      if (!confirm('确认删除该回忆事件？\n\n关联的照片会一起被删除，此操作不可撤销。')) return;
-      try {
-        await api.memorialEvents.delete(ev.id);
-      } catch (e) {
-        toast('删除失败：' + (e.message || e));
-        return;
-      }
-      for (const u of pendingObjectUrls) URL.revokeObjectURL(u);
-      toast('已删除');
-      navigate(returnTo);
-    };
-  }
-
-  // Make the date / time / datetime-local inputs open their picker on click
-  // of the whole input, not just the trailing icon.
-  wireDateInputs(app);
-}
+// Memorial events (回忆事件) have their own editor: the diary editor in
+// src/js/pages/diary_edit.js. `renderEdit` redirects memorial routes
+// there, so the old one-field-per-slot memorial form no longer lives in
+// this file. The 提醒日期 / 工作事件 branches above are unchanged.
 
 // /events/:id and /events/:id/edit both render the edit form. Clicking an
 // event card from any list (or from contact_detail / search / today) lands

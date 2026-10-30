@@ -14,6 +14,7 @@ import './pages/events.js';
 import './pages/events_memorial.js';
 import './pages/events_work.js';
 import './pages/event_edit.js';
+import './pages/diary_edit.js';
 import './pages/tools.js';
 import './pages/tool_video_frames.js';
 import './pages/tool_transparent_png.js';
