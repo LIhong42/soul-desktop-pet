@@ -25,8 +25,27 @@ await editor.render({}, {});
 document.getElementById('diary-title').value = '第一次去海边';
 document.getElementById('diary-occurred').value = '2026-05-01T10:30';
 
-// Fill in the first text block, then split it with an image so the
-// screenshot shows the mixed layout.
+// A real PNG, so the preview shows an actual picture. The canvas hands
+// back a data URL, so decode it back into bytes — a File built from the
+// URL *string* would contain text, not an image.
+function makePhoto(name, from, to, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, w, h);
+  grad.addColorStop(0, from);
+  grad.addColorStop(1, to);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, w, h);
+  const b64 = c.toDataURL('image/png').split(',')[1];
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name, { type: 'image/png' });
+}
+
+// Fill in the first text block, then split it with a gallery of three
+// photos so the screenshot shows the mixed layout.
 const ta = document.querySelector('.diary-block-text');
 ta.value = '海风很大，浪声一直没停。她把鞋提在手里，光脚踩在被太阳晒热的沙滩上。';
 ta.focus();
@@ -35,29 +54,37 @@ ta.dispatchEvent(new Event('input'));
 
 const fileInput = document.getElementById('diary-photos');
 fileInput.click = () => {
-  // A gradient PNG, so the preview shows a real image block. The canvas
-  // hands back a data URL, so decode it back into bytes — a File built
-  // from the URL *string* would contain text, not an image.
-  const c = document.createElement('canvas');
-  c.width = 320; c.height = 200;
-  const g = c.getContext('2d');
-  const grad = g.createLinearGradient(0, 0, 320, 200);
-  grad.addColorStop(0, '#4a6b8a');
-  grad.addColorStop(1, '#c9b458');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 320, 200);
-  const b64 = c.toDataURL('image/png').split(',')[1];
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const file = new File([bytes], 'sunset.png', { type: 'image/png' });
-  Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+  const files = [
+    makePhoto('sunset.png', '#4a6b8a', '#c9b458', 320, 200),
+    makePhoto('sea.png', '#2d6a6a', '#8fd0c0', 320, 420),
+    makePhoto('sand.png', '#b98d5a', '#f0d9b5', 320, 240),
+  ];
+  Object.defineProperty(fileInput, 'files', { value: files, configurable: true });
   fileInput.dispatchEvent(new Event('change'));
 };
 document.querySelector('.diary-block-bar [data-act="insert-image"]').click();
 
-// The insert is async (the file is read into a data URL first).
-await new Promise(r => setTimeout(r, 200));
+// The insert is async (the files are read into data URLs first).
+await new Promise(r => setTimeout(r, 400));
+
+// Switch the gallery to the two-up layout.
+const gallery = document.querySelector('.diary-block-gallery');
+gallery.querySelector('[data-layout="two"]').click();
+await new Promise(r => setTimeout(r, 100));
+
+// Start a drag of the first photo onto the second one, so the screenshot
+// shows the reordering in progress (the picture follows the pointer).
+const photos = Array.from(document.querySelectorAll('.diary-gallery-item'));
+const r0 = photos[0].getBoundingClientRect();
+const r1 = photos[1].getBoundingClientRect();
+photos[0].dispatchEvent(new PointerEvent('pointerdown', {
+  clientX: r0.left + r0.width / 2, clientY: r0.top + r0.height / 2,
+  bubbles: true, button: 0,
+}));
+window.dispatchEvent(new PointerEvent('pointermove', {
+  clientX: r1.left + r1.width / 2, clientY: r1.top + r1.height / 2,
+  bubbles: true,
+}));
 
 window.__ready = true;
 </script></body></html>`;
@@ -66,7 +93,9 @@ app.whenReady().then(async () => {
   fs.writeFileSync(probePath, PROBE_HTML);
 
   const win = new BrowserWindow({
-    show: false,
+    // The window has to be on screen: a hidden one never paints, and the
+    // capture would show an old frame instead of what the page looks like.
+    show: true,
     width: 1180,
     height: 860,
     webPreferences: {
@@ -88,6 +117,15 @@ app.whenReady().then(async () => {
        return true;
      })()`
   );
+  const state = await win.webContents.executeJavaScript(`(() => {
+    const g = document.querySelector('.diary-block-gallery');
+    return {
+      widths: Array.from(g.querySelectorAll('.diary-gallery-item')).map(i => i.style.width),
+      rects: Array.from(g.querySelectorAll('.diary-gallery-item')).map(i => Math.round(i.getBoundingClientRect().width)),
+      selected: (g.querySelector('[data-layout].selected') || { dataset: {} }).dataset.layout || null,
+    };
+  })()`);
+  console.log('at capture:', JSON.stringify(state));
   await new Promise((r) => setTimeout(r, 600));
 
   const image = await win.webContents.capturePage();

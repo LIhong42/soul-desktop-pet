@@ -33,6 +33,8 @@ const autostart = require('./autostart');
 const imageBgRemove = require('./image_bg_remove');
 const imageBatchResize = require('./image_batch_resize');
 const appUpdate = require('./app_update');
+// 日记正文的校验规则（文字块 + 图组），单独成模块便于单独测试。
+const { normDiaryContent } = require('./diary_content');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
 // `export:cancel`. The value is a mutable record: { killed, outPath? }.
@@ -866,35 +868,9 @@ function normFreeText(s) {
 
 // Validate the diary's mixed text/image document.
 //
-// The renderer sends an array of blocks, each either:
-//   { type: 'text',  text: '…' }
-//   { type: 'image', photo_id: '…' }
-//
-// We re-serialize it ourselves rather than storing the renderer's JSON
-// verbatim: that keeps the stored shape canonical (so two clients writing
-// the same document produce the same bytes), drops empty text blocks, and
-// guarantees the JSON never contains anything but strings.
-//
-// Returns the JSON string, or null when there is no document. Throws when
-// the payload is not an array — a malformed document is a programming
-// error, not something to silently drop.
-function normDiaryContent(input) {
-  if (input === null || input === undefined) return null;
-  if (!Array.isArray(input)) throw new Error('日记内容格式错误');
-  const blocks = [];
-  for (const b of input) {
-    if (!b || typeof b !== 'object') continue;
-    if (b.type === 'text') {
-      const text = typeof b.text === 'string' ? b.text : '';
-      if (text.length) blocks.push({ type: 'text', text });
-    } else if (b.type === 'image') {
-      const photoId = typeof b.photo_id === 'string' ? b.photo_id.trim() : '';
-      if (photoId.length) blocks.push({ type: 'image', photo_id: photoId });
-    }
-  }
-  if (!blocks.length) return null;
-  return JSON.stringify(blocks);
-}
+// The document is a list of text blocks and galleries (a gallery holds the
+// photos that share one insertion point). The rules live in
+// main/diary_content.js so they can be checked on their own.
 
 // Accept both YYYY-MM-DD and YYYY-MM-DD HH:MM[:SS] from the renderer
   // (datetime-local produces the former shape, the form fills the seconds

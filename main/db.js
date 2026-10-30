@@ -1205,13 +1205,16 @@ function migrateMemorialEventsV2() {
 // no DROP COLUMN), so that part rebuilds memorial_events and copies the
 // rows across. The rebuild is skipped when the column isn't there.
 //
-// Guard key `memorial_events_v3_applied` so the probe runs exactly once
-// per DB.
+// The columns are added by looking at the SCHEMA, not by a settings guard.
+// An earlier build already ran this migration with only the `background`
+// column, so a database written by that build carries the guard key while
+// still missing `content` — a guard-only check would skip the second
+// column, and every diary save would fail with "no column named content".
+// The guard key is only a note that the migration has run.
 const MEMORIAL_EVENTS_V3_KEY = 'memorial_events_v3_applied';
 
 function migrateMemorialEventsV3() {
   if (!db) return;
-  if (getSetting(MEMORIAL_EVENTS_V3_KEY) === '1') return;
 
   const cols = db.prepare('PRAGMA table_info(memorial_events)');
   const names = new Set();
@@ -1219,11 +1222,14 @@ function migrateMemorialEventsV3() {
   cols.free();
 
   try {
+    let altered = false;
     if (!names.has('background')) {
       db.run('ALTER TABLE memorial_events ADD COLUMN background TEXT');
+      altered = true;
     }
     if (!names.has('content')) {
       db.run('ALTER TABLE memorial_events ADD COLUMN content TEXT');
+      altered = true;
     }
     // Drop the retired tag column. SQLite's ALTER TABLE ... DROP COLUMN
     // only exists from 3.35 and can't run inside a transaction, so we use
@@ -1260,9 +1266,12 @@ function migrateMemorialEventsV3() {
       } finally {
         try { db.run('PRAGMA foreign_keys = ON'); } catch {}
       }
+      altered = true;
     }
-    setSetting(MEMORIAL_EVENTS_V3_KEY, '1');
-    markDirty();
+    if (altered) {
+      setSetting(MEMORIAL_EVENTS_V3_KEY, '1');
+      markDirty();
+    }
   } catch (e) {
     console.error('memorial_events v3 migration failed:', e);
   }

@@ -3215,7 +3215,19 @@ body.locked #pin-modal.hidden { display: none !important; }
 
 .diary-page {
   --diary-header-bg: #c9b458;
-  --diary-bg: linear-gradient(180deg, #fdf6e3 0%, #fbf1dc 55%, #f5ead4 100%);
+  /* The title on the header bar. The pale headers need dark ink, the
+     dark ones take white — white on a pale bar would be unreadable. */
+  --diary-header-text: #3a3222;
+  /* The page body is painted in two flat bands — the upper one and the
+     lower one — so the sheet reads as three horizontal strips in all (the
+     header bar plus the two bands), the way the reference artwork does.
+     The renderer writes the real gradients inline; this default is the
+     'light' style, so the page is readable before they land. */
+  --diary-bg:
+    linear-gradient(180deg, #e5d6b0 0%, #e5d6b0 80%, #e5d6b0 80%, #e5d6b0 100%),
+    linear-gradient(180deg, transparent 0%, transparent 80%, #e5d6b0 80%, #e5d6b0 100%);
+  /* The flat upper band, for the little toolbars that sit on the page. */
+  --diary-bg-flat: #e5d6b0;
   --diary-text: #3a3222;
   --diary-muted: #9a8f74;
   --diary-rule: #e2d5b8;
@@ -3227,10 +3239,11 @@ body.locked #pin-modal.hidden { display: none !important; }
   box-shadow: var(--shadow-sm);
 }
 
-/* The colored strip across the top of the page. */
+/* The colored strip across the top of the page. It carries the title, so
+   the user types and edits the title right there. */
 .diary-page-header {
   background: var(--diary-header-bg);
-  color: #fff;
+  color: var(--diary-header-text);
   text-align: center;
   font-weight: 700;
   font-size: 14px;
@@ -3242,55 +3255,64 @@ body.locked #pin-modal.hidden { display: none !important; }
 
 /* The title is part of the diary page, not a form box. The global
    `input[type="text"]` rule is more specific than a bare class, so these
-   selectors are scoped to .diary-page to win over it. */
+   selectors are scoped to .diary-page to win over it. It sits in the
+   header bar, so it is transparent and takes the bar's own text color. */
 .diary-page .diary-title {
   width: 100%;
   border: none;
-  border-bottom: 1px solid var(--diary-rule);
+  border-bottom: 1px solid transparent;
   border-radius: 0;
   background: transparent;
-  font-size: 26px;
+  font-size: 20px;
   font-weight: 700;
+  letter-spacing: 0.02em;
   font-family: inherit;
-  color: var(--diary-text);
-  padding: 0 0 8px;
+  text-align: center;
+  color: var(--diary-header-text);
+  padding: 2px 16px;
 }
-.diary-page .diary-title::placeholder { color: var(--diary-muted); opacity: 0.7; }
+.diary-page .diary-title::placeholder {
+  color: var(--diary-header-text);
+  opacity: 0.55;
+}
 .diary-page .diary-title:focus {
   outline: none;
-  border-bottom-color: var(--diary-muted);
+  border-bottom-color: currentColor;
+  opacity: 0.8;
   box-shadow: none;
 }
 
+/* The date field lives in the side panel now, so it reads as an ordinary
+   form control rather than as part of the written page: no dashed rule, a
+   normal border, and the panel's own colors (not the page theme's). */
 .diary-meta-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 12px 0 2px;
 }
 .diary-meta-row input[type="datetime-local"] {
-  border: none;
-  border-bottom: 1px dashed var(--diary-rule);
-  border-radius: 0;
-  padding: 2px 2px 4px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 9px;
   font-family: inherit;
-  font-size: 12px;
-  color: var(--diary-muted);
-  background: transparent;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
 }
 .diary-meta-row input[type="datetime-local"]:focus {
   outline: none;
-  border-bottom-color: var(--diary-muted);
-  color: var(--diary-text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.diary-date-hint { color: var(--diary-muted); font-size: 12px; }
 
 /* ---- The mixed document ------------------------------------------------ */
 /*
    The body is a list of blocks rather than one textarea: text blocks and
-   image blocks interleave, so the page reads top-to-bottom exactly as it
+   galleries interleave, so the page reads top-to-bottom exactly as it
    will be saved. The text blocks are textareas (real editing surface, IME
-   friendly); the image blocks are a figure with the photo.
+   friendly); the gallery blocks hold the photos that share one insertion
+   point.
 */
 .diary-blocks {
   display: flex;
@@ -3306,12 +3328,22 @@ body.locked #pin-modal.hidden { display: none !important; }
 }
 .diary-block:hover .diary-block-bar,
 .diary-block:focus-within .diary-block-bar { opacity: 1; }
+/* The first block's toolbar stays visible: it is the only way to add a
+   picture, and on an empty page there is nothing else to hover. */
+.diary-blocks > .diary-block:first-child .diary-block-bar { opacity: 1; }
 .diary-block-bar .btn-tiny {
-  background: var(--diary-bg);
+  /* The flat band, not --diary-bg: that one is a gradient stack now, and
+     a gradient on a small button would look broken. */
+  background: var(--diary-bg-flat);
   color: var(--diary-muted);
   border-color: var(--diary-rule);
 }
-.diary-block-bar .btn-tiny:hover {
+/* The app's own `.btn.secondary:hover` rule is more specific, so the
+   themed hover has to be spelled out — otherwise the button turns the
+   app's cream on a dark page and its label disappears. */
+.diary-block-bar .btn-tiny:hover,
+.diary-gallery-bar .btn-tiny:hover {
+  background: var(--diary-bg-flat);
   color: var(--diary-text);
   border-color: var(--diary-muted);
 }
@@ -3331,34 +3363,60 @@ body.locked #pin-modal.hidden { display: none !important; }
   padding: 6px 0;
   min-height: 1.75em;
 }
-.diary-block-text::placeholder { color: var(--diary-muted); opacity: 0.7; }
+/* The placeholder is muted text, dimmed a little further. The opacity
+   stays high enough that the hint still reads on the pale bands. */
+.diary-block-text::placeholder { color: var(--diary-muted); opacity: 0.85; }
 .diary-block-text:focus { outline: none; }
 
-/* An image block. The photo keeps its own aspect ratio (no cropping) so a
-   portrait shot and a landscape shot both look right on the page. */
-.diary-block-image {
+/* A gallery block: the photos that share one insertion point in the text.
+   The layout says how many photos sit on a row; each photo can be
+   resized on its own with its handle, which overrides the layout for
+   that one photo. */
+.diary-block-gallery {
   position: relative;
-  margin: 6px 0;
-  border-radius: 8px;
-  overflow: hidden;
+  margin: 8px 0;
+  padding: 6px;
   border: 1px solid var(--diary-rule);
-  background: rgba(0, 0, 0, 0.04);
-  /* Size the figure to the image inside it, so the border hugs the photo
-     rather than the full column width. */
-  width: fit-content;
-  max-width: 100%;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
 }
-.diary-block-image img {
-  display: block;
-  /* Keep the photo's own size. A small picture stays small; a big one is
-     capped so it can't push the rest of the page off screen. */
+.diary-gallery-items {
+  display: flex;
+  flex-wrap: wrap;
+  /* Must match GALLERY_GAP in diary_edit.js — the photo widths subtract
+     their share of this gap so a row of photos fits exactly. */
+  gap: 8px;
+  align-items: flex-start;
+}
+.diary-gallery-item {
+  position: relative;
+  flex: 0 0 auto;
   max-width: 100%;
-  max-height: 420px;
-  width: auto;
-  height: auto;
+  min-width: 44px;
   cursor: zoom-in;
+  /* A press on a photo moves the picture, so the press must not start a
+     text selection around it. */
+  user-select: none;
 }
-.diary-block-image .photo-x {
+.diary-gallery-item img {
+  display: block;
+  /* The photo fills its slot and keeps its own aspect ratio (no
+     cropping). The width is what the layout or the drag handle set. */
+  width: 100%;
+  height: auto;
+  max-height: 1200px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  /* No browser image drag — it would take the pointer over and the
+     picture could not be moved. */
+  -webkit-user-drag: none;
+}
+.diary-gallery-item.selected img {
+  outline: 2px solid var(--diary-muted);
+  outline-offset: 2px;
+}
+.diary-gallery-item .photo-x {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -3373,33 +3431,104 @@ body.locked #pin-modal.hidden { display: none !important; }
   line-height: 22px;
   padding: 0;
 }
-.diary-block-image .photo-x:hover { background: var(--danger); }
-.diary-block-image-bar {
-  display: flex;
-  gap: 6px;
+.diary-gallery-item .photo-x:hover { background: var(--danger); }
+
+/* The handle the user drags to resize one photo. */
+.diary-gallery-handle {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+  cursor: ew-resize;
   opacity: 0;
   transition: opacity 0.12s ease;
+  user-select: none;
 }
-.diary-block:hover .diary-block-image-bar,
-.diary-block:focus-within .diary-block-image-bar { opacity: 1; }
-.diary-block-image-bar .btn-tiny {
-  background: var(--diary-bg);
+.diary-gallery-item:hover .diary-gallery-handle,
+.diary-gallery-item.selected .diary-gallery-handle { opacity: 1; }
+
+/* While a photo is being dragged, nothing else may catch the pointer. */
+body.diary-resizing {
+  cursor: ew-resize;
+  user-select: none;
+}
+
+/* Reordering: the photo follows the pointer, and the one it is dragged
+   over fades out of the way. */
+body.diary-reordering {
+  cursor: grabbing;
+  user-select: none;
+}
+body.diary-reordering .diary-gallery-item { cursor: grabbing; }
+.diary-gallery-item.reordering { opacity: 0.3; }
+.diary-gallery-ghost {
+  position: fixed;
+  z-index: 999;
+  pointer-events: none;
+  width: 120px;
+  transform: translate(-50%, -50%);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+.diary-gallery-ghost img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.diary-gallery-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  /* Faded rather than hidden: the layout and size controls have to be
+     findable without hunting for a hover state. */
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
+}
+.diary-block:hover .diary-gallery-bar,
+.diary-block:focus-within .diary-gallery-bar { opacity: 1; }
+.diary-gallery-group {
+  display: inline-flex;
+  gap: 4px;
+}
+/* How many photos the group holds. */
+.diary-gallery-count {
+  align-self: center;
+  color: var(--diary-muted);
+  font-size: 12px;
+  opacity: 0.8;
+}
+.diary-gallery-bar .btn-tiny {
+  /* The flat band, not --diary-bg: that one is a gradient stack now, and
+     a gradient on a small button would look broken. */
+  background: var(--diary-bg-flat);
   color: var(--diary-muted);
   border-color: var(--diary-rule);
 }
-.diary-block-image-bar .btn-tiny:hover {
+.diary-gallery-bar .btn-tiny:hover {
   color: var(--diary-text);
   border-color: var(--diary-muted);
 }
-
-.diary-block-add {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
+.diary-gallery-bar .btn-tiny.selected {
+  color: var(--diary-text);
+  border-color: var(--diary-muted);
+  font-weight: 600;
 }
-.diary-block-add input[type="file"] { display: none; }
-.diary-block-add .meta { color: var(--diary-muted); }
+
+/* The shared file picker. It is opened by the "插入图片" button on a text
+   block and by the "+ 加图" button on a gallery — it has no button of its
+   own, so it stays hidden. */
+.diary-page input[type="file"] { display: none; }
 
 /* ---- Side panel -------------------------------------------------------- */
 .diary-side { display: flex; flex-direction: column; gap: 12px; }
@@ -3429,17 +3558,33 @@ body.locked #pin-modal.hidden { display: none !important; }
 .diary-theme-tile.selected { border-color: var(--accent); }
 .diary-theme-bar {
   display: block;
-  color: #fff;
+  /* The bar's own text color — white on the dark headers, dark ink on
+     the pale ones. */
+  color: var(--theme-header-text);
   font-size: 10px;
   font-weight: 700;
   text-align: center;
   padding: 3px 0;
 }
+/* The preview shows the same layers the real page is painted in: the
+   upper band and the lower band. They are two stacked rows, so the tile
+   reads like a miniature page. */
 .diary-theme-body {
+  display: flex;
+  flex-direction: column;
+  background: var(--theme-mid);
+}
+.diary-theme-band {
+  display: block;
+  width: 100%;
+}
+.diary-theme-band-top { height: 30px; background: var(--theme-top); }
+.diary-theme-band-mid { height: 18px; background: var(--theme-mid); }
+.diary-theme-info {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 7px;
+  padding: 6px 7px;
 }
 .diary-theme-dots { display: inline-flex; gap: 3px; }
 .diary-theme-dots i {

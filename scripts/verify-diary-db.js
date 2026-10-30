@@ -5,6 +5,10 @@
 //   background — the chosen background style id
 //   content    — the mixed text/image document (a JSON array of blocks)
 //
+// The document holds text blocks and galleries; a gallery is the
+// multi-image insertion point and carries the layout and the per-photo
+// widths.
+//
 // This script opens a real database and checks that:
 //
 //   1. The schema carries both columns on a fresh install.
@@ -12,7 +16,12 @@
 //      (the upgrade path for existing users), and drops the retired
 //      `tag_kind` column.
 //   3. The mixed document round-trips.
-//   4. The export query still works (it selects explicit columns).
+//   4. The document validator canonicalizes what the editor sends,
+//      including the retired single-photo shape.
+//   5. The export query still works (it selects explicit columns).
+//   6. A database that an earlier build already migrated (so it carries
+//      the guard key) still gets the `content` column — the migration
+//      looks at the schema, not at the guard.
 //
 // Run: node scripts/verify-diary-db.js
 
@@ -55,7 +64,11 @@ async function main() {
   const now = db.nowStr();
   const content = JSON.stringify([
     { type: 'text', text: '海风很大，浪声一直没停。' },
-    { type: 'image', photo_id: 'p1' },
+    {
+      type: 'gallery',
+      layout: 'two',
+      photos: [{ photo_id: 'p1' }, { photo_id: 'p2', width: 0.32 }],
+    },
     { type: 'text', text: '我们在防波堤上坐到天黑。' },
   ]);
   db.run(
@@ -72,9 +85,67 @@ async function main() {
   check('the body is stored in notes', row.notes, '海风很大，浪声一直没停。\n\n我们在防波堤上坐到天黑。');
   check('the mixed document is stored', JSON.parse(row.content), [
     { type: 'text', text: '海风很大，浪声一直没停。' },
-    { type: 'image', photo_id: 'p1' },
+    {
+      type: 'gallery',
+      layout: 'two',
+      photos: [{ photo_id: 'p1' }, { photo_id: 'p2', width: 0.32 }],
+    },
     { type: 'text', text: '我们在防波堤上坐到天黑。' },
   ]);
+
+  // ---- The document validator ------------------------------------------
+  console.log('\n== 正文校验 ==');
+  const { normDiaryContent, parseDiaryContent } = require('../main/diary_content.js');
+
+  check('a gallery with several photos is kept as it is',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'grid', photos: [{ photo_id: 'a' }, { photo_id: 'b' }] },
+    ])),
+    [{ type: 'gallery', layout: 'grid', photos: [{ photo_id: 'a' }, { photo_id: 'b' }] }]);
+
+  check('a photo size is kept',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'two', photos: [{ photo_id: 'a', width: 0.25 }] },
+    ]))[0].photos[0].width, 0.25);
+
+  check('a photo size above the row width is clamped',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'one', photos: [{ photo_id: 'a', width: 4 }] },
+    ]))[0].photos[0].width, 1);
+
+  check('an unknown layout falls back to the default',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'nope', photos: [{ photo_id: 'a' }] },
+    ]))[0].layout, 'two');
+
+  check('the retired single-photo shape becomes a one-photo gallery',
+    JSON.parse(normDiaryContent([{ type: 'image', photo_id: 'p1' }])),
+    [{ type: 'gallery', layout: 'one', photos: [{ photo_id: 'p1' }] }]);
+
+  check('empty text blocks are dropped',
+    JSON.parse(normDiaryContent([{ type: 'text', text: '' }, { type: 'text', text: '有字' }])),
+    [{ type: 'text', text: '有字' }]);
+
+  check('a gallery with no photos is dropped',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'two', photos: [] },
+      { type: 'text', text: '有字' },
+    ])),
+    [{ type: 'text', text: '有字' }]);
+
+  check('an empty document is stored as null', normDiaryContent([]), null);
+  check('a missing document is stored as null', normDiaryContent(null), null);
+
+  let threw = false;
+  try { normDiaryContent({ not: 'an array' }); } catch (e) { threw = true; }
+  checkTrue('a document that is not a list is rejected', threw);
+
+  // A document written by the retired editor still reads back.
+  check('a stored retired document still parses',
+    parseDiaryContent(JSON.stringify([{ type: 'image', photo_id: 'p1' }])),
+    [{ type: 'image', photo_id: 'p1' }]);
+  check('a stored broken document reads as empty',
+    parseDiaryContent('{not json'), []);
 
   // ---- The export query still works ------------------------------------
   console.log('\n== 导出查询 ==');
@@ -169,6 +240,54 @@ async function main() {
   check('the tagged entry keeps its body', taggedRow && taggedRow.notes, '正文');
   check('the tagged entry keeps its background', taggedRow && taggedRow.background, 'shadow');
   db3.close();
+
+  // ---- The upgrade path from a build that only knew `background` -------
+  console.log('\n== 缺少 content 列的旧数据库升级 ==');
+  // A database written by a build whose v3 migration only added the
+  // `background` column. It already carries the guard key, so a
+  // guard-only check would skip it and every diary save would fail with
+  // "table memorial_events has no column named content".
+  const halfPath = path.join(tmpDir, 'half.sqlite');
+  const half = new SQL.Database();
+  half.run(`
+    CREATE TABLE memorial_events (
+      id          TEXT PRIMARY KEY,
+      kind        TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('first_time','other')),
+      title       TEXT NOT NULL,
+      place       TEXT,
+      food        TEXT,
+      outfit      TEXT,
+      activities  TEXT,
+      notes       TEXT,
+      occurred_at TEXT NOT NULL,
+      background  TEXT,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
+    CREATE TABLE settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    INSERT INTO memorial_events(id, kind, title, notes, occurred_at, background, created_at, updated_at)
+      VALUES ('h1', 'other', '半旧的一篇', '正文', '2024-06-01 10:00:00', 'shadow', '2024-06-01 10:00:00', '2024-06-01 10:00:00');
+    INSERT INTO settings(key, value) VALUES ('memorial_events_v3_applied', '1');
+  `);
+  const halfBytes = half.export();
+  half.close();
+  fs.writeFileSync(halfPath, Buffer.from(halfBytes));
+
+  const db4 = require('../main/db.js');
+  await db4.open(halfPath);
+  const cols4 = db4.all('PRAGMA table_info(memorial_events)').map((c) => c.name);
+  checkTrue('the migration adds the missing content column', cols4.includes('content'));
+  checkTrue('the migration keeps the background column', cols4.includes('background'));
+  const halfRow = db4.getMemorialEvent('h1');
+  check('the half-migrated entry survives', halfRow && halfRow.title, '半旧的一篇');
+  check('the half-migrated entry keeps its body', halfRow && halfRow.notes, '正文');
+  check('the half-migrated entry keeps its background', halfRow && halfRow.background, 'shadow');
+  check('the half-migrated entry gets an empty document',
+    halfRow && halfRow.content, null);
+  db4.close();
 
   // ---- Cleanup ---------------------------------------------------------
   fs.rmSync(tmpDir, { recursive: true, force: true });
