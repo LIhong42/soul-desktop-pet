@@ -29,8 +29,7 @@
 // (one per row, two per row, three per row, a dense grid), and every
 // photo can be resized on its own by dragging its handle — that override
 // wins over the layout for that one photo. The photos keep the order the
-// user put them in: drag a photo onto another one to swap their places,
-// or use the ◀ / ▶ buttons in the gallery bar to move the selected one.
+// user put them in: drag a photo onto another one to swap their places.
 //
 // The blocks live in the `content` column (a JSON array). The plain text
 // is ALSO written to the legacy `notes` column, because the search index
@@ -76,8 +75,8 @@ const pageState = {
 // ---- Theme picker --------------------------------------------------------
 
 // Render the six background style tiles. Each tile previews the style
-// faithfully: the header bar, the two background bands and the three
-// accent dots, exactly like the reference picker.
+// faithfully: the header bar, the body surface, the decorative strip and
+// the three accent dots, exactly like the reference picker.
 function themePickerHtml(selectedId) {
   return `
     <div class="diary-theme-grid">
@@ -194,14 +193,6 @@ const DIARY_GALLERY_LAYOUTS = [
   { id: 'grid',  name: '网格', width: 0.25 },
 ];
 
-// The size presets in the gallery toolbar: the share of the gallery's
-// width that one photo takes.
-const DIARY_GALLERY_SIZES = {
-  big: 1,
-  mid: 0.6,
-  small: 0.32,
-};
-
 function galleryLayout(id) {
   return DIARY_GALLERY_LAYOUTS.find((l) => l.id === id) || null;
 }
@@ -275,7 +266,7 @@ function makeGalleryBlock(photos, layout) {
     type: 'gallery',
     layout: layout || defaultLayoutFor(list.length),
     photos: list,
-    // The photo the size presets apply to.
+    // The photo the user last picked — the one a drag would move.
     selectedId: list.length ? list[0].photoId : null,
     el: null,
     itemsEl: null,
@@ -286,7 +277,7 @@ function makeGalleryBlock(photos, layout) {
 }
 
 // Build the gallery's DOM: the row of photos and the toolbar with the
-// layout switch, the size presets and the text-insert buttons.
+// layout switch, the add button and the text-insert buttons.
 function buildGalleryEl(block) {
   const fig = document.createElement('figure');
   fig.className = 'diary-block-gallery';
@@ -303,17 +294,8 @@ function buildGalleryEl(block) {
         <button type="button" class="btn secondary btn-tiny" data-layout="${l.id}"
                 title="${l.name}排版">${l.name}</button>`).join('')}
     </span>
-    <span class="diary-gallery-group">
-      <button type="button" class="btn secondary btn-tiny" data-size="big" title="放大">大</button>
-      <button type="button" class="btn secondary btn-tiny" data-size="mid" title="中等">中</button>
-      <button type="button" class="btn secondary btn-tiny" data-size="small" title="缩小">小</button>
-    </span>
     <button type="button" class="btn secondary btn-tiny" data-act="gallery-add">+ 加图</button>
     <span class="diary-gallery-count" data-act="gallery-count"></span>
-    <span class="diary-gallery-group">
-      <button type="button" class="btn secondary btn-tiny" data-act="photo-left" title="把选中的图片往前挪一位">◀ 前移</button>
-      <button type="button" class="btn secondary btn-tiny" data-act="photo-right" title="把选中的图片往后挪一位">后移 ▶</button>
-    </span>
     <button type="button" class="btn secondary btn-tiny" data-act="insert-before">↑ 上方插入文字</button>
     <button type="button" class="btn secondary btn-tiny" data-act="insert-after">↓ 下方插入文字</button>
   `;
@@ -322,15 +304,6 @@ function buildGalleryEl(block) {
   bar.querySelectorAll('[data-layout]').forEach((btn) => {
     btn.onclick = () => setGalleryLayout(block, btn.dataset.layout);
   });
-  bar.querySelectorAll('[data-size]').forEach((btn) => {
-    btn.onclick = () => applyGallerySize(block, btn.dataset.size);
-  });
-  bar.querySelector('[data-act="photo-left"]').onclick = () => {
-    moveGalleryPhoto(block, selectedGalleryPhoto(block), -1);
-  };
-  bar.querySelector('[data-act="photo-right"]').onclick = () => {
-    moveGalleryPhoto(block, selectedGalleryPhoto(block), 1);
-  };
   bar.querySelector('[data-act="gallery-add"]').onclick = () => {
     pendingGalleryFor = block;
     const fileInput = document.getElementById('diary-photos');
@@ -395,10 +368,9 @@ function buildGalleryItem(block, photo) {
   handle.addEventListener('click', (e) => e.stopPropagation());
   item.appendChild(handle);
 
-  // A click selects the photo — the size presets and the move buttons act
-  // on it. The picture is opened full screen on a double click: the
-  // lightbox covers the whole page, so it must not open on every click,
-  // or the photo could not be picked up again.
+  // A click selects the photo. The picture is opened full screen on a
+  // double click: the lightbox covers the whole page, so it must not open
+  // on every click, or the photo could not be picked up again.
   item.onclick = () => {
     if (block.dragging) return;
     selectGalleryPhoto(block, photo);
@@ -469,17 +441,12 @@ function applyPhotoWidth(block, photo) {
   photo.el.style.width = photoCssWidth(frac);
 }
 
-// Mark one photo as the selected one — the size presets apply to it.
+// Mark one photo as the selected one — the one a drag would pick up.
 function selectGalleryPhoto(block, photo) {
   block.selectedId = photo.photoId;
   for (const p of block.photos) {
     if (p.el) p.el.classList.toggle('selected', p === photo);
   }
-}
-
-// The photo the toolbar acts on: the selected one, or the first.
-function selectedGalleryPhoto(block) {
-  return block.photos.find((p) => p.photoId === block.selectedId) || block.photos[0] || null;
 }
 
 // Put two photos in each other's places.
@@ -489,18 +456,6 @@ function swapGalleryPhotos(block, a, b) {
   if (ia < 0 || ib < 0 || ia === ib) return false;
   block.photos[ia] = b;
   block.photos[ib] = a;
-  return true;
-}
-
-// Move a photo one slot forward (-1) or back (+1).
-function moveGalleryPhoto(block, photo, delta) {
-  if (!photo) return false;
-  const from = block.photos.indexOf(photo);
-  const to = from + delta;
-  if (from < 0 || to < 0 || to >= block.photos.length) return false;
-  block.photos.splice(from, 1);
-  block.photos.splice(to, 0, photo);
-  syncGalleryEl(block);
   return true;
 }
 
@@ -599,15 +554,6 @@ function setGalleryLayout(block, layoutId) {
   block.layout = layoutId;
   for (const p of block.photos) p.width = null;
   syncGalleryEl(block);
-}
-
-// Apply one of the size presets to the selected photo.
-function applyGallerySize(block, size) {
-  const photo = selectedGalleryPhoto(block);
-  const frac = DIARY_GALLERY_SIZES[size];
-  if (!photo || frac == null) return;
-  photo.width = frac;
-  applyPhotoWidth(block, photo);
 }
 
 // Resize a photo by dragging its handle. The width is a share of the
@@ -895,6 +841,12 @@ export async function render(args, params) {
                picture is always added where the user is working. -->
           <input type="file" id="diary-photos" accept="image/*" multiple/>
         </div>
+        <!-- The decorative strip at the bottom of the page. It is a layer
+             of its own, BELOW the body: the body grows with the text and
+             the photos, and the decoration keeps its own height, so a long
+             entry never has its pictures or its words sitting on top of
+             it. -->
+        <div class="diary-page-foot" aria-hidden="true"></div>
       </div>
 
       <!-- The side panel: the date, the background style and the contacts.

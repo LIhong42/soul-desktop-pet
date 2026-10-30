@@ -140,7 +140,7 @@ app.whenReady().then(async () => {
     };
   `);
   check('there are six background styles', themes.list.length, 6);
-  checkTrue('every style has a header color, a text color and two body bands',
+  checkTrue('every style has a header color, a text color and two body layers',
     themes.list.every(t => t.hasHeader && t.hasText && t.hasTop && t.hasMid));
   checkTrue('every style has a flat surface color and a header text color',
     themes.list.every(t => t.hasFlat && t.hasHeaderText));
@@ -199,7 +199,9 @@ app.whenReady().then(async () => {
       header: afterHeader,
       selectedCount: document.querySelectorAll('.diary-theme-tile.selected').length,
       contactCards: document.querySelectorAll('.contact-pick').length,
-      pageBg: getComputedStyle(page).backgroundImage,
+      // The page paints a flat color now — the decoration is a layer of
+      // its own, not a band inside one background stack.
+      pageBg: getComputedStyle(page).backgroundColor,
       // The date field belongs to the side panel, not to the writing
       // surface: the writing page holds the title and the text, and
       // nothing else.
@@ -210,10 +212,22 @@ app.whenReady().then(async () => {
       // there; the body below holds only the written document.
       titleInHeader: !!document.querySelector('.diary-page-header #diary-title'),
       titleInBody: !!document.querySelector('.diary-page-body #diary-title'),
-      // The page body is painted in two horizontal layers (the header
-      // bar is a separate element on top). The computed background-image
-      // lists one gradient per layer.
-      bgLayers: getComputedStyle(page).backgroundImage.split('gradient(').length - 1,
+      // The page is a column of three separate layers: the title bar, the
+      // body and the decorative strip at the bottom. They are three DOM
+      // elements, each with its own background color — NOT bands painted
+      // into one background, which is what let the text and the photos
+      // cover the decoration.
+      layers: [
+        !!document.querySelector('.diary-page > .diary-page-header'),
+        !!document.querySelector('.diary-page > .diary-page-body'),
+        !!document.querySelector('.diary-page > .diary-page-foot'),
+      ],
+      // Each layer paints its own color.
+      layerBgs: [
+        getComputedStyle(document.querySelector('.diary-page-header')).backgroundColor,
+        getComputedStyle(document.querySelector('.diary-page-body')).backgroundColor,
+        getComputedStyle(document.querySelector('.diary-page-foot')).backgroundColor,
+      ],
       // The picker preview shows the same two bands.
       previewBands: document.querySelectorAll('.diary-theme-tile:first-child .diary-theme-band').length,
     };
@@ -233,9 +247,12 @@ app.whenReady().then(async () => {
   check('the Shadow style writes its header color', editorResult.header, '#77613b');
   check('exactly one tile is marked selected', editorResult.selectedCount, 1);
   check('the contact picker lists the contacts', editorResult.contactCards, 2);
-  checkTrue('the page background paints with the chosen gradient',
-    editorResult.pageBg && editorResult.pageBg.includes('gradient'));
-  check('the page body is painted in two background layers', editorResult.bgLayers, 2);
+  checkTrue('the page background paints with the chosen color',
+    editorResult.pageBg && editorResult.pageBg !== 'rgba(0, 0, 0, 0)');
+  check('the page is three separate layers: header, body, decoration',
+    editorResult.layers, [true, true, true]);
+  checkTrue('every layer paints its own background color',
+    editorResult.layerBgs.every(c => c && c !== 'rgba(0, 0, 0, 0)'));
   check('the picker preview shows the two bands', editorResult.previewBands, 2);
   checkTrue('the date field sits in the side panel', editorResult.dateInSide);
   checkTrue('the Tackbox page shows no date', !editorResult.dateOnPage);
@@ -323,7 +340,7 @@ app.whenReady().then(async () => {
   checkTrue('the editor navigates away after saving',
     !!mixResult.navigated && mixResult.navigated.length > 1);
 
-  // ---- 4. Multi-image: many photos, a layout, and per-photo sizes -----
+  // ---- 4. Multi-image: many photos, a layout, and a dragged size -----
   console.log('\n== 多图与排版 ==');
   const multiResult = await evalIn(win, `
     await window.__editor.render({}, {});
@@ -362,12 +379,6 @@ app.whenReady().then(async () => {
     await new Promise(r => setTimeout(r, 20));
     const widthAfterLayout = items.map(i => i.style.width);
 
-    // Select the second photo and shrink it with the 「小」 preset.
-    items[1].click();
-    gallery.querySelector('[data-size="small"]').click();
-    await new Promise(r => setTimeout(r, 20));
-    const widthAfterSize = items.map(i => i.style.width);
-
     // Drag the first photo's handle to the right to make it bigger.
     const handle = items[0].querySelector('.diary-gallery-handle');
     handle.dispatchEvent(new PointerEvent('pointerdown', { clientX: 100, clientY: 100, bubbles: true }));
@@ -399,8 +410,9 @@ app.whenReady().then(async () => {
       layoutButtonIds: layoutButtons.map(b => b.dataset.layout),
       widthBefore: widthBefore.map(frac),
       widthAfterLayout: widthAfterLayout.map(frac),
-      widthAfterSize: widthAfterSize.map(frac),
       widthAfterDrag: widthAfterDrag.map(frac),
+      toolbarTexts: Array.from(gallery.querySelectorAll('.diary-gallery-bar button'))
+        .map(b => b.textContent.trim()),
       selectedLayout: gallery.querySelector('[data-layout].selected')
         ? gallery.querySelector('[data-layout].selected').dataset.layout : null,
       savedLayout: galleryBlock && galleryBlock.layout,
@@ -415,20 +427,18 @@ app.whenReady().then(async () => {
   check('the chosen layout is marked', multiResult.selectedLayout, 'two');
   check('the 双图 layout puts two photos on a row',
     multiResult.widthAfterLayout[0], 0.5);
-  check('the 小 preset shrinks only the selected photo',
-    multiResult.widthAfterSize[1], 0.32);
-  check('the 小 preset leaves the other photos alone',
-    multiResult.widthAfterSize[0], multiResult.widthAfterLayout[0]);
   checkTrue('dragging the handle makes the photo bigger',
-    multiResult.widthAfterDrag[0] !== multiResult.widthAfterSize[0]);
+    multiResult.widthAfterDrag[0] !== multiResult.widthAfterLayout[0]);
+  checkTrue('the gallery toolbar has no size presets left',
+    !multiResult.toolbarTexts.some(t => t === '大' || t === '中' || t === '小'));
+  checkTrue('the gallery toolbar has no move buttons left',
+    !multiResult.toolbarTexts.some(t => t.includes('前移') || t.includes('后移')));
   check('the saved gallery keeps the chosen layout', multiResult.savedLayout, 'two');
   check('the saved gallery keeps all three photos',
     multiResult.savedPhotos && multiResult.savedPhotos.length, 3);
   checkTrue('the saved gallery keeps the resized photo\'s width',
     multiResult.savedPhotos && typeof multiResult.savedPhotos[0].width === 'number' &&
     multiResult.savedPhotos[0].width > 0.5);
-  checkTrue('the saved gallery keeps the shrunk photo\'s width',
-    multiResult.savedPhotos && Math.abs(multiResult.savedPhotos[1].width - 0.32) < 0.001);
   checkTrue('a photo that still follows the layout stores no width',
     multiResult.savedPhotos && multiResult.savedPhotos[2].width === undefined);
   check('the plain text is still mirrored into notes',
@@ -439,6 +449,9 @@ app.whenReady().then(async () => {
   const orderResult = await evalIn(win, `
     await window.__editor.render({}, {});
     await new Promise(r => setTimeout(r, 60));
+
+    // Only this section's uploads matter for the order.
+    window.__testUploads.clear();
 
     const ta = document.querySelector('.diary-block-text');
     ta.value = '三张照片。';
@@ -467,6 +480,10 @@ app.whenReady().then(async () => {
     const order = () => Array.from(gallery.querySelectorAll('.diary-gallery-item'))
       .map(el => el.dataset.photoId);
     const before = order();
+    // The photos are uploaded in the order they were picked, so the n-th
+    // picked photo ends up as the n-th uploaded one. Remember that, so
+    // the saved order can be checked against it.
+    const picked = before.slice();
 
     // Drag the first photo onto the second one: they swap places.
     const r0 = items[0].getBoundingClientRect();
@@ -485,22 +502,9 @@ app.whenReady().then(async () => {
     await new Promise(r => setTimeout(r, 40));
     const afterDrag = order();
 
-    // The toolbar moves the selected photo one step as well.
+    // The dragged photo becomes the selected one.
     const selectedBefore = gallery.querySelector('.diary-gallery-item.selected');
     const selectedId = selectedBefore ? selectedBefore.dataset.photoId : null;
-    gallery.querySelector('[data-act="photo-right"]').click();
-    await new Promise(r => setTimeout(r, 20));
-    const afterButton = order();
-
-    // Mark each photo with its own size, so the saved document shows
-    // which photo is where.
-    const sizes = ['small', 'mid', 'big'];
-    const now = Array.from(gallery.querySelectorAll('.diary-gallery-item'));
-    now.forEach((el, i) => {
-      el.click();
-      gallery.querySelector('[data-size="' + sizes[i] + '"]').click();
-    });
-    await new Promise(r => setTimeout(r, 20));
 
     document.getElementById('diary-title').value = '换了顺序的一篇';
     document.getElementById('diary-occurred').value = '2026-05-03T10:30';
@@ -511,12 +515,17 @@ app.whenReady().then(async () => {
     const row = rows[rows.length - 1];
     const block = row.content.find(b => b.type === 'gallery');
 
+    // The photos are uploaded in the order they were picked, so the n-th
+    // picked photo is the n-th saved photo.
+    const uploaded = window.__testUploads.all().map((u) => u.id);
+    const savedOrder = order().map((id) => uploaded[picked.indexOf(id)]);
+
     return {
       before,
       afterDrag,
-      afterButton,
       selectedId,
       savedPhotos: block && block.photos,
+      savedOrder,
     };
   `);
   check('the gallery starts in the order the photos were picked',
@@ -526,12 +535,9 @@ app.whenReady().then(async () => {
     [orderResult.before[1], orderResult.before[0], orderResult.before[2]]);
   check('the dragged photo is the selected one',
     orderResult.selectedId, orderResult.before[0]);
-  check('the ▶ button moves the selected photo one step back',
-    orderResult.afterButton,
-    [orderResult.before[1], orderResult.before[2], orderResult.before[0]]);
   check('the saved document keeps the new order',
-    orderResult.savedPhotos && orderResult.savedPhotos.map(p => p.width),
-    [0.32, 0.6, 1]);
+    orderResult.savedPhotos && orderResult.savedPhotos.map(p => p.photo_id),
+    orderResult.savedOrder);
 
   // ---- 6. A real mouse drag reorders the photos -------------------------
   console.log('\n== 真实鼠标拖拽 ==');
@@ -652,7 +658,96 @@ app.whenReady().then(async () => {
   check('a double click opens the picture',
     lightboxResult.afterDblClick.lightboxOpen, true);
 
-  // ---- 8. No tag logic anywhere ---------------------------------------
+  // ---- 8. The body never covers the decorative layer -------------------
+  //
+  // The sheet is three layers: the title bar, the body and the decoration
+  // at the bottom. The body grows with the text and the photos it holds;
+  // the decoration has to stay BELOW it. When all three were painted as
+  // one background stack, a long entry put its words and its pictures on
+  // top of the decoration instead.
+  console.log('\n== 三层结构不遮挡 ==');
+  const layersResult = await evalIn(win, `
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 60));
+
+    const measure = () => {
+      const header = document.querySelector('.diary-page-header');
+      const body = document.querySelector('.diary-page-body');
+      const foot = document.querySelector('.diary-page-foot');
+      const page = document.querySelector('.diary-page');
+      const h = header.getBoundingClientRect();
+      const b = body.getBoundingClientRect();
+      const f = foot.getBoundingClientRect();
+      const p = page.getBoundingClientRect();
+      // The last block is the lowest thing in the body.
+      const blocks = Array.from(document.querySelectorAll('.diary-block'));
+      const last = blocks.length ? blocks[blocks.length - 1].getBoundingClientRect() : null;
+      return {
+        headerBottom: Math.round(h.bottom),
+        bodyTop: Math.round(b.top),
+        bodyBottom: Math.round(b.bottom),
+        footTop: Math.round(f.top),
+        footBottom: Math.round(f.bottom),
+        footHeight: Math.round(f.height),
+        lastBlockBottom: last ? Math.round(last.bottom) : null,
+        bodyHeight: Math.round(b.height),
+        pageHeight: Math.round(p.height),
+        // The gap between the bottom of the decoration and the bottom of
+        // the sheet. It has to be zero: the decoration IS the bottom edge.
+        footGap: Math.round(p.bottom - f.bottom),
+        // The decoration is the last layer of the sheet.
+        footIsLast: page.lastElementChild === foot,
+      };
+    };
+
+    const before = measure();
+
+    // Now make the document long: a lot of text and a tall picture. The
+    // body must grow — and the decoration must move down with it, not be
+    // covered by it.
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = Array.from({ length: 40 }, (_, i) => '这是第 ' + (i + 1) + ' 行文字，用来把页面撑长。').join('\\n');
+    ta.dispatchEvent(new Event('input'));
+    await new Promise(r => setTimeout(r, 60));
+
+    const fileInput = document.getElementById('diary-photos');
+    fileInput.click = () => {
+      const file = new File([new Uint8Array([1,2,3])], 'tall.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+      fileInput.dispatchEvent(new Event('change'));
+    };
+    document.querySelector('.diary-block-bar [data-act="insert-image"]').click();
+    await new Promise(r => setTimeout(r, 120));
+
+    // Give the picture a real height — the picked bytes are not an image,
+    // so it has none of its own.
+    const item = document.querySelector('.diary-gallery-item');
+    if (item) item.style.height = '300px';
+    await new Promise(r => setTimeout(r, 60));
+
+    const after = measure();
+    return { before, after };
+  `);
+  check('the header bar sits above the body',
+    layersResult.before.headerBottom <= layersResult.before.bodyTop, true);
+  check('the body sits above the decoration',
+    layersResult.before.bodyBottom <= layersResult.before.footTop, true);
+  check('the decoration has its own height',
+    layersResult.before.footHeight > 0, true);
+  checkTrue('a longer document makes the body taller',
+    layersResult.after.bodyHeight > layersResult.before.bodyHeight);
+  checkTrue('the decoration moves down when the body grows',
+    layersResult.after.footTop > layersResult.before.footTop);
+  check('the body still ends above the decoration',
+    layersResult.after.bodyBottom <= layersResult.after.footTop, true);
+  check('the last block of the body ends above the decoration',
+    layersResult.after.lastBlockBottom <= layersResult.after.footTop, true);
+  check('the decoration reaches the bottom edge of the sheet',
+    layersResult.after.footGap, 0);
+  check('the decoration is the last layer of the sheet',
+    layersResult.after.footIsLast, true);
+
+  // ---- 9. No tag logic anywhere ---------------------------------------
   console.log('\n== 标签逻辑已移除 ==');
   const noTagResult = await evalIn(win, `
     await window.__editor.render({}, {});

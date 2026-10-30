@@ -18,7 +18,7 @@ const outPath = path.join(__dirname, '.diary-preview.png');
 
 const PROBE_HTML = `<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="./css/styles.css"></head><body>
-<div id="app"></div><div id="toast-container"></div>
+<main id="app" class="content"></main><div id="toast-container"></div>
 <script type="module">
 const editor = await import('./js/pages/diary_edit.js');
 await editor.render({}, {});
@@ -51,6 +51,22 @@ ta.value = '海风很大，浪声一直没停。她把鞋提在手里，光脚�
 ta.focus();
 ta.setSelectionRange(11, 11);
 ta.dispatchEvent(new Event('input'));
+
+// The Helena paper — the one in the reference artwork: a blue header, a
+// pale body and a green decorative strip at the bottom.
+document.querySelector('.diary-theme-tile[data-theme-id="helena"]').click();
+await new Promise(r => setTimeout(r, 50));
+
+// A second, longer paragraph below the gallery, so the screenshot shows
+// the body layer growing past the point where the decorative strip used
+// to sit — the case that used to put the words on top of the decoration.
+await new Promise(r => setTimeout(r, 300));
+const tas = document.querySelectorAll('.diary-block-text');
+const lower = tas[tas.length - 1];
+lower.value = '傍晚风凉下来，我们沿着海岸线慢慢走回旅馆。她把鞋重新穿好，'
+  + '说下次要带一件外套。我把这句话记在了这里 —— '
+  + '这样下次想起这一天的时候，能连着想起海风、浪声，还有那双一直提在手里的鞋。';
+lower.dispatchEvent(new Event('input'));
 
 const fileInput = document.getElementById('diary-photos');
 fileInput.click = () => {
@@ -119,18 +135,55 @@ app.whenReady().then(async () => {
   );
   const state = await win.webContents.executeJavaScript(`(() => {
     const g = document.querySelector('.diary-block-gallery');
+    const page = document.querySelector('.diary-page');
+    const foot = document.querySelector('.diary-page-foot');
+    const body = document.querySelector('.diary-page-body');
+    const pb = page.getBoundingClientRect();
+    const fb = foot.getBoundingClientRect();
+    const bb = body.getBoundingClientRect();
     return {
       widths: Array.from(g.querySelectorAll('.diary-gallery-item')).map(i => i.style.width),
       rects: Array.from(g.querySelectorAll('.diary-gallery-item')).map(i => Math.round(i.getBoundingClientRect().width)),
       selected: (g.querySelector('[data-layout].selected') || { dataset: {} }).dataset.layout || null,
+      // The geometry of the three layers, in document coordinates.
+      bodyBottom: Math.round(bb.bottom + window.scrollY),
+      footTop: Math.round(fb.top + window.scrollY),
+      footBottom: Math.round(fb.bottom + window.scrollY),
+      pageBottom: Math.round(pb.bottom + window.scrollY),
+      // Scroll so the bottom of the sheet — the decoration — is in view.
+      scrollTo: Math.max(0, Math.round(fb.bottom - window.innerHeight + 40)),
     };
   })()`);
   console.log('at capture:', JSON.stringify(state));
   await new Promise((r) => setTimeout(r, 600));
 
+  // Scroll the page so the decorative strip is in the shot — it is the
+  // layer that has to stay below the text and the photos. The app
+  // scrolls an inner container, so the scroll has to find whichever
+  // element actually overflows.
+  const scrolled = await win.webContents.executeJavaScript(`(() => {
+    const foot = document.querySelector('.diary-page-foot');
+    // The app scrolls the .content pane, not the window.
+    const scroller = document.querySelector('.content') || document.scrollingElement;
+    const target = Math.round(foot.getBoundingClientRect().bottom - scroller.clientHeight + 30);
+    scroller.scrollTop = target;
+    return { el: scroller.className || scroller.tagName, top: scroller.scrollTop,
+             footTop: Math.round(foot.getBoundingClientRect().top) };
+  })()`);
+  console.log('scrolled:', JSON.stringify(scrolled));
+  await new Promise((r) => setTimeout(r, 400));
+
+  // The capture has to happen after the window has actually painted.
+  // Asking for the size first forces a synchronous layout, so the frame
+  // that comes back is not an empty one.
+  const size = win.getContentSize();
+  console.log('window size:', JSON.stringify(size));
+  await new Promise((r) => setTimeout(r, 800));
+
   const image = await win.webContents.capturePage();
-  fs.writeFileSync(outPath, image.toPNG());
-  console.log('wrote', outPath);
+  const png = image.toPNG();
+  fs.writeFileSync(outPath, png);
+  console.log('wrote', outPath, png.length, 'bytes');
 
   fs.unlinkSync(probePath);
   app.exit(0);

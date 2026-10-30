@@ -3218,19 +3218,27 @@ body.locked #pin-modal.hidden { display: none !important; }
   /* The title on the header bar. The pale headers need dark ink, the
      dark ones take white — white on a pale bar would be unreadable. */
   --diary-header-text: #3a3222;
-  /* The page body is painted in two flat bands — the upper one and the
-     lower one — so the sheet reads as three horizontal strips in all (the
-     header bar plus the two bands), the way the reference artwork does.
-     The renderer writes the real gradients inline; this default is the
-     'light' style, so the page is readable before they land. */
-  --diary-bg:
-    linear-gradient(180deg, #e5d6b0 0%, #e5d6b0 80%, #e5d6b0 80%, #e5d6b0 100%),
-    linear-gradient(180deg, transparent 0%, transparent 80%, #e5d6b0 80%, #e5d6b0 100%);
+  /* The three horizontal layers of the sheet. The renderer writes the
+     real colors inline; these defaults are the 'light' style, so the page
+     is readable before they land.
+
+     They are three separate layers — the header bar, the body and the
+     decorative strip — and NOT bands painted into one background. The
+     body layer takes its height from its content, so a long entry grows
+     the body and leaves the decoration below it, rather than letting the
+     text and the photos lie on top of the decoration. */
+  --diary-bg: #e5d6b0;
+  --diary-bg-foot: #d3bd88;
   /* The flat upper band, for the little toolbars that sit on the page. */
   --diary-bg-flat: #e5d6b0;
   --diary-text: #3a3222;
   --diary-muted: #9a8f74;
   --diary-rule: #e2d5b8;
+  /* The sheet is a column of three layers: the title bar on top, the
+     body in the middle, the decoration at the bottom. The body is the
+     only layer that grows. */
+  display: flex;
+  flex-direction: column;
   background: var(--diary-bg);
   color: var(--diary-text);
   border: 1px solid var(--diary-rule);
@@ -3242,6 +3250,7 @@ body.locked #pin-modal.hidden { display: none !important; }
 /* The colored strip across the top of the page. It carries the title, so
    the user types and edits the title right there. */
 .diary-page-header {
+  flex: none;
   background: var(--diary-header-bg);
   color: var(--diary-header-text);
   text-align: center;
@@ -3251,7 +3260,27 @@ body.locked #pin-modal.hidden { display: none !important; }
   padding: 10px 0;
 }
 
-.diary-page-body { padding: 26px 30px 30px; }
+/* The body of the page: the text and the photos. Its height comes from
+   its content, so writing more only makes this layer taller — the
+   decorative strip below it keeps its own height and is never covered. */
+.diary-page-body {
+  flex: 1 0 auto;
+  padding: 26px 30px 30px;
+  /* The body paints its own color, so it stands on its own as a layer
+     and does not depend on what the page behind it happens to be. */
+  background: var(--diary-bg);
+}
+
+/* The decorative strip at the bottom of the page. It carries no text —
+   it is the sheet's bottom edge, and it stays below the body however
+   long the body grows. The negative margin lets it run under the page's
+   1px border, so the bottom edge is one solid strip of color. */
+.diary-page-foot {
+  flex: none;
+  height: 34px;
+  margin-bottom: -1px;
+  background: var(--diary-bg-foot);
+}
 
 /* The title is part of the diary page, not a form box. The global
    `input[type="text"]` rule is more specific than a bare class, so these
@@ -3332,8 +3361,8 @@ body.locked #pin-modal.hidden { display: none !important; }
    picture, and on an empty page there is nothing else to hover. */
 .diary-blocks > .diary-block:first-child .diary-block-bar { opacity: 1; }
 .diary-block-bar .btn-tiny {
-  /* The flat band, not --diary-bg: that one is a gradient stack now, and
-     a gradient on a small button would look broken. */
+  /* The flat band color, so the button always reads as a small chip on
+     the page surface. */
   background: var(--diary-bg-flat);
   color: var(--diary-muted);
   border-color: var(--diary-rule);
@@ -3509,8 +3538,8 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   opacity: 0.8;
 }
 .diary-gallery-bar .btn-tiny {
-  /* The flat band, not --diary-bg: that one is a gradient stack now, and
-     a gradient on a small button would look broken. */
+  /* The flat band color, so the button always reads as a small chip on
+     the page surface. */
   background: var(--diary-bg-flat);
   color: var(--diary-muted);
   border-color: var(--diary-rule);

@@ -13,6 +13,7 @@
 const { contextBridge } = require('electron');
 
 const rows = {};
+const uploads = [];
 let nextId = 1;
 let nextPhotoId = 1;
 
@@ -35,11 +36,15 @@ const mem = {
     list: async () => [],
     // The real handler returns the stored photo row. The test needs a
     // real id so the editor can rewrite the document's temp ids.
-    upload: async () => ({
-      id: 'p' + (nextPhotoId++),
-      original_name: 'photo.jpg',
-      mime: 'image/jpeg',
-    }),
+    upload: async () => {
+      const photo = {
+        id: 'p' + (nextPhotoId++),
+        original_name: 'photo.jpg',
+        mime: 'image/jpeg',
+      };
+      uploads.push(photo);
+      return photo;
+    },
     delete: async () => true,
     read: async () => ({ data_url: '' }),
   },
@@ -68,4 +73,12 @@ contextBridge.exposeInMainWorld('__testRows', {
   all: () => Object.assign({}, rows),
   seed: (id, row) => { rows[id] = row; return true; },
   clear: () => { for (const k of Object.keys(rows)) delete rows[k]; },
+});
+
+// The photos that were uploaded, in the order they were uploaded. The
+// editor rewrites its temp ids with these, so a test can follow a photo
+// from the pick to the saved document.
+contextBridge.exposeInMainWorld('__testUploads', {
+  all: () => uploads.slice(),
+  clear: () => { uploads.length = 0; },
 });
