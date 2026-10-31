@@ -1,5 +1,5 @@
 // main/main.js — Electron entry: DB, scheduler, IPC, two windows
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -8,6 +8,7 @@ const scheduler = require('./scheduler');
 const ipc = require('./ipc');
 const { PetController, petRenderSize } = require('./pet_controller');
 const { PetRegistry } = require('./pet_registry');
+const { buildPetState } = require('./pet_state');
 const autostart = require('./autostart');
 const appUpdate = require('./app_update');
 
@@ -49,26 +50,9 @@ function getPetState() { return petState; }
 function setActiveReminder(r) { activeReminder = r; }
 
 function broadcastPetState() {
-  // Use the active (non-dismissed) subset for both the count and the head
-  // bubble. Dismissed items stay in the queue but should not nag the user.
-  const activeHead = queue.activeHead();
-  const payload = {
-    state: petState ? 'REMINDER' : 'NORMAL',
-    count: queue.activeCount(),
-    // Carry enough of `head` that the pet window can render a meaningful
-    // speech bubble without an extra round-trip back to us. Fields are
-    // already on the head object (see scheduler.ReminderQueue → scanAndFire).
-    //
-    // `days_left` is present only for date-anchored reminders that are
-    // counting down to a future day (a birthday with the advance window
-    // open). null for everything else.
-    head: activeHead ? {
-      title: activeHead.title,
-      contact_name: activeHead.contact_name || null,
-      description: activeHead.description || null,
-      days_left: activeHead.days_left != null ? activeHead.days_left : null,
-    } : null,
-  };
+  // The payload shape lives in main/pet_state.js so this broadcast and the
+  // `pet:get_state` IPC (the pet window's initial read) cannot drift.
+  const payload = buildPetState({ petState, queue });
   if (winPet && !winPet.isDestroyed()) winPet.webContents.send('pet:state-changed', payload);
   if (winMain && !winMain.isDestroyed()) winMain.webContents.send('pet:state-changed', payload);
 }
@@ -139,6 +123,24 @@ function createWindows({ petRegistry } = {}) {
     db.setSetting('pet_x', String(x));
     db.setSetting('pet_y', String(y));
   });
+
+  // Display configuration changed — a monitor was plugged/unplugged, the
+  // resolution changed, a dock was undocked.
+  //
+  // The OS can leave the pet window parked outside the new work area, where
+  // the user cannot reach it to drag it back. Pull it into view.
+  //
+  // This also fires around a system resume (the display layout is
+  // re-evaluated then), which is the same failure mode.
+  const onDisplayChanged = () => {
+    if (!petController || typeof petController.clampIntoView !== 'function') return;
+    try { petController.clampIntoView(); } catch (e) {
+      console.error('[main] could not re-clamp the pet into view:', e);
+    }
+  };
+  screen.on('display-added', onDisplayChanged);
+  screen.on('display-removed', onDisplayChanged);
+  screen.on('display-metrics-changed', onDisplayChanged);
 
   winMain = new BrowserWindow({
     width: 980,

@@ -179,8 +179,26 @@ async function playVariant(action, direction, opts = {}) {
 }
 
 // ---- State / reminder UI ----
+//
+// The reminder the pet is currently nagging about, as `{ source, source_id }`.
+// The main process sends the head's identity on every `pet:state-changed`
+// payload, so the pet window can acknowledge exactly that reminder when the
+// user closes it.
+//
+// This is what makes "关闭提醒" possible at all: without the ids the
+// window could only hide its own bubble, and the nag stayed on — badge
+// counting, sprite shaking, top-bar pill still reading 桌宠提醒.
+let currentReminder = null;
+
 function setState(state, count, head) {
   sprite.dataset.state = state;
+  // Remember which reminder the badge/bubble are showing, so a click on
+  // the pet (or on the bubble) completes the right one. Cleared as soon as
+  // nothing is pending, so a stale id can never be completed by a later
+  // click.
+  currentReminder = (count > 0 && head && head.source && head.source_id != null)
+    ? { source: head.source, source_id: head.source_id }
+    : null;
   if (count > 0) {
     badge.textContent = String(count);
     badge.classList.remove('hidden');
@@ -221,6 +239,59 @@ function clearReminderBubble() {
   bubble.classList.remove('fade');
   if (bubbleFadeTimer) { clearTimeout(bubbleFadeTimer); bubbleFadeTimer = null; }
 }
+
+// Close the reminder the pet is nagging about.
+//
+// "Close" means the same soft-dismiss the main window's 完成 button
+// performs: the pet stops nagging (badge off, no shake, top-bar pill back
+// to 桌宠正常) while the entry stays on the 今日 page so the user can still
+// scroll back and confirm what they finished.
+//
+// The decision belongs to the main process — it owns the queue and the ack
+// table — so this side only asks. The main process answers with a
+// `pet:state-changed` broadcast, and that is what actually clears the badge.
+async function dismissCurrentReminder() {
+  const r = currentReminder;
+  if (!r) {
+    // Nothing to acknowledge (the nag is already gone). Just drop the
+    // bubble so the pet stops showing a headline that is no longer true.
+    clearReminderBubble();
+    return;
+  }
+  // Cleared BEFORE the await, so a second click — or a click that lands
+  // while the main process is still answering — cannot fire a second
+  // dismissal for the same reminder.
+  currentReminder = null;
+  try {
+    await M.reminders.completeForToday(r.source, r.source_id);
+  } catch (e) {
+    // Put it back so the user can try again, and leave the bubble up —
+    // the reminder is still pending.
+    console.error('[pet] could not close the reminder', e);
+    currentReminder = r;
+    return;
+  }
+  badge.classList.add('hidden');
+  clearReminderBubble();
+}
+
+// The bubble is the visible face of the nag, so clicking it is the most
+// explicit way to turn it off.
+//
+// The badge stays `pointer-events: none`: it sits over the pet's shoulder,
+// which is exactly where people grab the pet to drag it, and a badge that
+// swallowed the pointerdown would break the drag. A click that lands on
+// the badge still reaches the sprite underneath, so clicking the number
+// closes the reminder all the same — it just also plays the pet's usual
+// click reaction.
+//
+// A drag that ends over the bubble does not fire a click (the press and
+// the release land on different elements, so the click targets their
+// common ancestor), so this cannot fire in the middle of a drag.
+bubble.addEventListener('click', (e) => {
+  e.stopPropagation();
+  dismissCurrentReminder();
+});
 
 // ---- Contextual text bubble (main/pet_bubbles.js) ----
 //
@@ -649,7 +720,7 @@ function showContextBubble(payload) {
 
 // ---- Drag implementation ----
 //
-// Three layers, because the naive version had a failure mode that made the
+// Four layers, because each naive version had a failure mode that made the
 // pet undraggable for the rest of the session:
 //
 //   1. **Pointer capture + an explicit end-of-gesture reset.** The pet window
@@ -672,6 +743,38 @@ function showContextBubble(payload) {
 //      itself — the original behaviour. It only works while the pointer
 //      stays inside the window, but it is strictly better than a pet that
 //      cannot be dragged at all.
+//
+//   4. **Self-healing on a pointer-identity change** (added after the
+//      "undraggable after a real sleep" report). This is the layer that
+//      makes the drag survive a suspend, and it deliberately does NOT depend
+//      on the OS telling us that a sleep happened.
+//
+//      The mechanism it defends against: a system suspend tears down and
+//      re-creates the pointer device. On wake the mouse reports a NEW
+//      `pointerId`. The gesture's `dragPointerId` still names the OLD (now
+//      dead) id, so the guard
+//
+//          if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
+//
+//      rejects every single event from the new mouse — forever. The pet is
+//      not "stuck mid-drag": it is wedged in a state where no pointer event
+//      can ever start a new gesture, because a fresh `pointerdown` is the
+//      only thing that clears it and that handler is unreachable for the
+//      gesture in flight.
+//
+//      The fix is to treat "an event arrived whose pointer id is not the one
+//      I captured" as PROOF that my captured gesture is dead — the pointer
+//      that owned it no longer exists — and to tear the gesture down
+//      immediately, freeing the pointer id for the next gesture.
+//
+//      This is event-driven rather than lifecycle-driven on purpose. The
+//      main process also listens for `powerMonitor`'s `resume`, but that
+//      event is not dependable on Windows 11 Modern Standby (the OS freezes
+//      the process before the event is delivered, electron/electron#47739),
+//      and a plain lid-close without a lock screen may produce no
+//      `unlock-screen` either. If the recovery only ran on those events, the
+//      pet would stay wedged — which is exactly what the original bug
+//      report describes.
 const DRAG_THRESHOLD_PX = 4;
 let pressing = false;
 let didDrag = false;
@@ -679,6 +782,10 @@ let lastX = 0, lastY = 0, downX = 0, downY = 0;
 // The pointer id that started the current gesture, so `pointermove` /
 // `pointerup` from a different pointer (a stray touch, a pen) can't hijack
 // the drag.
+//
+// `null` means "no gesture owns a pointer id" — the state the renderer
+// returns to whenever a gesture ends or is torn down. Keeping it `null`
+// (rather than a stale id) is what allows the next gesture to start.
 let dragPointerId = null;
 
 // Who owns the window position during the current drag.
@@ -705,30 +812,86 @@ let dragOwner = 'none';
 // This is the fix for the "permanently undraggable" symptom: any exit path
 // that skipped this left `pressing` true, and a stuck `pressing` turns every
 // subsequent mouse move inside the window into a bogus drag delta.
-function endDrag() {
-  if (!pressing) return;
+//
+// `force` skips the "was a gesture even in progress?" check. It is used by
+// the system-resume path: after a suspend the renderer cannot know whether
+// the main process still believes a drag is running, and the main process's
+// side is only ever torn down by an explicit `pet:drag_end`. Sending that
+// message unconditionally is safe — the main process's handler is
+// idempotent — and it is the only way to guarantee the cursor poller and
+// the controller's drag mutex are released.
+//
+// Without this, a suspend that swallowed the `pointerup` would leave the
+// main process dragging the pet around forever: the pet stuck to the
+// pointer, and the pet's autonomous movement dead for the rest of the
+// session.
+function endDrag(force = false) {
+  if (!pressing && !force) return;
+  const wasDragging = didDrag;
+  // Clear the gesture state FIRST, then release the pointer capture.
+  //
+  // The order matters. `releasePointerCapture` fires `lostpointercapture`
+  // synchronously, and the handler for that event calls back into
+  // `endDrag`. If the state were still live at that moment, the nested
+  // call would tear the gesture down a second time and send a duplicate
+  // `pet:drag_end` to the main process. Clearing first makes the nested
+  // call a no-op (its `if (!pressing) return` guard trips).
+  //
+  // The capture itself must be released: it is what keeps the gesture alive
+  // when the cursor leaves the 220 px box. If we forget to release it, the
+  // sprite stays the capture target for a pointer that no longer exists —
+  // and Chromium keeps routing that pointer's events to the sprite instead
+  // of to the window. After a system suspend the pointer device is
+  // re-created, so this stale capture is exactly what wedges the pet.
+  //
+  // `hasPointerCapture` is checked first because `releasePointerCapture`
+  // throws if the id is not captured (it is a no-op only for a stale id the
+  // browser already forgot).
+  const capturedId = dragPointerId;
   pressing = false;
+  didDrag = false;
   dragPointerId = null;
   dragOwner = 'none';
   sprite.classList.remove('dragging');
+  if (capturedId !== null) {
+    try {
+      if (typeof sprite.hasPointerCapture === 'function'
+        && sprite.hasPointerCapture(capturedId)) {
+        sprite.releasePointerCapture(capturedId);
+      }
+    } catch {}
+  }
   // Tell the main process to stop following the cursor and to release the
-  // controller's drag mutex.
+  // controller's drag mutex. This is sent on EVERY exit path, including
+  // the forced one, because it is the only way the main process learns
+  // that the gesture is over.
   try { M.pet.dragEnd(); } catch {}
-  if (didDrag) {
-    didDrag = false;
+  if (wasDragging) {
+    return;
+  }
+  // A forced teardown (the resume path) is NOT a click. It must not run the
+  // click side effects below — otherwise waking the machine up would
+  // dismiss a pending reminder bubble the user never acknowledged.
+  if (force) {
     return;
   }
   // Non-drag single click is now a no-op — the main window is gated by a
   // 4-digit PIN and must be opened via right-click → "打开主窗口". We
   // still pause movement briefly for tactile feedback, and in REMINDER
-  // state we dismiss the floating bubble (it would otherwise stay glued
-  // to the pet until acknowledged).
+  // state the click acknowledges the reminder (it would otherwise stay
+  // glued to the pet until acknowledged).
   try { M.pet.setPaused(2000); } catch {}
-  try {
-    M.pet.getState().then((s) => {
-      if (s && s.state === 'REMINDER') clearReminderBubble();
-    }).catch(() => {});
-  } catch {}
+  // A click on the pet while it is nagging is the user saying "handled".
+  //
+  // This used to hide the floating bubble and nothing else, which is why
+  // the reminder felt impossible to close: the bubble went away but the
+  // badge kept counting, the sprite kept shaking and the top-bar pill
+  // kept reading 桌宠提醒. Completing the reminder for today closes the
+  // whole thing — and the entry stays on the 今日 page, marked 已完成,
+  // so nothing is lost if the click was not meant as an acknowledgement.
+  if (currentReminder) {
+    dismissCurrentReminder();
+  }
 }
 
 sprite.addEventListener('pointerdown', (e) => {
@@ -753,7 +916,19 @@ sprite.addEventListener('pointerdown', (e) => {
 
 window.addEventListener('pointermove', (e) => {
   if (!pressing) return;
-  if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
+  // Self-heal: an event from a pointer that is not the one this gesture
+  // captured means the captured pointer is gone — the device was re-created
+  // by a system suspend, or the gesture was hijacked by another pointer.
+  //
+  // The old code just `return`ed here, which left `dragPointerId` pointing
+  // at a dead id forever. Every subsequent event from the new mouse was
+  // rejected by the same guard, so the pet could never be dragged again for
+  // the rest of the session. Tearing the gesture down here frees the id and
+  // lets the next `pointerdown` start a clean drag.
+  if (dragPointerId !== null && e.pointerId !== dragPointerId) {
+    endDrag(true);
+    return;
+  }
   if (!didDrag) {
     if (Math.hypot(e.screenX - downX, e.screenY - downY) < DRAG_THRESHOLD_PX) return;
     didDrag = true;
@@ -774,14 +949,57 @@ window.addEventListener('pointermove', (e) => {
     // process places the window under the cursor immediately on
     // `drag_start`, so nothing is lost by not guessing here — and guessing
     // would double-apply the movement once the takeover does land.
-    try {
-      const grabDX = e.screenX - window.screenX;
-      const grabDY = e.screenY - window.screenY;
-      dragOwner = 'pending';
-      Promise.resolve(M.pet.dragStart(grabDX, grabDY)).then(
+    //
+    // The grab offset is measured against the WINDOW's own screen position.
+    // `window.screenX` is the browser's view of it, which can be stale:
+    // after a suspend/resume the OS may have moved the window (display
+    // reconfiguration, monitor hotplug, dock undock), and the renderer is
+    // not guaranteed to have caught up. A stale value would offset the
+    // window by that delta the moment the drag starts, making the pet jump.
+    //
+    // So the offset is resolved against the main process's authoritative
+    // window position instead. `M.pet.getPosition()` returns the real,
+    // current coordinates. When it is unavailable or fails (an older main
+    // process) we fall back to `window.screenX`, which is the pre-existing
+    // behaviour.
+    //
+    // The lookup is asynchronous, so the takeover happens a tick later than
+    // it used to. That is harmless: the main process places the window
+    // under the cursor immediately on `drag_start`, and until then the
+    // renderer holds still (see the 'pending' ownership mode above).
+    //
+    // The start must NOT be cancelled by a `pointerup` that lands while the
+    // lookup is still in flight — a quick flick (press, move, release) is
+    // over before the reply arrives, and skipping the start would leave the
+    // main process with a drag it knows nothing about. Instead the start is
+    // always sent, and the `drag_end` that follows it tears the main
+    // process's side back down. Both messages are ordered on the same
+    // channel, so the main process sees start-then-end and ends up idle.
+    dragOwner = 'pending';
+    const fallbackOffset = { dx: e.screenX - window.screenX, dy: e.screenY - window.screenY };
+    const startDrag = (offset) => {
+      Promise.resolve(M.pet.dragStart(offset.dx, offset.dy)).then(
         () => { if (pressing && dragOwner === 'pending') dragOwner = 'main'; },
         () => { if (pressing && dragOwner === 'pending') dragOwner = 'local'; }
       );
+    };
+    try {
+      if (typeof M.pet.getPosition === 'function') {
+        Promise.resolve(M.pet.getPosition()).then(
+          (pos) => {
+            // A malformed reply means the main process is not usable for
+            // this — fall back rather than dragging the pet to the origin.
+            if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
+              startDrag({ dx: e.screenX - pos.x, dy: e.screenY - pos.y });
+            } else {
+              startDrag(fallbackOffset);
+            }
+          },
+          () => startDrag(fallbackOffset)
+        );
+      } else {
+        startDrag(fallbackOffset);
+      }
     } catch {
       dragOwner = 'local';
     }
@@ -803,8 +1021,28 @@ window.addEventListener('pointermove', (e) => {
 });
 
 window.addEventListener('pointerup', (e) => {
-  if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
-  try { sprite.releasePointerCapture(e.pointerId); } catch {}
+  // Same self-heal as in `pointermove`: a `pointerup` from a different
+  // pointer proves the captured one is dead. End the stale gesture instead
+  // of ignoring the event — otherwise the gesture stays wedged.
+  if (dragPointerId !== null && e.pointerId !== dragPointerId) {
+    endDrag(true);
+    return;
+  }
+  // The pointer capture is released by `endDrag` itself, and that happens
+  // AFTER it has cleared the gesture state — see the comment inside
+  // `endDrag` about the ordering.
+  //
+  // Releasing it HERE instead would fire `lostpointercapture`
+  // synchronously, while the gesture was still live. The handler for that
+  // event would tear the gesture down a second time, as a FORCED teardown,
+  // and the forced path deliberately skips the click side effects. The
+  // outer `endDrag()` below would then find the gesture already torn down
+  // and do nothing either.
+  //
+  // The net effect was that a click on the pet never ran its click side
+  // effects at all — which is why the pet's click never dismissed the
+  // reminder it was nagging about: that dismissal lived in exactly those
+  // side effects, so it was dead code.
   endDrag();
 });
 
@@ -812,8 +1050,32 @@ window.addEventListener('pointerup', (e) => {
 // touch being hijacked, a pen leaving range). It is the pointer-events
 // equivalent of a lost `mouseup`.
 window.addEventListener('pointercancel', (e) => {
-  if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
+  if (dragPointerId !== null && e.pointerId !== dragPointerId) {
+    endDrag(true);
+    return;
+  }
   endDrag();
+});
+
+// `lostpointercapture` fires when the capture is released WITHOUT a
+// `pointerup` — either the browser revoked it, or (the case that matters
+// here) the underlying pointer device was torn down and re-created by a
+// system suspend.
+//
+// There is no `lostpointercapture` listener anywhere else in this file, so
+// without this one the gesture would sit in `pressing = true` with a
+// dangling `dragPointerId` until some unrelated event happened to arrive.
+// With it, the gesture is torn down the moment the capture is lost.
+//
+// The handler only acts when a gesture is actually in flight: the browser
+// also fires `lostpointercapture` at the end of an ordinary release, and by
+// then `pointerup` has already ended the gesture (`pressing` is false), so
+// this is a no-op in the normal case.
+window.addEventListener('lostpointercapture', (e) => {
+  if (!pressing) return;
+  // Only tear down if the capture we lost is the one this gesture owns.
+  if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
+  endDrag(true);
 });
 
 // The window is `focusable: false`, so it never takes keyboard focus and
@@ -824,6 +1086,59 @@ window.addEventListener('blur', endDrag);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) endDrag();
 });
+
+// ---- Drag watchdog (renderer side) ----
+//
+// The event-driven self-heal above already covers the "pointer identity
+// changed" case: the first `pointermove` after the wake tears the stale
+// gesture down. But that only helps if a `pointermove` actually arrives.
+//
+// It might not. Two independent reasons:
+//
+//   * The renderer can be frozen for the whole sleep and stay frozen for a
+//     moment after the wake, so the `pointerup`/`pointermove` that would
+//     have triggered the self-heal is delivered late or dropped
+//     (electron/electron#43020).
+//   * If the pointer does not move — the user just clicks — there is no
+//     `pointermove` at all. The `pointerdown` would then be handled
+//     correctly (it always resets the gesture), but a `pointerdown` on the
+//     sprite requires the window to be hit-tested at the sprite's
+//     coordinates, and a stale pointer capture can make Chromium route
+//     that click to the capture target instead of to the sprite.
+//
+// So the renderer also runs its own clock watchdog. It is the same trick
+// the main process uses: timers do not replay missed ticks across a sleep,
+// but the wall clock jumps forward by the length of the sleep. A gap
+// larger than the heartbeat interval therefore proves the renderer was
+// frozen.
+//
+// This makes the renderer recover on its own, with no help from the main
+// process and no reliance on an OS power event being delivered — the two
+// things that cannot be relied upon.
+const DRAG_WATCHDOG_INTERVAL_MS = 5000;
+// This MUST be comfortably ABOVE the heartbeat interval: the gap is
+// measured between two ticks, so a healthy gap is already ~INTERVAL. A
+// threshold below the interval would fire on every single tick.
+//
+// The margin covers a machine that is merely busy (a long GC pause, a
+// heavy disk, a background tab doing work) while still catching any real
+// sleep — the shortest thing anyone calls a "sleep" is several seconds,
+// and a real suspend is measured in minutes.
+const DRAG_WATCHDOG_GAP_MS = 20000;
+let lastWatchdogAt = Date.now();
+const dragWatchdog = setInterval(() => {
+  const now = Date.now();
+  const gap = now - lastWatchdogAt;
+  lastWatchdogAt = now;
+  if (gap <= DRAG_WATCHDOG_GAP_MS) return;
+  // We were frozen — the machine slept. Any gesture in flight is stale:
+  // its pointer device is gone and its `pointerup` was never delivered.
+  if (pressing || didDrag || dragPointerId !== null) {
+    endDrag(true);
+  }
+}, DRAG_WATCHDOG_INTERVAL_MS);
+// The watchdog must not keep the page alive on its own.
+if (dragWatchdog && typeof dragWatchdog.unref === 'function') dragWatchdog.unref();
 
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault();
@@ -895,6 +1210,22 @@ sprite.addEventListener('click', () => {
 
 // ---- Subscriptions from the main process ----
 if (M.on) {
+  // The system came back from sleep/hibernate. The main process has already
+  // torn down its side of the drag (the cursor poller and the controller's
+  // drag mutex) — see main/pet_resume.js.
+  //
+  // The renderer has to forget its gesture too: a `pointerup` that happened
+  // while the machine was asleep was never delivered, so `pressing` would
+  // still be true and the next mouse move over the pet would compute a
+  // delta against a stale baseline and teleport it.
+  //
+  // `endDrag(true)` forces the reset AND sends `pet:drag_end`, which is
+  // harmless (the main process's handler is idempotent) and guarantees the
+  // main process learns the gesture is over even if it somehow still
+  // believed a drag was running.
+  M.on('pet:resume', () => {
+    endDrag(true);
+  });
   M.on('pet:state-changed', (payload) => {
     setState(payload.state, payload.count, payload.head);
   });

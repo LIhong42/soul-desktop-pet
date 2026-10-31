@@ -30,10 +30,14 @@
       <a href="#/tools" data-route="/tools">工具</a>
       <a href="#/settings" data-route="/settings">设置</a>
     </nav>
-    <div class="pet-pill" id="pet-pill">
+    <!-- The pet's live state. It is a button because it is the way into
+         the reminder UI: clicking it opens the reminder the pet is
+         nagging about (完成 / 稍后 / 明天), or lands on 今日 when there is
+         nothing pending. -->
+    <button type="button" class="pet-pill" id="pet-pill" title="查看桌宠提醒">
       <span class="pet-dot" id="pet-dot"></span>
       <span id="pet-pill-text">宠物正常</span>
-    </div>
+    </button>
   </header>
   <main id="app" class="content"></main>
 

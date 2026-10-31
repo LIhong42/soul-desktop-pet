@@ -374,6 +374,34 @@ class PetController {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
   }
 
+  // Pull the pet window back inside the visible work area.
+  //
+  // Called when the display configuration changes — a monitor is unplugged,
+  // the resolution changes, a dock is undocked. Those events can leave the
+  // pet window parked off-screen, where the user cannot reach it to drag it
+  // back. It is also called after a system resume, for the same reason: the
+  // OS may have moved the window while the machine was asleep.
+  //
+  // The clamp mirrors `_stepWalk`'s: the window is taller than the sprite
+  // (bubble headroom above it), so it is the WINDOW's box that has to stay
+  // on screen, with the sprite's top edge kept visible.
+  clampIntoView() {
+    if (!this.win || this.win.isDestroyed()) return;
+    const b = this._bounds();
+    if (!b) return;
+    let [x, y] = this.win.getPosition();
+    const nx = Math.max(b.x, Math.min(b.x + b.w - this.renderW, x || 0));
+    // The sprite is pinned to the window's BOTTOM, so the window's top can
+    // sit up to a headroom above the work area before the sprite would go
+    // off-screen. See `_stepWalk` for the same arithmetic.
+    const ny = Math.max(
+      b.y - this.renderH + PET_RENDER_HEIGHT,
+      Math.min(b.y + b.h - this.renderH, y || 0)
+    );
+    if (nx === x && ny === y) return;
+    this.win.setPosition(Math.round(nx), Math.round(ny), false);
+  }
+
   setEnabled(v) {
     this.enabled = !!v;
     this.db.setSetting('pet_walk_enabled', this.enabled ? '1' : '0');

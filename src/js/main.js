@@ -1,6 +1,6 @@
 // src/js/main.js — entry point, wires router, navigation active link, reminder modal, pet state pill
 import { api, escapeHtml, fmtDateTime, toast } from './api.js';
-import { register, onChange, start } from './router.js';
+import { register, onChange, navigate, start } from './router.js';
 import { start as startAuth, registerLockedEventHandlers } from './auth.js';
 import './pages/today.js';
 import './pages/contacts_list.js';
@@ -38,9 +38,13 @@ function updatePetPill(state) {
   if (state && state.state === 'REMINDER') {
     pill.classList.add('remind');
     text.textContent = `桌宠提醒（${state.count}）`;
+    // The tooltip says what a click does, so the pill does not read as a
+    // status label that happens to be clickable.
+    pill.title = '桌宠正在提醒你 — 点击查看并处理';
   } else {
     pill.classList.remove('remind');
     text.textContent = '桌宠正常';
+    pill.title = '查看桌宠状态';
   }
 }
 
@@ -89,6 +93,32 @@ function showReminderModal(r) {
 
 document.getElementById('reminder-close').onclick = () => {
   document.getElementById('reminder-modal').classList.add('hidden');
+};
+
+// The pet pill is the way into the reminder UI.
+//
+// It shows the pet's live nag count ("桌宠提醒（1）"), so clicking it
+// should do the obvious thing: open the reminder the pet is nagging about
+// so it can be 完成 / 稍后 / 明天. With nothing pending it lands on 今日,
+// where the reminder list and the pet's live status live.
+//
+// The pill used to be a plain <div>: it looked like a button and did
+// nothing at all when clicked.
+document.getElementById('pet-pill').onclick = async () => {
+  try {
+    // `listActive` returns the whole queue, including the items that were
+    // already completed for today — those must not reopen a modal.
+    const active = await api.reminders.listActive();
+    const pending = (active || []).filter((r) => !r.dismissed_for_today);
+    if (pending.length === 0) {
+      navigate('/today');
+      return;
+    }
+    showReminderModal(pending[0]);
+  } catch (e) {
+    console.error('[pill] could not open the reminder', e);
+    navigate('/today');
+  }
 };
 
 api.on('pet:state-changed', (payload) => {

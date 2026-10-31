@@ -12,6 +12,7 @@ const {
   installPetZip, removeImported,
 } = require('./pet_zip_import');
 const { petRenderSize } = require('./pet_controller');
+const { buildPetState } = require('./pet_state');
 const albumPdf = require('./album_pdf');
 const albumDocx = require('./album_docx');
 const PDFDocument = require('pdfkit');
@@ -24,6 +25,8 @@ const petMoodMod = require('./pet_mood');
 const petActionsConfig = require('./pet_actions_config');
 const petActionTexts = require('./pet_action_texts');
 const petBubbles = require('./pet_bubbles');
+// 系统睡眠/唤醒后的桌宠拖拽状态恢复。见 main/pet_resume.js 的说明。
+const petResumeMod = require('./pet_resume');
 // 文本框 catalog (resources/text_boxes) — scanned, not hard-coded.
 const petTextBoxes = require('./pet_text_boxes');
 const videoFrameSplit = require('./video_frame_split');
@@ -1403,23 +1406,10 @@ function normFreeText(s) {
   // fired it. The reminder_acks row is the source of truth for "已确认
   // 完成"; the queue entry is just a transient nag mirror.
   ipcMain.handle('reminders:complete_for_today', (_e, source, sourceId) => {
-    queue.dismissForToday(source, sourceId);
-    db.run(
-      `INSERT INTO reminder_acks(source, source_id, acked_at, next_fire_at)
-       VALUES (?, ?, ?, NULL)`,
-      [source, sourceId, db.nowStr()]
+    return completeReminderForToday(
+      { queue, setPetState, setActiveReminder, broadcastPetState },
+      source, sourceId,
     );
-    updatePetState({ queue, setPetState, setActiveReminder });
-    // queue.dismissForToday → emit() → broadcastPetState() fires one
-    // IPC, then updatePetState → setPetState(false) → a second. If
-    // petState was already true the first call leaves
-    // sprite.dataset.state='REMINDER' with count=0 in the renderer
-    // (badge hidden but the shake animation continues) until the
-    // second message lands. Force one authoritative broadcast so the
-    // pet window flips back to NORMAL in one shot.
-    broadcastPetState();
-    trackActivity('reminder_completed');
-    return true;
   });
 
   // Backwards-compatible: older renderer builds still call mark_done. Same
@@ -1469,20 +1459,10 @@ function normFreeText(s) {
 
   // ---- Pet / settings / windowing ----
   ipcMain.handle('pet:get_state', () => {
-    // Reflect active (non-dismissed) reminders only. The pill mirrors the
-    // pet's nag count, and dismissed items should not contribute to it.
-    const head = queue.activeHead();
-    return {
-      state: getPetState() ? 'REMINDER' : 'NORMAL',
-      count: queue.activeCount(),
-      // Same shape as the `pet:state-changed` payload's head field — the
-      // renderer uses one setState() function for both.
-      head: head ? {
-        title: head.title,
-        contact_name: head.contact_name || null,
-        description: head.description || null,
-      } : null,
-    };
+    // The same payload the `pet:state-changed` broadcast carries — one
+    // builder (main/pet_state.js) so the initial read and the broadcasts
+    // cannot drift apart.
+    return buildPetState({ petState: getPetState(), queue });
   });
 
   ipcMain.handle('settings:get', (_e, key) => db.getSetting(key));
@@ -1527,10 +1507,25 @@ function normFreeText(s) {
     return true;
   });
 
-  ipcMain.handle('pet:get_position', () => ({
-    x: parseInt(db.getSetting('pet_x') || '200', 10),
-    y: parseInt(db.getSetting('pet_y') || '200', 10),
-  }));
+  ipcMain.handle('pet:get_position', () => {
+    // Read the LIVE window position, not the persisted setting.
+    //
+    // The renderer uses this to measure the drag grab offset against the
+    // window's top-left corner. `db.getSetting('pet_x')` is only updated by
+    // the window's `moved` event, so it can lag behind the real position —
+    // and after a suspend/resume the OS may have moved the window without
+    // the renderer having caught up. The live `getPosition()` is
+    // authoritative.
+    if (winPet && !winPet.isDestroyed()) {
+      const [x, y] = winPet.getPosition();
+      return { x, y };
+    }
+    // Fall back to the persisted position when the window is gone.
+    return {
+      x: parseInt(db.getSetting('pet_x') || '200', 10),
+      y: parseInt(db.getSetting('pet_y') || '200', 10),
+    };
+  });
 
   // ---- Pet registry (frame-based) ----
   // The renderer asks for the list of installed pets, the current petId, and
@@ -2378,12 +2373,32 @@ function normFreeText(s) {
     winPet.setPosition(Math.round(cx), Math.round(cy));
   }
 
-  function stopPetDrag() {
+  // Tear down the main process's side of the drag.
+  //
+  // `force` is the difference between "the gesture ended normally" and "we
+  // have no idea whether a gesture is still in flight, so tear everything
+  // down". The forced path runs on system resume: the renderer may have
+  // lost its gesture state entirely (a `pointerup` that never arrived, a
+  // `blur` that fired before the OS restored the session), so it may never
+  // send `pet:drag_end` — and without this the cursor poller would keep
+  // dragging the pet around forever.
+  //
+  // Both paths are idempotent: releasing the mutex and the pause are both
+  // safe to repeat.
+  function stopPetDrag(force = false) {
     if (petDrag.timer) {
       clearInterval(petDrag.timer);
       petDrag.timer = null;
     }
-    if (!petDrag.active) return;
+    if (!petDrag.active) {
+      // Nothing was in flight. A forced teardown still has to release the
+      // controller's mutex: the renderer may have been the only thing that
+      // could have released it, and it might have died with the gesture.
+      if (force && petController && typeof petController.setDragging === 'function') {
+        petController.setDragging(false);
+      }
+      return;
+    }
     petDrag.active = false;
     // Release the controller's drag mutex so the pet resumes its normal
     // autonomous life. Without this the pet would stand still forever.
@@ -2441,6 +2456,134 @@ function normFreeText(s) {
   ipcMain.handle('pet:drag_end', () => {
     stopPetDrag();
     return true;
+  });
+
+  // ---- Pet drag: system suspend / resume recovery ----
+  //
+  // The drag protocol above depends on the renderer sending `pet:drag_end`.
+  // A system suspend can break that: the `pointerup` may never be delivered,
+  // and the renderer's own rescue paths can fire before the OS restores the
+  // session. When that happens the main process would keep polling the
+  // cursor forever — the pet glued to the pointer, and the controller's drag
+  // mutex held so the pet never moves on its own again.
+  //
+  // So on resume we tear the drag down unconditionally, re-assert the
+  // window's visibility and mouse state, and tell the renderer to forget its
+  // gesture.
+  //
+  // See main/pet_resume.js for the details and the upstream Electron issues
+  // this works around.
+  function recoverPetAfterResume() {
+    // 1. Kill any drag the main process still believes in. `force` releases
+    //    the controller's mutex even if `petDrag.active` was already false —
+    //    the renderer might have died with the gesture and never sent
+    //    `pet:drag_end`.
+    stopPetDrag(true);
+
+    if (!winPet || winPet.isDestroyed()) return;
+
+    // 2. Re-assert the window state.
+    //
+    //    `show()` is the documented recovery for a frameless + transparent
+    //    window that comes back black or frozen after a resume
+    //    (electron/electron#37361). `isVisible()` is checked first so an
+    //    already-visible window is not needlessly re-shown — re-showing
+    //    would briefly steal the z-order.
+    try {
+      if (!winPet.isVisible()) winPet.show();
+    } catch (e) {
+      console.error('[pet_resume] could not re-show the pet window:', e);
+    }
+    //
+    //    `setIgnoreMouseEvents` state can be lost across a resume: the
+    //    Windows mouse-forwarding implementation was buggy until the
+    //    electron/electron#52633 refactor (Electron 44+), and this project
+    //    ships Electron 32. Re-asserting it is cheap and idempotent.
+    try {
+      winPet.setIgnoreMouseEvents(false);
+    } catch (e) {
+      console.error('[pet_resume] could not restore mouse-event state:', e);
+    }
+
+    // 3. Tell the renderer to forget its gesture state.
+    //
+    //    The renderer's `pressing` flag can be stuck true if the `pointerup`
+    //    never arrived. Left alone, the next mouse move over the pet would
+    //    compute a delta against a stale baseline. The renderer resets
+    //    itself on this message.
+    try {
+      winPet.webContents.send('pet:resume');
+    } catch (e) {
+      console.error('[pet_resume] could not notify the pet renderer:', e);
+    }
+
+    // 4. Pull the pet back into the visible work area.
+    //
+    //    The OS may have moved the window while the machine was asleep (a
+    //    monitor was unplugged, the resolution changed, a dock was
+    //    undocked). Left outside the work area, the pet is unreachable —
+    //    the user cannot drag it back.
+    if (petController && typeof petController.clampIntoView === 'function') {
+      try { petController.clampIntoView(); } catch (e) {
+        console.error('[pet_resume] could not re-clamp the pet into view:', e);
+      }
+    }
+  }
+
+  const petResume = petResumeMod.install({
+    onResume: recoverPetAfterResume,
+  });
+  shutdownFns.push(() => {
+    petResume.dispose();
+  });
+
+  // ---- Pet drag: clock-jump watchdog ----
+  //
+  // `powerMonitor`'s `resume` is NOT dependable on Windows 11 Modern
+  // Standby: the OS freezes the whole process while the machine is asleep,
+  // and the `WM_POWERBROADCAST` wake notification is often never delivered
+  // (electron/electron#47739). A plain lid-close with no lock screen may
+  // not produce an `unlock-screen` either. When neither event arrives,
+  // NOTHING in this process knows the machine slept — and the pet stays
+  // wedged in its broken post-sleep state.
+  //
+  // So the recovery gets a second, independent trigger: a heartbeat that
+  // compares the wall clock against the time it last ticked. Node's timers
+  // do not replay the ticks missed during a sleep, but the wall clock DOES
+  // jump forward by the length of the sleep. So the first heartbeat after
+  // a suspend sees a gap far larger than the heartbeat interval, which is
+  // proof that time passed while we were not running.
+  //
+  // This makes the recovery work even when the OS tells us nothing.
+  const WATCHDOG_INTERVAL_MS = 5000;
+  // A gap larger than this means the process was not scheduled for a while.
+  //
+  // This MUST be comfortably ABOVE the heartbeat interval: the gap is
+  // measured between two ticks, so a healthy gap is already ~INTERVAL.
+  // A threshold below the interval would fire on every single tick.
+  //
+  // The margin covers a machine that is merely busy (a long GC pause, a
+  // heavy disk) while still catching any real sleep — the shortest thing
+  // anyone calls a "sleep" is several seconds, and a real suspend is
+  // measured in minutes.
+  const WATCHDOG_GAP_MS = 20000;
+  let lastTickAt = Date.now();
+  const watchdog = setInterval(() => {
+    const now = Date.now();
+    const gap = now - lastTickAt;
+    lastTickAt = now;
+    // A gap this large means the process was frozen — the machine slept.
+    if (gap > WATCHDOG_GAP_MS) {
+      console.log(`[pet_resume] detected a ${Math.round(gap / 1000)}s freeze (no power event) — recovering`);
+      try { recoverPetAfterResume(); } catch (e) {
+        console.error('[pet_resume] watchdog recovery failed:', e);
+      }
+    }
+  }, WATCHDOG_INTERVAL_MS);
+  // The watchdog must not keep the process alive on its own.
+  if (watchdog && typeof watchdog.unref === 'function') watchdog.unref();
+  shutdownFns.push(() => {
+    clearInterval(watchdog);
   });
 
   // ---- 快速记录窗口 ----
@@ -2535,6 +2678,25 @@ function normFreeText(s) {
         })),
       },
       { type: 'separator' },
+      // 关闭提醒 — turn the pet's nag off without opening the (PIN-gated)
+      // main window.
+      //
+      // Only offered while a reminder is actually pending, so the rest of
+      // the menu keeps its usual shape. It completes the reminder for
+      // today — the same soft-dismiss the main window's 完成 button does —
+      // so the badge disappears, the pet stops shaking, and the top-bar
+      // pill goes back to 桌宠正常. The entry stays on the 今日 page.
+      ...(queue.activeCount() > 0 ? [{
+        label: `🔕 关闭提醒（${queue.activeCount()}）`,
+        click: () => {
+          const head = queue.activeHead();
+          if (!head) return;
+          completeReminderForToday(
+            { queue, setPetState, setActiveReminder, broadcastPetState },
+            head.source, head.source_id,
+          );
+        },
+      }] : []),
       {
         label: '🥰 摸一下',
         click: () => fireBondAction('pet'),
@@ -3458,6 +3620,39 @@ function updatePetState({ queue, setPetState, setActiveReminder }) {
     setPetState(false);
     setActiveReminder(null);
   }
+}
+
+// Soft-dismiss a reminder for today — the shared "关闭提醒" action.
+//
+// Called from three places, all of which must behave identically:
+//   * the `reminders:complete_for_today` IPC (the main window's 完成
+//     button, and the pet window's own dismissal),
+//   * the pet's right-click menu item,
+//   * the pet window's badge / bubble click.
+//
+// The reminder stops nagging — the badge disappears, the pet stops
+// shaking, the top-bar pill goes back to 桌宠正常 — but the entry stays on
+// the 今日 page so the user can still scroll back and confirm what they
+// finished. A periodic reminder's next occurrence tomorrow is still
+// scheduled normally.
+function completeReminderForToday({ queue, setPetState, setActiveReminder, broadcastPetState }, source, sourceId) {
+  queue.dismissForToday(source, sourceId);
+  db.run(
+    `INSERT INTO reminder_acks(source, source_id, acked_at, next_fire_at)
+     VALUES (?, ?, ?, NULL)`,
+    [source, sourceId, db.nowStr()]
+  );
+  updatePetState({ queue, setPetState, setActiveReminder });
+  // queue.dismissForToday → emit() → broadcastPetState() fires one
+  // IPC, then updatePetState → setPetState(false) → a second. If
+  // petState was already true the first call leaves
+  // sprite.dataset.state='REMINDER' with count=0 in the renderer
+  // (badge hidden but the shake animation continues) until the
+  // second message lands. Force one authoritative broadcast so the
+  // pet window flips back to NORMAL in one shot.
+  broadcastPetState();
+  try { petInteractions.trackActivity(db, 'reminder_completed', db.nowStr.bind(db)); } catch {}
+  return true;
 }
 
 module.exports = { register, shutdown };

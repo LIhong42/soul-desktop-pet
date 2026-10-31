@@ -41,6 +41,7 @@
 - **Multi-photo galleries** — pick several pictures at once and they land in one gallery. A layout switcher under the group offers **one / two / three / grid**, so the whole group re-arranges in one click;
 - **Per-photo sizing** — drag the handle in a picture's bottom-right corner to resize it freely. Every picture keeps its own size, independent of the others;
 - **Any order** — **drag a picture onto another one** to swap their places. The order is stored with the page;
+- **Photo drags survive sleep and hibernation** — the album editor's gestures run through the same shared guard as the pet window (`src/js/gesture_guard.js`). A pointer gesture is a latch: it is set on `pointerdown` and cleared on `pointerup`, and if the `pointerup` never arrives the latch stays set. The `pointerup` goes missing when the machine sleeps (the OS re-creates the pointer device, so the browser never delivers an `pointerup` for the old pointer id) or when the button is released outside the window. The guard treats "an event from a **different** pointer id" as **proof that the gesture is dead** and tears it down. That matters here more than elsewhere: a stale photo drag would otherwise **commit a real photo swap** on the user's next unrelated click — a picture silently jumping into a slot it was never dropped on. `scripts/test-gesture-guard.js` and `scripts/test-album-gesture.js` guard both the guard itself and the album editor's behaviour;
 - **Select and view are separate** — a click **selects** a picture, a **double click** opens it full screen. The full-screen view covers the whole page, so it doesn't pop up on every click and the pictures stay draggable;
 - **Six paper styles** — Light / Dark / Shiro / Shadow / Helena / Poonam, each painted in three layers (a coloured header bar, the body surface and a decorative strip at the bottom) with three accent dots, matching the reference artwork. The three are separate layers rather than strips of one background: the body layer takes its height from the text and the photos it holds, so the decoration stays below it and is never covered, however much you write. They're pure CSS colors, so no image assets are involved. Every style carries its own text colors, and a regression test checks that the body text, the hints and the title all stay readable (WCAG AA, 4.5:1) against their background;
 - One event can hold multiple photos — perfect for ritual moments like *"our first trip together"*;
@@ -176,6 +177,8 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  ├─ album_video.js      MP4 video album export
 │  ├─ app_update.js       auto-update (GitHub Releases + SHA-256 verification)
 │  ├─ quick_record.js     the 快速记录 window (right-click → 📝 记录)
+│  ├─ pet_resume.js       suspend/resume recovery for the pet drag (a fallback — the renderer heals itself first)
+│  ├─ pet_state.js        the pet reminder-state payload (one shape for the broadcast and `pet:get_state`)
 │  └─ festivals.js        festival library
 ├─ pet/                 ← pet window preload
 ├─ src/                 ← renderer process (main window)
@@ -185,6 +188,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  └─ js/
 │     ├─ main.js, api.js, router.js, auth.js, pet.js
 │     ├─ form_fields.js   ← shared form builders / wiring / validation (main window + 快速记录)
+│     ├─ gesture_guard.js  ← shared pointer-gesture guard (survives sleep / lost pointerup)
 │     ├─ diary_themes.js  ← the six diary paper styles (single source of truth)
 │     ├─ quick_record.js  ← 快速记录 window renderer
 │     └─ pages/            router pages (today / contacts / events / export …)
@@ -204,9 +208,16 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 - **Main process** (`main/`): all database / filesystem / scheduling logic lives here; the renderer can only reach it through the whitelisted IPC exposed by `preload.js`;
 - The **pet window** runs in its own process with a transparent, borderless, always-on-top window that never steals focus;
 - **Dragging is driven from the main process**: the pet window is only ~220 px across and never takes focus, so the renderer's `mousemove` only fires while the pointer is *inside* that rectangle — the moment it leaves, the drag appears to freeze, and the lost `mouseup` leaves the drag state stuck forever (the pet becomes undraggable for the rest of the session). The gesture is therefore still detected in the renderer (press, 4 px threshold, release), but the **window position is followed by the main process via `screen.getCursorScreenPoint()`**, so the drag keeps working across the whole desktop. While a drag is in progress the main process also holds the autonomous-walk state machine still, so it doesn't fight the user for the window position;
+- **Dragging survives sleep and hibernation** — this is a **self-healing** chain that does not rely on the OS delivering a notification:
+  - *Why it broke*: a system suspend tears down and re-creates the pointer device, so on wake the mouse reports a **new `pointerId`**. The gesture still named the old (now dead) id, and the old "ignore pointer events that aren't mine" guard then **permanently rejected** every event from the new mouse. The pet was not stuck mid-drag — it was wedged in a state where no pointer event could ever start a new gesture, which is why it dragged fine at startup and could never be dragged again after a sleep;
+  - *Renderer self-heal* (the primary fix): `src/js/pet.js` treats "a pointer event arrived that does not belong to the gesture I am holding" as **proof that the held gesture is dead**, and tears it down immediately (releasing the pointer capture and clearing the pointer id) so the next `pointerdown` starts a clean drag. A `lostpointercapture` listener was added too — when the platform revokes the capture (a suspend rebuilds the device), the gesture is wound up instead of leaving a dangling pointer id;
+  - *Main-process fallback*: `main/pet_resume.js` listens for the system's `resume` / `unlock-screen` events and **unconditionally tears the drag down**: it stops the cursor poller, releases the walk mutex, re-asserts the window's visibility and mouse state, pulls the pet back into the visible work area, and tells the renderer to forget its gesture. The grab offset is measured against the **live** window position the main process reports rather than the renderer's `window.screenX`, which can be stale after the OS has moved the window;
+  - *Clock-jump watchdog* (the real safety net): Windows 11's Modern Standby **freezes the whole process** while the machine is asleep, so the wake notification is often never delivered at all (electron/electron#47739) — listening for power events alone is not enough. Timers do not replay the ticks missed during a sleep, but the **wall clock jumps forward** by the length of the sleep. Both the main process and the renderer therefore run a heartbeat that compares the gap between two ticks; a gap far larger than the heartbeat period proves the process was frozen, and the recovery runs. This path depends on **no OS event whatsoever**;
+  - The threshold must be **larger** than the heartbeat period (a healthy gap is already ≈ the period), otherwise the watchdog would fire on every tick. `scripts/test-pet-resume.js` has a dedicated regression assertion for that relationship;
 - The **three-layer intimacy model** is described under [Core Features](#-core-features) above;
 - The **quick-record window** is a separate 400×640 window rather than a popup inside the pet window: the pet window is only ~220 px wide and could not physically hold a form with a contact picker and date fields. It asks the main process *which* kind to open with a **pull** (`quick-record:get_kind`) rather than a push on `did-finish-load` — the renderer is an ES module, so its listener is registered after that event fires and a pushed message would be dropped;
 - **Both windows' event and memorial forms come from one module** (`src/js/form_fields.js`): the markup, the show/hide rules (启用提醒, 间隔天数, 阳历/农历) and the validation all live there, so the quick-record form is the main-window form rather than a copy of it. Adding a field means editing one file. `scripts/test-form-parity.js` compares the two windows' rendered forms field by field, so a field added to one and forgotten in the other fails the build.
+- **Closing a pet reminder**: the nag has four ways out, and they all behave identically — clicking the pet, clicking its speech bubble, the right-click menu's **🔕 关闭提醒**, and the top bar's **桌宠提醒** pill (which opens the dialog, where 完成 does the same thing). They all end in one main-process action, `completeReminderForToday`: it writes a `reminder_acks` row, marks the queue item completed for today, and flips the pet back to NORMAL — so the badge counts down to zero, the sprite stops shaking, and the pill reads 桌宠正常 again. The reminder itself is **not deleted**: it stays on **Today** marked 已完成, so it can be revisited. For that to work the pet window has to know *which* reminder it is nagging about, so both `pet:state-changed` and `pet:get_state` carry `head.source` / `head.source_id`; the payload's shape is built in one place (`main/pet_state.js`) so the broadcast and the initial read cannot drift. `scripts/test-reminder-dismiss.js` and `scripts/test-reminder-pill.js` guard the pet-side and the top-bar paths.
 
 ---
 
@@ -228,7 +239,8 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 
 ### 4. Wait for pet reminders
 - The pet shows an unread reminder count in the corner and pops up automatically when the time comes;
-- Click the pet to bring up the main window / reminder dialog, or check everything for the day under **Today**.
+- **Close a reminder whenever you like** — the nag never traps you: click the pet or its speech bubble, use **right-click → 🔕 关闭提醒**, or click the **桌宠提醒** pill in the top bar (it opens the same dialog with 完成 / 稍后 30 分钟 / 明天再提醒). Closing it only silences it for today; the entry stays on **Today** marked 已完成;
+- Check everything for the day under **Today**.
 
 ### 5. Interact with the pet
 - **Single click**: triggers the "single-click action" configured for that pet (default: a gentle pet);

@@ -156,7 +156,12 @@ html, body {
     0 1px 2px rgba(60, 70, 85, 0.10),
     0 4px 14px rgba(60, 70, 85, 0.08);
   margin-bottom: 8px;
-  pointer-events: none;
+  /* Clickable: the bubble is how the user closes the reminder the pet is
+     nagging about. It sits ABOVE the sprite (see the `bottom` anchor
+     above), so it never intercepts a pointerdown meant for the pet — the
+     drag stays intact. */
+  pointer-events: auto;
+  cursor: pointer;
   opacity: 1;
   transition: opacity 600ms ease;
   /* Same window-fitting geometry as .pet-bubble — see its comment block. */
@@ -168,7 +173,10 @@ html, body {
   overflow: hidden;
 }
 .reminder-bubble.hidden { display: none; }
-.reminder-bubble.fade   { opacity: 0; }
+/* A faded-out bubble is invisible, so it must stop taking clicks too —
+   otherwise it would keep swallowing pointer events in the headroom
+   above the pet for as long as it is on screen. */
+.reminder-bubble.fade   { opacity: 0; pointer-events: none; }
 .reminder-bubble::after {
   content: '';
   position: absolute;

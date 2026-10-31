@@ -4,6 +4,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('mp', {
   pet: {
     getState: () => ipcRenderer.invoke('pet:get_state'),
+    // The pet window's CURRENT position on the desktop, straight from the
+    // main process. The renderer uses it to measure the drag grab offset:
+    // `window.screenX` can be stale after a suspend/resume (the OS may have
+    // moved the window), and a stale value makes the pet jump when the drag
+    // starts.
     getPosition: () => ipcRenderer.invoke('pet:get_position'),
     // Legacy alias for getCurrent (kept so older renderer code keeps working).
     getSpecies: () => ipcRenderer.invoke('pet:get_current'),
@@ -47,6 +52,19 @@ contextBridge.exposeInMainWorld('mp', {
   app: {
     quit: () => ipcRenderer.invoke('app:quit'),
   },
+  // 关闭提醒 — acknowledge the reminder the pet is nagging about.
+  //
+  // The pet window paints the badge and the headline bubble, so it needs
+  // a way to tell the main process "this one is handled". Without it the
+  // pet could only hide its own bubble, and the nag stayed on: the badge
+  // kept counting, the sprite kept shaking, and the top-bar pill kept
+  // reading 桌宠提醒. This is the same soft-dismiss the main window's
+  // 完成 button performs — the reminder stops nagging but stays on the
+  // 今日 page.
+  reminders: {
+    completeForToday: (source, id) =>
+      ipcRenderer.invoke('reminders:complete_for_today', source, id),
+  },
   // Bond / Cozy / Mood surface used by the pet renderer. The doubleclick
   // handler in pet.js calls `mp.bond.pat()`; the right-click menu also
   // dispatches here indirectly via the main process IPC handlers.
@@ -80,6 +98,10 @@ contextBridge.exposeInMainWorld('mp', {
       // Contextual text bubble (吃饭提醒 / 休息提醒). Emitted by
       // main/pet_bubbles.js; `{ text: null }` means "clear the bubble".
       'pet:bubble-changed',
+      // 系统从睡眠/休眠中唤醒。主进程在 main/ipc.js 的恢复流程里发出，
+      // 渲染层据此复位拖拽手势状态（睡眠期间 pointerup 可能丢失，
+      // 导致 pressing 一直为 true，之后鼠标一移动就误算拖拽增量）。
+      'pet:resume',
     ];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_e, payload) => cb(payload);

@@ -38,6 +38,7 @@ import {
   buildAlbumLayout,
   remapPageTemplate,
 } from '../album_builder.js';
+import { createGestureGuard } from '../gesture_guard.js';
 
 // ---- state -----------------------------------------------------------------
 
@@ -78,6 +79,69 @@ const state = {
   // Free-form text box resize state
   freeTextResize: null,
 };
+
+// ---- Gesture guards --------------------------------------------------------
+//
+// Every drag gesture in this editor is a latch: set on `pointerdown`,
+// cleared on `pointerup`. If the `pointerup` never arrives, the latch
+// stays set and the gesture never ends.
+//
+// That happens in two ways, both common:
+//
+//   * **A system suspend.** The OS tears down and re-creates the pointer
+//     device, so on wake the mouse reports a NEW `pointerId` and the
+//     browser never delivers a `pointerup` for the old one. The pet window
+//     had exactly this bug (it became undraggable for the rest of the
+//     session after a sleep).
+//   * **A release outside the window.** The `pointerup` listeners live on
+//     `window`; releasing the button outside the application window
+//     delivers no event either.
+//
+// The guards below fix both: they record the pointer id that owns the
+// gesture, and treat "an event from a different pointer" as proof that the
+// gesture is dead — tearing it down so the next interaction starts clean.
+//
+// The photo drag (slot→slot / palette→slot) matters most. When its
+// `pointerup` is lost, the drag's ghost element stays on screen AND
+// `onCanvasPointerUp` stays registered — so the user's NEXT unrelated
+// click commits a stale photo swap, silently moving a photo into a slot
+// they never dropped it on.
+//
+// See src/js/gesture_guard.js for the shared implementation.
+
+// Photo drag — the one that can commit a real layout mutation.
+const photoDragGuard = createGestureGuard({
+  onEnd: () => onCanvasPointerUp(),
+  onCancel: () => {
+    // The drag was abandoned: remove the ghost and drop the listeners,
+    // but commit NOTHING. A cancelled drag must not move a photo.
+    cleanupDrag();
+  },
+});
+
+// Free-text box move.
+const freeTextDragGuard = createGestureGuard({
+  onEnd: () => onWindowFreeTextUp(),
+  onCancel: () => onWindowFreeTextUp(),
+});
+
+// Free-text box resize (the corner handles).
+const freeTextResizeGuard = createGestureGuard({
+  onEnd: () => onWindowFreeTextResizeUp(),
+  onCancel: () => onWindowFreeTextResizeUp(),
+});
+
+// Photo pan (moving a photo inside its slot).
+const photoPanGuard = createGestureGuard({
+  onEnd: () => onWindowPhotoPanUp(),
+  onCancel: () => onWindowPhotoPanUp(),
+});
+
+// Text pan (moving a text block inside its slot).
+const textPanGuard = createGestureGuard({
+  onEnd: () => onWindowTextPanUp(),
+  onCancel: () => onWindowTextPanUp(),
+});
 
 // ---- Free-form text box defaults & factories --------------------------------
 //
@@ -889,26 +953,40 @@ export function destroyEditor() {
     window.removeEventListener('keydown', state._keydown, { capture: true });
     state._keydown = null;
   }
+  // Release the gesture guards FIRST, while `state.container` is still
+  // valid. A guard that still holds a pointer id would otherwise cancel
+  // the NEXT editor's first gesture (the guards are module level and
+  // outlive the editor instance), and its teardown handler reaches into
+  // `state.container`.
+  photoDragGuard.cancel();
+  freeTextDragGuard.cancel();
+  freeTextResizeGuard.cancel();
+  photoPanGuard.cancel();
+  textPanGuard.cancel();
   cleanupDrag();
   if (state.photoPan) {
     state.photoPan = null;
     window.removeEventListener('pointermove', onWindowPhotoPanMove, { capture: true });
     window.removeEventListener('pointerup', onWindowPhotoPanUp, { capture: true });
+    window.removeEventListener('pointercancel', onWindowPhotoPanCancel, { capture: true });
   }
   if (state.textPan) {
     state.textPan = null;
     window.removeEventListener('pointermove', onWindowTextPanMove, { capture: true });
     window.removeEventListener('pointerup', onWindowTextPanUp, { capture: true });
+    window.removeEventListener('pointercancel', onWindowTextPanCancel, { capture: true });
   }
   if (state.freeTextDrag) {
     state.freeTextDrag = null;
     window.removeEventListener('pointermove', onWindowFreeTextMove, { capture: true });
     window.removeEventListener('pointerup', onWindowFreeTextUp, { capture: true });
+    window.removeEventListener('pointercancel', onWindowFreeTextCancel, { capture: true });
   }
   if (state.freeTextResize) {
     state.freeTextResize = null;
     window.removeEventListener('pointermove', onWindowFreeTextResize, { capture: true });
     window.removeEventListener('pointerup', onWindowFreeTextResizeUp, { capture: true });
+    window.removeEventListener('pointercancel', onWindowFreeTextResizeCancel, { capture: true });
   }
   state.container = null;
   state.layout = null;
@@ -1359,7 +1437,13 @@ function renderActivePage() {
   });
   // Wheel handler on the canvas — drives photo zoom when over a photo slot
   canvas.onwheel = onCanvasWheel;
-  // Pointer up on the canvas itself catches drops into empty space
+  // Pointer up on the canvas itself catches drops into empty space.
+  //
+  // It goes through the gesture guard, so a release from a pointer that is
+  // NOT the one the drag started with cannot commit a drop. That is the
+  // case after a system suspend: the mouse is a new device with a new
+  // pointer id, and without this guard the user's next click would swap a
+  // photo into a slot they never dropped it on.
   canvas.onpointerup = onCanvasPointerUp;
   canvas.onpointermove = onCanvasPointerMove;
   // Click on empty canvas area (not on any slot) clears the current
@@ -2262,8 +2346,13 @@ function onFreeTextPointerDown(e) {
   wrap.classList.add('is-dragging');
   const canvas = state.container.querySelector('#album-canvas');
   if (canvas) canvas.classList.add('has-active-drag');
+  // Claim the gesture so a lost `pointerup` (a system suspend re-creates
+  // the pointer device) tears the gesture down instead of leaving the box
+  // stuck to the cursor. See the guard notes above.
+  freeTextDragGuard.begin(e && e.pointerId);
   window.addEventListener('pointermove', onWindowFreeTextMove, { capture: true });
   window.addEventListener('pointerup', onWindowFreeTextUp, { capture: true });
+  window.addEventListener('pointercancel', onWindowFreeTextCancel, { capture: true });
   // Mount the toolbar WITHOUT re-rendering — the re-render was detaching
   // the contenteditable wrapper and the focus was landing on a detached
   // node. mountFloatingToolbar handles contenteditable + caret placement
@@ -2307,13 +2396,19 @@ function onFreeTextHandlePointerDown(e) {
   wrap.classList.add('is-resizing');
   const canvas = state.container.querySelector('#album-canvas');
   if (canvas) canvas.classList.add('has-active-drag');
+  // Claim the gesture — see the guard notes above.
+  freeTextResizeGuard.begin(e && e.pointerId);
   window.addEventListener('pointermove', onWindowFreeTextResize, { capture: true });
   window.addEventListener('pointerup', onWindowFreeTextResizeUp, { capture: true });
+  window.addEventListener('pointercancel', onWindowFreeTextResizeCancel, { capture: true });
 }
 
 function onWindowFreeTextMove(e) {
   const d = state.freeTextDrag;
   if (!d) return;
+  // A move from a foreign pointer means the gesture is dead (post-suspend).
+  // The guard cancels it, which clears the state and the CSS classes.
+  if (!freeTextDragGuard.move(e)) return;
   const ft = findFreeTextById(d.ftId);
   if (!ft) return;
   const dxPt = (e.clientX - d.startX) / d.scale;
@@ -2334,6 +2429,7 @@ function onWindowFreeTextUp(e) {
   state.freeTextDrag = null;
   window.removeEventListener('pointermove', onWindowFreeTextMove, { capture: true });
   window.removeEventListener('pointerup', onWindowFreeTextUp, { capture: true });
+  window.removeEventListener('pointercancel', onWindowFreeTextCancel, { capture: true });
   if (!d) return;
   const el = state.container.querySelector(`[data-ft-id="${d.ftId}"]`);
   if (el) el.classList.remove('is-dragging');
@@ -2343,9 +2439,16 @@ function onWindowFreeTextUp(e) {
   pushHistory();
 }
 
+// The platform cancelled the free-text drag.
+function onWindowFreeTextCancel(e) {
+  freeTextDragGuard.cancel(e);
+}
+
 function onWindowFreeTextResize(e) {
   const r = state.freeTextResize;
   if (!r) return;
+  // A move from a foreign pointer means the gesture is dead (post-suspend).
+  if (!freeTextResizeGuard.move(e)) return;
   const ft = findFreeTextById(r.ftId);
   if (!ft) return;
   const dxPt = (e.clientX - r.startX) / r.scale;
@@ -2366,12 +2469,18 @@ function onWindowFreeTextResizeUp(e) {
   state.freeTextResize = null;
   window.removeEventListener('pointermove', onWindowFreeTextResize, { capture: true });
   window.removeEventListener('pointerup', onWindowFreeTextResizeUp, { capture: true });
+  window.removeEventListener('pointercancel', onWindowFreeTextResizeCancel, { capture: true });
   if (!r) return;
   const el = state.container.querySelector(`[data-ft-id="${r.ftId}"]`);
   if (el) el.classList.remove('is-resizing');
   const canvas = state.container.querySelector('#album-canvas');
   if (canvas) canvas.classList.remove('has-active-drag');
   pushHistory();
+}
+
+// The platform cancelled the free-text resize.
+function onWindowFreeTextResizeCancel(e) {
+  freeTextResizeGuard.cancel(e);
 }
 
 // Apply a handle drag delta to ft. Conventions for each handle:
@@ -2641,8 +2750,11 @@ function startPhotoPan(slotIdx, e) {
     // pixel size at the moment of drag start.
     pixelsToUnits: computePanUnitsPerPixel(slotIdx),
   };
+  // Claim the gesture — see the guard notes above.
+  photoPanGuard.begin(e && e.pointerId);
   window.addEventListener('pointermove', onWindowPhotoPanMove, { capture: true });
   window.addEventListener('pointerup', onWindowPhotoPanUp, { capture: true });
+  window.addEventListener('pointercancel', onWindowPhotoPanCancel, { capture: true });
   // Visual hint: cursor + slot outline + alignment crosshair
   const slotEl = state.container.querySelector(`[data-slot-idx="${slotIdx}"]`);
   if (slotEl) slotEl.classList.add('is-panning');
@@ -2695,6 +2807,8 @@ function wasClamped(prev, next) {
 function onWindowPhotoPanMove(e) {
   const p = state.photoPan;
   if (!p) return;
+  // A move from a foreign pointer means the gesture is dead (post-suspend).
+  if (!photoPanGuard.move(e)) return;
   const dx = e.clientX - p.startX;
   const dy = e.clientY - p.startY;
   const content = state.layout.pages[state.selectedPageIdx].slots[p.slotIdx];
@@ -2716,12 +2830,18 @@ function onWindowPhotoPanUp(e) {
   state.photoPan = null;
   window.removeEventListener('pointermove', onWindowPhotoPanMove, { capture: true });
   window.removeEventListener('pointerup', onWindowPhotoPanUp, { capture: true });
+  window.removeEventListener('pointercancel', onWindowPhotoPanCancel, { capture: true });
   if (p && p.slotIdx != null) {
     const slotEl = state.container.querySelector(`[data-slot-idx="${p.slotIdx}"]`);
     if (slotEl) slotEl.classList.remove('is-panning');
   }
   const canvas = state.container.querySelector('#album-canvas');
   if (canvas) canvas.classList.remove('has-active-drag');
+}
+
+// The platform cancelled the photo pan.
+function onWindowPhotoPanCancel(e) {
+  photoPanGuard.cancel(e);
 }
 
 // ---- direct text pan -------------------------------------------------------
@@ -2741,8 +2861,11 @@ function startTextPan(slotIdx, e) {
     baseX: content.textOffset.x || 0,
     baseY: content.textOffset.y || 0,
   };
+  // Claim the gesture — see the guard notes above.
+  textPanGuard.begin(e && e.pointerId);
   window.addEventListener('pointermove', onWindowTextPanMove, { capture: true });
   window.addEventListener('pointerup', onWindowTextPanUp, { capture: true });
+  window.addEventListener('pointercancel', onWindowTextPanCancel, { capture: true });
   const slotEl = state.container.querySelector(`[data-slot-idx="${slotIdx}"]`);
   if (slotEl) slotEl.classList.add('is-panning');
   const canvas = state.container.querySelector('#album-canvas');
@@ -2753,6 +2876,8 @@ function startTextPan(slotIdx, e) {
 function onWindowTextPanMove(e) {
   const p = state.textPan;
   if (!p) return;
+  // A move from a foreign pointer means the gesture is dead (post-suspend).
+  if (!textPanGuard.move(e)) return;
   const content = state.layout.pages[state.selectedPageIdx].slots[p.slotIdx];
   if (!content) return;
   // 1:1 px → pt mapping keeps PDF and editor visually identical.
@@ -2775,12 +2900,18 @@ function onWindowTextPanUp() {
   state.textPan = null;
   window.removeEventListener('pointermove', onWindowTextPanMove, { capture: true });
   window.removeEventListener('pointerup', onWindowTextPanUp, { capture: true });
+  window.removeEventListener('pointercancel', onWindowTextPanCancel, { capture: true });
   if (p && p.slotIdx != null) {
     const slotEl = state.container.querySelector(`[data-slot-idx="${p.slotIdx}"]`);
     if (slotEl) slotEl.classList.remove('is-panning');
   }
   const canvas = state.container.querySelector('#album-canvas');
   if (canvas) canvas.classList.remove('has-active-drag');
+}
+
+// The platform cancelled the text pan.
+function onWindowTextPanCancel(e) {
+  textPanGuard.cancel(e);
 }
 
 function onCanvasWheel(e) {
@@ -2807,7 +2938,15 @@ function onCanvasWheel(e) {
 
 function onCanvasPointerMove(e) {
   if (!state.drag) return;
-  moveDragGhost(e);
+  // Follow the cursor with the ghost.
+  //
+  // NOTE: this used to call a `moveDragGhost()` that never existed — the
+  // function was renamed to `positionGhost()` when the album editor was
+  // first written, but this call site was missed. The ReferenceError threw
+  // out of this function on EVERY pointermove, so the drop target was
+  // never highlighted and `state.drag.overSlotIdx` was never set — which
+  // meant a photo drag never actually committed a drop.
+  positionGhost(e);
   // Highlight the target slot
   const over = findSlotUnderPointer(e);
   state.container.querySelectorAll('.album-slot.is-drop-target').forEach((el) => {
@@ -2820,6 +2959,24 @@ function onCanvasPointerMove(e) {
 
 function onCanvasPointerUp(e) {
   if (!state.drag) return;
+  // Defence in depth: only the pointer that STARTED the drag may commit a
+  // drop.
+  //
+  // The guard already routes the window-level `pointerup` correctly, but
+  // this handler is also bound to the canvas element (`canvas.onpointerup`),
+  // so it can be reached by a click that has nothing to do with the drag.
+  // If that click comes from a different pointer — which is exactly what
+  // happens after a system suspend, when the mouse is re-created with a new
+  // pointer id — committing here would swap a photo into a slot the user
+  // never dropped it on.
+  //
+  // So: if a drag is live but this event is from a foreign pointer, the
+  // drag is stale. Tear it down without committing anything.
+  if (e && photoDragGuard.isActive() && e.pointerId !== undefined
+      && e.pointerId !== null && !photoDragGuard.move(e)) {
+    // The guard has already cancelled the drag.
+    return;
+  }
   const over = state.drag.overSlotIdx;
   const overType = state.drag.overSlotType;
   const sourceSlotIdx = state.drag.sourceSlotIdx;
@@ -2902,6 +3059,10 @@ function findSlotUnderPointer(e) {
 }
 
 function startDrag(drag, e) {
+  // A previous drag may still be live (its `pointerup` was lost). Cancel it
+  // first — otherwise its ghost element is orphaned on screen and its
+  // listeners stay registered.
+  if (state.drag) cleanupDrag();
   state.drag = drag;
   // Create a ghost element
   const ghost = document.createElement('div');
@@ -2910,20 +3071,37 @@ function startDrag(drag, e) {
   document.body.appendChild(ghost);
   state.drag.ghost = ghost;
   positionGhost(e);
+  // Take ownership of the gesture, so a `pointerup` from a DIFFERENT
+  // pointer (which is what the mouse looks like after a system suspend)
+  // cancels the drag instead of being ignored. See the guard notes above.
+  photoDragGuard.begin(e && e.pointerId);
   // Capture global pointer events
   window.addEventListener('pointermove', onWindowPointerMove, { capture: true });
   window.addEventListener('pointerup', onWindowPointerUp, { capture: true });
+  window.addEventListener('pointercancel', onWindowPointerCancel, { capture: true });
 }
 
 function onWindowPointerMove(e) {
   if (!state.drag) return;
+  // A move from a foreign pointer means our gesture is dead (post-suspend).
+  // The guard cancels it, which removes the ghost and the listeners.
+  if (!photoDragGuard.move(e)) return;
   positionGhost(e);
   onCanvasPointerMove(e);
 }
 
 function onWindowPointerUp(e) {
   if (!state.drag) return;
-  onCanvasPointerUp(e);
+  // Only a `pointerup` from the gesture's OWN pointer commits the drop.
+  // A foreign one cancels it — that is what stops a stale drag from
+  // swapping a photo into a slot the user never dropped it on.
+  photoDragGuard.end(e);
+}
+
+// The platform cancelled the gesture (a touch being hijacked, a pen leaving
+// range, a system gesture taking over).
+function onWindowPointerCancel(e) {
+  photoDragGuard.cancel(e);
 }
 
 function positionGhost(e) {
@@ -2942,6 +3120,7 @@ function cleanupDrag() {
   }
   window.removeEventListener('pointermove', onWindowPointerMove, { capture: true });
   window.removeEventListener('pointerup', onWindowPointerUp, { capture: true });
+  window.removeEventListener('pointercancel', onWindowPointerCancel, { capture: true });
   state.container.querySelectorAll('.album-slot.is-drop-target').forEach((el) => {
     el.classList.remove('is-drop-target');
   });

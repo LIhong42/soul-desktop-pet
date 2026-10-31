@@ -73,9 +73,18 @@ html, body {
   border: 1px solid var(--border);
   border-radius: 999px;
   font-size: 12px;
+  font-family: inherit;
+  line-height: 1.4;
   color: var(--muted);
   background: var(--bg);
+  /* It is a real <button>, so it has to look like the pill it was when
+     it was a plain <div> — the browser's button chrome is reset away
+     here and the hover / focus affordances are added back below. */
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms;
 }
+.pet-pill:hover { border-color: var(--accent); color: var(--text); }
+.pet-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pet-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: #4caf50;
