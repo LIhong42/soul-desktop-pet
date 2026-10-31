@@ -10,8 +10,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('mp', {
   pet: {
     moveBy: (dx, dy) => ipcRenderer.invoke('pet:move_by', dx, dy),
-    dragStart: (dx, dy) => ipcRenderer.invoke('pet:drag_start', dx, dy),
-    dragEnd: () => ipcRenderer.invoke('pet:drag_end'),
+    // The gesture id travels with both messages — the probe has to speak
+    // the same protocol the real preload does, or the main process cannot
+    // tell a stale message from a current one.
+    dragStart: (dx, dy, gestureId) => ipcRenderer.invoke('pet:drag_start', dx, dy, gestureId),
+    dragEnd: (gestureId) => ipcRenderer.invoke('pet:drag_end', gestureId),
+    gestureBase: () => ipcRenderer.invoke('pet:gesture_base'),
   },
   on: () => () => {},
 });

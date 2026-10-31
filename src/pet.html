@@ -18,7 +18,14 @@
 
     <!-- Reminder badge (corner count) + speech bubble above the sprite -->
     <div class="badge hidden" id="pet-badge">0</div>
-    <div class="reminder-bubble hidden" id="pet-bubble"></div>
+    <!-- `data-pet-interactive` marks the elements that must NOT start a
+         drag. The whole pet WINDOW is a drag target (the sprite is only
+         165 px wide inside a 216 px window, and a press that lands on the
+         transparent margin used to do nothing at all — which is how "the
+         pet cannot be dragged" survived every other fix). The reminder
+         bubble is the one place the user has to be able to CLICK, so it
+         is excluded from the drag. -->
+    <div class="reminder-bubble hidden" id="pet-bubble" data-pet-interactive></div>
     <!-- Cozy bond bubble (auto-generated text from pet_mood) -->
     <div class="bond-bubble hidden" id="pet-bond-bubble"></div>
     <!-- Contextual text bubble (吃饭提醒 / 休息提醒). Driven entirely

@@ -11,6 +11,7 @@ const { PetRegistry } = require('./pet_registry');
 const { buildPetState } = require('./pet_state');
 const autostart = require('./autostart');
 const appUpdate = require('./app_update');
+const petDiagnostics = require('./pet_diagnostics');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
 
@@ -26,7 +27,65 @@ process.on('uncaughtException', (err) => {
 });
 
 // Single instance
-const gotLock = app.requestSingleInstanceLock();
+//
+// `app.requestSingleInstanceLock()` fails when another instance holds the
+// lock. Two very different things can cause that, and they must not be
+// treated the same:
+//
+//   * The user launched the app twice. The instance that is already running
+//     is told about it (the 'second-instance' event below) and brings its
+//     window up; this process quits.
+//
+//   * This process is the RELAUNCH of a dying instance. The wake recovery
+//     kills the app and starts a new one (main/app_relaunch.js), and the
+//     old process can still hold the lock for a moment after it was told
+//     to die.
+//
+// The second case is the dangerous one. Quitting on a refused lock would
+// leave the user with NO app at all — a far worse outcome than the bug the
+// relaunch exists to fix. So the lock is asked for again for a few
+// seconds before giving up.
+//
+// A refused lock CAN be asked for again: the lock is a named OS object
+// that is released when its holder dies, and the request is a fresh
+// attempt each time. `scripts/test-app-relaunch.js` proves both halves of
+// that statement against a real Electron.
+const LOCK_RETRY_MS = 6000;
+const LOCK_RETRY_STEP_MS = 200;
+
+// A synchronous sleep.
+//
+// The lock is taken before anything else happens — before a window exists,
+// before the database is open — so waiting here costs nothing. It has to
+// be synchronous because everything below it is module-level code.
+function sleepSync(ms) {
+  try {
+    const shared = new Int32Array(new SharedArrayBuffer(4));
+    Atomics.wait(shared, 0, 0, ms);
+  } catch (e) {
+    // A runtime without Atomics (or a locked main thread) must not stop the
+    // app from starting: fall back to a busy wait.
+    const until = Date.now() + ms;
+    while (Date.now() < until) { /* spin */ }
+  }
+}
+
+function acquireSingleInstanceLock() {
+  if (app.requestSingleInstanceLock()) return true;
+  const deadline = Date.now() + LOCK_RETRY_MS;
+  let attempts = 0;
+  while (Date.now() < deadline) {
+    sleepSync(LOCK_RETRY_STEP_MS);
+    attempts++;
+    if (app.requestSingleInstanceLock()) {
+      console.log(`[main] the single-instance lock was taken after ${attempts} retries`);
+      return true;
+    }
+  }
+  return false;
+}
+
+const gotLock = acquireSingleInstanceLock();
 if (!gotLock) {
   app.quit();
   process.exit(0);
@@ -62,7 +121,20 @@ queue.on((payload) => {
   broadcastPetState();
 });
 
-function createWindows({ petRegistry } = {}) {
+// Create the pet window.
+//
+// This is a function of its own, not a block of code inside `createWindows`,
+// because the wake recovery DESTROYS AND RECREATES the pet window (see
+// `recreatePetWindow`): a window that comes back from a system sleep can be
+// a window whose input path is broken — the renderer keeps receiving IPC, so
+// the pet looks alive, but the mouse never reaches it again and the pet can
+// no longer be dragged. A brand-new window has a brand-new native window
+// and a brand-new input registration, so whatever the sleep broke is gone.
+//
+// `x` / `y` / `width` / `height` override the persisted position and the
+// manifest's default size — that is how the recreated window keeps the place
+// the user left the pet in.
+function createPetWindow({ petRegistry, x, y, width, height } = {}) {
   const petX = parseInt(db.getSetting('pet_x') || '200', 10);
   const petY = parseInt(db.getSetting('pet_y') || '200', 10);
 
@@ -90,11 +162,11 @@ function createWindows({ petRegistry } = {}) {
     }
   }
 
-  winPet = new BrowserWindow({
-    width: initialW,
-    height: initialH,
-    x: petX,
-    y: petY,
+  const w = new BrowserWindow({
+    width: width || initialW,
+    height: height || initialH,
+    x: x === undefined ? petX : x,
+    y: y === undefined ? petY : y,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -113,16 +185,109 @@ function createWindows({ petRegistry } = {}) {
       backgroundThrottling: false,
     },
   });
-  winPet.setIgnoreMouseEvents(false); // CSS hit-target handles click-through; we keep mouse events ON.
-  winPet.loadFile(path.join(__dirname, '..', 'src', 'pet.html'));
-  winPet.setAlwaysOnTop(true, 'screen-saver');
+  w.setIgnoreMouseEvents(false); // CSS hit-target handles click-through; we keep mouse events ON.
+  w.loadFile(path.join(__dirname, '..', 'src', 'pet.html'));
+  w.setAlwaysOnTop(true, 'screen-saver');
 
-  winPet.on('moved', () => {
-    if (!winPet || winPet.isDestroyed()) return;
-    const [x, y] = winPet.getPosition();
-    db.setSetting('pet_x', String(x));
-    db.setSetting('pet_y', String(y));
+  w.on('moved', () => {
+    if (!w.isDestroyed()) {
+      const [mx, my] = w.getPosition();
+      db.setSetting('pet_x', String(mx));
+      db.setSetting('pet_y', String(my));
+    }
   });
+
+  // The window's own load events go into the diagnostic log, so the log can
+  // tell "the pet's page never loaded" apart from "the page loaded and the
+  // mouse still does not arrive".
+  w.webContents.on('did-finish-load', () => {
+    try {
+      petDiagnostics.append({ src: 'main', kind: 'pet_window_loaded', win: w.getPosition() });
+    } catch (e) { /* diagnostics must never break the app */ }
+  });
+  w.webContents.on('did-fail-load', (_e, code, desc) => {
+    try {
+      petDiagnostics.append({ src: 'main', kind: 'pet_window_load_failed', code, desc });
+    } catch (e) { /* diagnostics must never break the app */ }
+  });
+
+  return w;
+}
+
+// Restart the pet: destroy the pet window and create a new one in its
+// place.
+//
+// This is the "just restart the pet" recovery — the user's explicit request
+// for the "the pet cannot be dragged after a sleep" bug. Everything that
+// could have been broken by the sleep (the gesture state, the pointer
+// captures, the preload bridge, the native window's input registration) dies
+// with the old window.
+//
+// What is preserved: the window's position and size, the main window, the
+// database and the pet's identity. What changes: the pet's page is built
+// from scratch, which is the whole point.
+//
+// The collaborators that hold the pet window are updated here, so the pet
+// keeps walking, keeps answering the reminder badge and keeps listening to
+// the pet's own IPC.
+function recreatePetWindow(reason) {
+  const old = winPet;
+  let pos = null;
+  let size = null;
+  try {
+    if (old && !old.isDestroyed()) {
+      pos = old.getPosition();
+      const b = old.getBounds();
+      size = { width: b.width, height: b.height };
+    }
+  } catch (e) { /* the old window may already be gone */ }
+
+  // The NEW window is created FIRST, and the old one is destroyed after.
+  //
+  // The order matters: destroying the last window makes Electron quit the
+  // app (that is the default when no 'window-all-closed' handler says
+  // otherwise), so the replacement has to exist before the original goes
+  // away. The two windows overlap for a fraction of a millisecond — the pet
+  // blinks once, which is exactly what a restart looks like.
+  const next = createPetWindow({
+    petRegistry: petRegistryRef,
+    x: pos ? pos[0] : undefined,
+    y: pos ? pos[1] : undefined,
+    width: size ? size.width : undefined,
+    height: size ? size.height : undefined,
+  });
+  winPet = next;
+
+  try {
+    if (old && !old.isDestroyed()) old.destroy();
+  } catch (e) {
+    console.error('[main] could not destroy the pet window:', e);
+  }
+
+  // The controller moves the window on its own — it has to be told about
+  // the new one, or the pet would keep trying to move a window that no
+  // longer exists.
+  if (petController && typeof petController.setWindow === 'function') {
+    try { petController.setWindow(winPet); } catch (e) {
+      console.error('[main] could not point the pet controller at the new window:', e);
+    }
+  }
+
+  try {
+    petDiagnostics.append({
+      src: 'main',
+      kind: 'pet_window_recreated',
+      reason: reason || 'resume',
+      pos: pos,
+      size: size,
+    });
+  } catch (e) { /* diagnostics must never break the app */ }
+
+  return winPet;
+}
+
+function createWindows({ petRegistry } = {}) {
+  winPet = createPetWindow({ petRegistry });
 
   // Display configuration changed — a monitor was plugged/unplugged, the
   // resolution changed, a dock was undocked.
@@ -223,6 +388,11 @@ app.whenReady().then(async () => {
     queue,
     winMain,
     winPet,
+    // The pet window can be destroyed and recreated by the wake recovery,
+    // so the modules that talk to it resolve it through a getter instead
+    // of holding the window that existed at startup.
+    getWinPet: () => winPet,
+    recreatePetWindow,
     setPetState,
     getPetState,
     setActiveReminder,
@@ -234,7 +404,6 @@ app.whenReady().then(async () => {
   scheduler.start({
     app,
     winMain,
-    winPet,
     queue,
     getPetState,
     setPetState,
@@ -245,7 +414,9 @@ app.whenReady().then(async () => {
   // Bond pipeline — 1s tick that drives cozy decay, mood decision tree,
   // and weekly settlement. Started after scheduler.start() so the reminder
   // queue is already pushing activeCount() correctly into the mood payload.
-  scheduler.startBondPipeline({ petController, winPet, winMain, queue, petRegistry });
+  scheduler.startBondPipeline({
+    petController, winPet, getWinPet: () => winPet, winMain, queue, petRegistry,
+  });
 
   // 每日自动检查更新（更新源为 GitHub Releases）。首次检查延迟
   // FIRST_CHECK_DELAY_MS，之后每 24 小时一次，且距上次检查不足一天会跳过

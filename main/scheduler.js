@@ -342,12 +342,21 @@ function statusSignature(bondSnap, cozySnap, mood) {
 
 // Send to whichever windows still exist. Both channels are advisory — the
 // renderer treats a missing window as "no listener" rather than an error.
-function pushStatus(winPet, winMain, channel, payload) {
-  if (winPet && !winPet.isDestroyed()) winPet.webContents.send(channel, payload);
+//
+// The pet window is resolved through a getter: the wake recovery destroys it
+// and creates a new one, so the pipeline must not hold on to the window that
+// existed when it started.
+function pushStatus(petWindow, winMain, channel, payload) {
+  if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send(channel, payload);
   if (winMain && !winMain.isDestroyed()) winMain.webContents.send(channel, payload);
 }
 
-function startBondPipeline({ petController, winPet, winMain, petRegistry }) {
+function startBondPipeline({ petController, winPet, getWinPet, winMain, petRegistry }) {
+  // The CURRENT pet window, or null when there is none.
+  const petWindow = () => {
+    const w = typeof getWinPet === 'function' ? getWinPet() : winPet;
+    return (w && !w.isDestroyed()) ? w : null;
+  };
   if (moodTimer) return;
   moodTimer = setInterval(() => {
     try {
@@ -414,7 +423,7 @@ function startBondPipeline({ petController, winPet, winMain, petRegistry }) {
       // 6) broadcast if mood changed
       if (mood.mood !== lastMoodEmitted) {
         lastMoodEmitted = mood.mood;
-        pushStatus(winPet, winMain, 'pet:mood-changed', Object.assign({}, mood, statusFields(bondSnap, cozySnap)));
+        pushStatus(petWindow(), winMain, 'pet:mood-changed', Object.assign({}, mood, statusFields(bondSnap, cozySnap)));
       }
 
       // 6b) broadcast the numeric status whenever it actually changes.
@@ -427,7 +436,7 @@ function startBondPipeline({ petController, winPet, winMain, petRegistry }) {
       const sig = statusSignature(bondSnap, cozySnap, mood.mood);
       if (sig !== lastStatusEmitted) {
         lastStatusEmitted = sig;
-        pushStatus(winPet, winMain, 'pet:status-changed', Object.assign({ mood: mood.mood }, statusFields(bondSnap, cozySnap)));
+        pushStatus(petWindow(), winMain, 'pet:status-changed', Object.assign({ mood: mood.mood }, statusFields(bondSnap, cozySnap)));
       }
 
       // 7) daily settlement check

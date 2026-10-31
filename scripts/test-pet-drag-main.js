@@ -43,7 +43,13 @@ const electronStub = {
     removeHandler(channel) { this._handlers.delete(channel); },
   },
   app: {
-    getPath: () => ROOT,
+    // 'appData' stays inside the repo so a test run cannot touch the real
+    // user data; 'userData' (where the diagnostics log lives) goes to the
+    // OS temp directory, so a test run leaves no file behind in the
+    // repository.
+    getPath: (name) => (name === 'userData'
+      ? path.join(require('os').tmpdir(), 'soul-desktop-pet-test')
+      : ROOT),
     isPackaged: false,
     on: () => {},
     getName: () => 'SoulDesktopPet',

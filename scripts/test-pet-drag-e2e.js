@@ -197,6 +197,39 @@ app.whenReady().then(async () => {
   check('the fractional drag did not throw', fracResult.ok === true, fracResult.error);
   eq('drag_start still succeeded', fracResult.r, true);
 
+  // -------------------------------------------------------------------------
+  // Test 6 — a drag driven by MOUSE events alone
+  //
+  // After a system suspend, Chromium can stop delivering the POINTER events
+  // to the renderer while the legacy MOUSE events keep coming — the pointer
+  // events are built from the raw input by a factory that needs a
+  // registered pointer DEVICE, and a suspend re-creates that device. The
+  // symptom the user reported is exactly that: the pet cannot be dragged,
+  // but the right-click menu (a mouse event) still works.
+  //
+  // So the drag has to work on the mouse events too. This drives the whole
+  // gesture with mouse events only — no pointer event at all.
+  // -------------------------------------------------------------------------
+  console.log('\n[6] a drag driven by mouse events alone works');
+  const mouseDrag = await probe.webContents.executeJavaScript(`
+    (async () => {
+      const sprite = document.getElementById('pet-sprite');
+      const mk = (type, x, y) => new MouseEvent(type, {
+        bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y,
+      });
+      sprite.dispatchEvent(mk('mousedown', 100, 100));
+      window.dispatchEvent(mk('mousemove', 140, 160));
+      await new Promise(r => setTimeout(r, 80));
+      const dragging = sprite.classList.contains('dragging');
+      window.dispatchEvent(mk('mouseup', 140, 160));
+      await new Promise(r => setTimeout(r, 60));
+      return { dragging, ended: !sprite.classList.contains('dragging') };
+    })()
+  `);
+  check('the mouse gesture started a drag', mouseDrag.dragging === true);
+  check('the mouse gesture ended cleanly', mouseDrag.ended === true);
+  eq('the mutex was released after the mouse drag', petController.dragging, false);
+
   probe.destroy();
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length) {

@@ -130,6 +130,13 @@ async function render() {
   // 主进程可能还没注册完 handler（老版本的 preload），所以都做可选调用。
   const updateState = (await api.app.getUpdateState?.())
     || { supported: false, enabled: true, currentVersion: '', info: null };
+  // 睡眠唤醒后的恢复策略。见 main/app_relaunch.js。
+  //   always — 每次唤醒都重启整个应用（默认）
+  //   auto   — 只有当桌宠窗口的"输入通路"真的死了才重启整个应用
+  //   off    — 从不重启
+  const restartOnWakeRaw = await api.settings.get('pet_restart_app_on_wake');
+  const restartOnWake = (restartOnWakeRaw === 'auto' || restartOnWakeRaw === 'off')
+    ? restartOnWakeRaw : 'always';
 
   const petOptions = installed.length
     ? installed.map((p) =>
@@ -217,6 +224,33 @@ async function render() {
       ${autoStart.supported && autoStart.enabled && !autoStart.active
         ? '<p class="meta" style="margin-top:4px; color:#b26a00;">⚠ 开机启动项当前未生效，可能已被系统或安全软件禁用；取消勾选后重新勾选可尝试恢复。</p>'
         : ''}
+    </div>
+
+    <div class="card">
+      <h2>睡眠唤醒后的恢复</h2>
+      <p class="meta">
+        电脑睡眠再唤醒后，有时桌宠会"拖不动"：窗口还活着、菜单也能打开，但鼠标事件收不到，
+        或者收到了也带不动桌宠。原因是 Chromium 的指针设备在睡眠中被拆掉后没有被重新注册，
+        而设备注册表在浏览器进程里，应用内部无法修复——唯一可靠的恢复是换一个全新的进程。
+      </p>
+      <div class="field" style="justify-content:flex-start;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="radio" name="pet-restart-on-wake" value="always" ${restartOnWake === 'always' ? 'checked' : ''}/>
+          每次唤醒都重启应用（默认）：保证桌宠一定拖得动，主窗口会被关掉重开
+        </label>
+      </div>
+      <div class="field" style="justify-content:flex-start;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="radio" name="pet-restart-on-wake" value="auto" ${restartOnWake === 'auto' ? 'checked' : ''}/>
+          自动检测：只有确认输入通路失效时才重启应用
+        </label>
+      </div>
+      <div class="field" style="justify-content:flex-start;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="radio" name="pet-restart-on-wake" value="off" ${restartOnWake === 'off' ? 'checked' : ''}/>
+          从不重启：只做应用内部的恢复
+        </label>
+      </div>
     </div>
 
     <div class="card" id="update-card">
@@ -307,6 +341,21 @@ async function render() {
       toast('设置失败：' + ((err && err.message) || err));
     }
   };
+  // 睡眠唤醒后的恢复策略。
+  for (const radio of document.querySelectorAll('input[name="pet-restart-on-wake"]')) {
+    radio.onchange = async (e) => {
+      if (!e.target.checked) return;
+      const mode = e.target.value;
+      try {
+        await api.settings.set('pet_restart_app_on_wake', mode);
+        toast(mode === 'always' ? '每次唤醒都会重启应用'
+          : mode === 'off' ? '已关闭唤醒后的应用重启'
+          : '已改为自动检测');
+      } catch (err) {
+        toast('设置失败：' + ((err && err.message) || err));
+      }
+    };
+  }
   document.getElementById('import-from-zip').onclick = async () => {
     // 先订阅再调用 IPC：主进程在文件选择框还开着的时候就会开始推进度，
     // 晚订阅会丢掉最前面的几条消息。

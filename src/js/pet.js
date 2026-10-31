@@ -728,7 +728,7 @@ function showContextBubble(payload) {
 //      happens outside that rectangle never reaches the renderer. The old
 //      code left its `pressing` flag stuck true forever, and every later
 //      mouse move inside the window then computed its delta against a stale
-//      `lastX/lastY` — teleporting the pet across the screen and leaving
+//      baseline — teleporting the pet across the screen and leaving
 //      drag permanently broken.
 //
 //   2. **Main-process cursor tracking.** Once the pointer leaves the pet's
@@ -763,9 +763,21 @@ function showContextBubble(payload) {
 //      gesture in flight.
 //
 //      The fix is to treat "an event arrived whose pointer id is not the one
-//      I captured" as PROOF that my captured gesture is dead — the pointer
-//      that owned it no longer exists — and to tear the gesture down
-//      immediately, freeing the pointer id for the next gesture.
+//      I captured" as proof that the pointer device was re-created, and to
+//      act on it according to how far the gesture has got:
+//
+//        * Before the drag threshold, the pet has not moved, so the gesture
+//          is REBOUND to the new pointer (see `rebindToPointer`). The drag
+//          can still begin, and following a different pointer cannot make
+//          the pet jump.
+//
+//        * Once the drag is under way, the pet is being moved by the user,
+//          so the gesture is torn down instead: a second device must not
+//          take the drag over. The next press starts a clean gesture.
+//
+//      Tearing down in BOTH cases is what wedged the pet: the press
+//      carried the old id and every move carried the new one, so the press
+//      was killed by the move that followed it, over and over.
 //
 //      This is event-driven rather than lifecycle-driven on purpose. The
 //      main process also listens for `powerMonitor`'s `resume`, but that
@@ -775,10 +787,58 @@ function showContextBubble(payload) {
 //      `unlock-screen` either. If the recovery only ran on those events, the
 //      pet would stay wedged — which is exactly what the original bug
 //      report describes.
+//
+//   5. **Coordinates that cannot go stale.** The grab offset and the drag
+//      threshold are both measured in the pet WINDOW's own coordinates
+//      (`clientX`/`clientY`), not in screen coordinates. Screen coordinates
+//      are the sum of two independently-drifting numbers — the pointer's
+//      place on the desktop and the window's place on the desktop — and
+//      after a suspend either can be stale. The window's coordinates have
+//      no such second term, so nothing about them can be out of date.
 const DRAG_THRESHOLD_PX = 4;
+// How long the renderer waits for the main process to take over the drag
+// before it drives the window itself.
+//
+// The takeover is a round-trip to the main process, and a round-trip can
+// be lost: the main process can be frozen across a system suspend, and the
+// reply to a request that was in flight when the machine went to sleep may
+// never arrive. A renderer that waits for it forever moves nothing — it
+// does not own the position while the takeover is pending — and the main
+// process was never told to follow the cursor, so the pet would not move
+// at all.
+//
+// So the wait is bounded. When it expires the renderer takes over the
+// movement itself and reports the deltas, the way it did before the
+// main-process drag existed. The end of the drag is sent first, ordered
+// after the pending start, so the main process can never be left
+// following the cursor with nothing left to stop it.
+const DRAG_TAKEOVER_TIMEOUT_MS = 400;
 let pressing = false;
 let didDrag = false;
-let lastX = 0, lastY = 0, downX = 0, downY = 0;
+// The pointer's position at the press, relative to the pet WINDOW's
+// top-left corner.
+//
+// These are the coordinates the drag is built on, because they answer the
+// question the drag actually asks: "how far inside the window did the user
+// grab the pet?". Screen coordinates cannot answer it reliably: they are
+// the sum of two independently-drifting numbers (the pointer's place on the
+// desktop and the window's place on the desktop), and after a system
+// suspend either of them can be stale — the OS may have re-arranged the
+// displays while the machine was asleep, and the renderer's idea of the
+// window's screen origin is not guaranteed to match the main process's.
+//
+// The client coordinates have no such second term: the browser computes
+// them from the same event that carries the pointer's position, relative
+// to the viewport it is dispatching into. There is nothing to drift.
+let downClientX = 0, downClientY = 0;
+// The same press, in the coordinates the OTHER families speak.
+//
+// The screen coordinates are used for ONE thing only: telling the
+// compatibility mouse event of a pointer press apart from a genuinely new
+// physical press. They are never used to measure the drag — see
+// `downClientX` for why that would drift.
+let downScreenX = 0, downScreenY = 0;
+let downTimeStamp = 0;
 // The pointer id that started the current gesture, so `pointermove` /
 // `pointerup` from a different pointer (a stray touch, a pen) can't hijack
 // the drag.
@@ -787,6 +847,301 @@ let lastX = 0, lastY = 0, downX = 0, downY = 0;
 // returns to whenever a gesture ends or is torn down. Keeping it `null`
 // (rather than a stale id) is what allows the next gesture to start.
 let dragPointerId = null;
+
+// Which event family is driving the gesture in flight.
+//
+//   'pointer' — the modern Pointer Events (`pointerdown` / `pointermove` /
+//                `pointerup`).
+//   'mouse'   — the legacy mouse events (`mousedown` / `mousemove` /
+//                `mouseup`).
+//   null      — no gesture in flight.
+//
+// WHY THIS EXISTS
+// ---------------
+// After a system suspend, Chromium can end up in a state where the POINTER
+// events are no longer delivered to the renderer at all, while the legacy
+// MOUSE events still are.
+//
+// The two families are not the same pipeline. A pointer event is built from
+// the raw input by `PointerEventFactory`, which needs a registered pointer
+// DEVICE; the legacy mouse events are built straight from the raw mouse
+// input and do not need one. A suspend tears the pointer device down and the
+// OS brings it back as a new one, and Chromium's device registry can end up
+// not knowing about it — so the raw input produces mouse events but no
+// pointer events.
+//
+// The symptom is exactly this: the pet cannot be dragged (the drag is built
+// on pointer events), but everything else still works — the right-click menu
+// opens (a `contextmenu` DOM event, a mouse event) and a click still plays
+// the pet's action (a `click` DOM event, also a mouse event).
+//
+// So the drag accepts BOTH families. Whichever one delivers the press drives
+// the gesture; the other one is ignored. In a healthy browser the pointer
+// family always wins: `pointerdown` is dispatched before the compatibility
+// mouse events, and the sprite's `pointerdown` handler calls
+// `preventDefault()`, which suppresses the compatibility `mousedown` entirely.
+// So the mouse path is a pure fallback — it costs nothing when the pointer
+// events work.
+let dragFamily = null;
+
+// How many moves EACH family produced during the gesture in flight.
+//
+// This is the census. It is what makes the next failure diagnosable:
+// "the pointer family delivered the press and then went silent, while the
+// mouse family carried the movement" looks exactly like "the user did not
+// move the mouse" from the outside — and the two need completely different
+// fixes. The old log could only count the moves of the family that owned
+// the gesture, so the losing family was invisible and the question could
+// not be answered.
+let gesturePointerMoves = 0;
+let gestureMouseMoves = 0;
+
+// The last pointer event of the gesture in flight.
+//
+// It is what tells a COMPATIBILITY mouse event apart from a genuine
+// mouse-family move. A browser that dispatches both families synthesises a
+// `mousemove` next to every `pointermove`, at the same position and in the
+// same task; a browser whose pointer pipeline has died delivers the
+// movement as a `mousemove` with nothing behind it. The echo carries the
+// pointer's position and moment; the genuine move has moved on from both.
+let lastPointerScreenX = 0, lastPointerScreenY = 0;
+let lastPointerTimeStamp = 0;
+
+// Is this mouse event the compatibility echo of a pointer event?
+//
+// The test is the same one the press handler uses (same position, same
+// moment), because it is the same phenomenon: the browser synthesising the
+// other family for an event it has already delivered.
+function isCompatMouseEvent(e) {
+  if (!lastPointerTimeStamp) return false;
+  if (Math.abs((e.screenX || 0) - lastPointerScreenX) > 2) return false;
+  if (Math.abs((e.screenY || 0) - lastPointerScreenY) > 2) return false;
+  return Math.abs((e.timeStamp || 0) - lastPointerTimeStamp) < 100;
+}
+
+// How far the pointer has moved since the press, in the window's own
+// coordinates.
+//
+// The client coordinates are the ones that answer this: they are measured
+// against the viewport the event is dispatched into, so there is nothing in
+// them that can drift while the machine is asleep.
+function distanceFromPress(e) {
+  const dx = (Number.isFinite(e.clientX) ? e.clientX : 0) - downClientX;
+  const dy = (Number.isFinite(e.clientY) ? e.clientY : 0) - downClientY;
+  return Math.hypot(dx, dy);
+}
+
+// Hand the gesture over to the other event family.
+//
+// This is what the "the pointer pipeline died in the middle of a gesture"
+// case needs: the press arrived as a pointer event, the movement arrives as
+// mouse events, and the family gate would otherwise throw the movement
+// away — the gesture would sit there until the release, the pet would not
+// move, and the user would see a pet that cannot be dragged.
+//
+// The handover is only allowed while the pet has NOT started moving
+// (`didDrag` is false). The grab point is the same either way and the
+// movement is measured from it, so switching cannot make the pet jump — and
+// once the drag is under way, the pointer that owns it is the one the user
+// is actually holding.
+function switchGestureFamily(family, e) {
+  const from = dragFamily;
+  dragFamily = family;
+  if (family === 'mouse') {
+    // The mouse family has no pointer id — there is no device that could
+    // be re-created under us.
+    dragPointerId = null;
+  } else if (Number.isFinite(e.pointerId)) {
+    dragPointerId = e.pointerId;
+  }
+  try {
+    if (M.pet && typeof M.pet.diag === 'function') {
+      M.pet.diag(diagSnapshot({
+        kind: 'family_switch',
+        where: 'renderer',
+        from,
+        to: family,
+        dist: Number(distanceFromPress(e).toFixed(2)),
+        ev: {
+          screenX: e.screenX, screenY: e.screenY,
+          clientX: e.clientX, clientY: e.clientY,
+          pointerId: e.pointerId, buttons: e.buttons,
+          isTrusted: e.isTrusted,
+        },
+      }));
+    }
+  } catch (err) { /* diagnostics must never break the drag */ }
+}
+
+// Whether the gesture in flight started on the pet itself.
+//
+// The whole pet WINDOW is the drag target now (see the press handlers
+// below), so a press can land on the transparent margin around the sprite.
+// Such a press starts a drag — that is the whole point — but it must NOT
+// run the click side effects (pausing the pet, acknowledging a reminder):
+// only a click ON the pet means that.
+let gestureOnSprite = false;
+
+// How many input events this renderer has seen since it was loaded.
+//
+// The main process uses it to find out whether the window's INPUT PATH is
+// still alive after a system suspend. A renderer can be alive and deaf at
+// the same time: it still answers IPC, so from the outside it looks
+// perfectly healthy, while the window's input registration is dead and not
+// a single mouse event ever reaches it. The counter is what tells the two
+// apart.
+let inputEventCount = 0;
+
+// How many events each family has produced.
+//
+// After a system suspend one family can stop entirely while the other
+// keeps working. Which one stopped is the difference between "the pet is
+// deaf" and "the pet is using its fallback input path", and it is the
+// thing the diagnostic log has to show.
+let pointerEventCount = 0;
+let mouseEventCount = 0;
+
+// Has the main process been told that input is reaching this renderer?
+//
+// It is told once per wake. The main process is watching for it: if the OS
+// cursor moves over the pet and this message never arrives, the input
+// path is dead and the only cure left is a new process.
+let inputAliveReported = false;
+try {
+  // Read by the main process through `executeJavaScript`, which runs in
+  // this same (main) world.
+  window.__petInputCount = () => inputEventCount;
+} catch (e) { /* diagnostics must never break the pet */ }
+
+// Count an input event and tell the main process, once, that input is
+// getting through.
+function countInputEvent(family) {
+  inputEventCount++;
+  if (family === 'pointer') pointerEventCount++;
+  else if (family === 'mouse') mouseEventCount++;
+  if (inputAliveReported) return;
+  inputAliveReported = true;
+  try {
+    if (M.pet && typeof M.pet.inputAlive === 'function') M.pet.inputAlive();
+  } catch (e) { /* the probe must never break the pet */ }
+}
+
+// Is this element one the user has to be able to CLICK rather than drag?
+//
+// The reminder bubble is the only such element: clicking it closes the
+// reminder. It sits above the sprite, so it never covered the pet's body,
+// but now that the whole window is a drag target it has to be excluded
+// explicitly — otherwise a click on the bubble would start a drag and
+// swallow the click.
+function isInteractiveTarget(target) {
+  try {
+    if (!target || typeof target.closest !== 'function') return false;
+    return !!target.closest('[data-pet-interactive]');
+  } catch (e) { return false; }
+}
+
+// A monotonically increasing id, one per pointer gesture.
+//
+// The main process mirrors the renderer's gesture lifecycle: it starts
+// following the cursor on `pet:drag_start` and stops on `pet:drag_end`.
+// Both messages carry the id of the gesture they belong to, so the main
+// process can tell a message about the LIVE gesture from one about a
+// gesture that has already ended.
+//
+// The id is what makes the protocol order-independent. Without it, a
+// `pet:drag_start` that arrives after its own `pet:drag_end` looks
+// exactly like a fresh drag — and the main process would start following
+// the cursor with nothing left to stop it. That is the failure this id
+// exists to prevent; see the note on `pet:drag_start` in main/ipc.js.
+let gestureSeq = 0;
+// The id of the gesture in flight, or 0 when no gesture is in flight.
+//
+// This is the LOCAL sequence number: it identifies the gesture inside this
+// renderer. The id that travels to the main process is `gestureBase +
+// gestureSeq` — see `currentWireId`.
+let currentGesture = 0;
+// The gesture id as the main process knows it: `gestureBase + gestureSeq`.
+//
+// 0 means "not sent to the main process yet" — the gesture has not reached
+// the drag threshold, or its `pet:drag_start` is still in flight.
+let currentWireId = 0;
+// The offset that turns the local gesture sequence into an id the main
+// process accepts.
+//
+// The main process refuses a `pet:drag_start` whose id it has already seen
+// (that is how it recognises a replayed message), so the ids have to keep
+// increasing for the whole life of the app. The renderer counts its
+// gestures from 1 every time it loads, so after a reload it would hand out
+// ids the main process has already seen — and every one of its drags would
+// be refused, leaving the pet undraggable until the app was restarted.
+//
+// Asking the main process for its current high-water mark at startup lets a
+// fresh renderer pick up where the last one left off. The answer is
+// `gestureBaseReady`, so a drag that starts before the answer arrives waits
+// for it instead of guessing.
+let gestureBase = 0;
+let gestureBaseReady = Promise.resolve(0);
+// Whether the last attempt to fetch the base failed. A failed fetch leaves
+// the ids starting from 1, which the main process may already have seen —
+// so the next drag retries the fetch before it uses an id.
+let gestureBaseFailed = false;
+
+// Ask the main process where its gesture ids have got to.
+//
+// The request is fired as early as possible — the renderer is the only
+// thing that can drag the pet, and a drag that starts before the answer
+// arrives has to wait for it. It never rejects: a main process without the
+// handler (an older build) simply leaves the base at 0, and the ids stay
+// locally unique, which is all an older main process needs.
+function refreshGestureBase() {
+  try {
+    if (!M.pet || typeof M.pet.gestureBase !== 'function') {
+      gestureBaseFailed = true;
+      return Promise.resolve(gestureBase);
+    }
+    gestureBaseReady = Promise.resolve(M.pet.gestureBase()).then(
+      (b) => {
+        const n = Number(b);
+        if (Number.isFinite(n) && n > gestureBase) gestureBase = n;
+        gestureBaseFailed = false;
+        return gestureBase;
+      },
+      () => {
+        gestureBaseFailed = true;
+        return gestureBase;
+      }
+    );
+  } catch {
+    gestureBaseFailed = true;
+  }
+  return gestureBaseReady;
+}
+refreshGestureBase();
+
+// The `pet:drag_start` that is still in flight, as `{ gesture, wireId,
+// promise }`.
+//
+// The start cannot be sent synchronously: the renderer has to ask the
+// main process where the window is before it can measure the grab
+// offset, and that answer comes back asynchronously. Meanwhile the user
+// can already have released the button.
+//
+// The main process sees the two messages in the order they are SENT, and
+// the start is sent from a promise callback — so an end sent in the
+// meantime would arrive FIRST. The main process would then be following
+// the cursor with nothing left to stop it: the pet would be glued to the
+// pointer (it could not be dragged anywhere) and the controller's drag
+// mutex would stay held, so the pet would never walk on its own again.
+//
+// Keeping the in-flight start here lets `endDrag` send the end AFTER it,
+// which restores the order the main process expects: start, then end.
+let pendingStart = null;
+
+// The gesture id of the drag the main process may be following the cursor
+// for, or 0 when there is none.
+//
+// It is what tells a fresh press that there is a stale drag to clean up.
+let dragLive = 0;
 
 // Who owns the window position during the current drag.
 //
@@ -805,6 +1160,48 @@ let dragPointerId = null;
 // boolean would have let the first few moves slip into the wrong branch and
 // double-apply the movement.
 let dragOwner = 'none';
+
+// Tell the main process that the gesture is over.
+//
+// `gesture` is the id of the gesture being ended. 0 means "no gesture is
+// in flight" — the forced teardown with nothing to tear down. The main
+// process reads 0 as "stop whatever drag you are running", which is
+// exactly what a forced teardown wants: it may be cleaning up a drag
+// whose `pet:drag_end` never arrived.
+function sendDragEnd(gesture) {
+  // A stale end — one that belongs to an older gesture — must not clear
+  // the live flag: a newer drag may be running by now.
+  if (!gesture || gesture >= dragLive) dragLive = 0;
+  try { M.pet.dragEnd(gesture); } catch {}
+}
+
+// Close a drag whose `pet:drag_start` is still in flight.
+//
+// The end of a gesture must never overtake its start. The start is sent
+// from a promise callback (the renderer has to ask the main process where
+// the window is before it can measure the grab offset), so an end sent
+// while the lookup is still running arrives FIRST at the main process.
+//
+// The main process would then be following the cursor with nothing left
+// to stop it: the pet is glued to the pointer — it cannot be dragged
+// anywhere — and the controller's drag mutex stays held, so the pet never
+// walks on its own again. The right-click menu keeps working, because it
+// does not go through the drag protocol at all, which is what made the
+// symptom look so odd.
+//
+// Waiting for the start restores the order the main process expects:
+// start, then end.
+//
+// The end carries the id the main process knows the gesture by, which is
+// only known once the start has been built — so it is read from the pending
+// record at the moment the end is actually sent, not captured earlier.
+function closePendingStart() {
+  const pending = pendingStart;
+  if (!pending) return;
+  pendingStart = null;
+  const send = () => sendDragEnd(pending.wireId);
+  pending.promise.then(send, send);
+}
 
 // End the gesture no matter how it ended — a normal release, a lost
 // capture, the window losing focus, or the app being backgrounded.
@@ -825,9 +1222,49 @@ let dragOwner = 'none';
 // main process dragging the pet around forever: the pet stuck to the
 // pointer, and the pet's autonomous movement dead for the rest of the
 // session.
-function endDrag(force = false) {
+function endDrag(force = false, reason = '') {
   if (!pressing && !force) return;
   const wasDragging = didDrag;
+  // Record WHY the gesture ended.
+  //
+  // A gesture that is torn down by something the user did not do (a blur,
+  // a lost capture, a wake) is the signature of the post-sleep wedge: the
+  // drag starts and then dies on its own. The reason is what tells the
+  // two apart in the diagnostic log.
+  try {
+    if (M.pet && typeof M.pet.diag === 'function') {
+      M.pet.diag(diagSnapshot({
+        kind: 'drag_end',
+        where: 'renderer',
+        reason: reason || (force ? 'forced' : 'release'),
+        forced: !!force,
+        wasDragging,
+        dragOwner,
+        // How many moves the gesture saw. Zero means the pointer never
+        // moved after the press; one means it moved but never far enough.
+        moves: gestureMoves,
+        // The census: how many moves EACH family produced. This is what
+        // tells "the pointer pipeline died mid-gesture and the mouse family
+        // carried the movement" apart from "the user did not move the
+        // mouse" — the two look identical from the outside.
+        pointerMoves: gesturePointerMoves,
+        mouseMoves: gestureMouseMoves,
+        // The family that owned the gesture, and whether it was handed
+        // over to the other one while it was in flight.
+        family: dragFamily,
+        wireId: currentWireId,
+      }));
+    }
+  } catch (e) { /* diagnostics must never break the teardown */ }
+  // The local sequence number of the gesture being ended.
+  //
+  // It identifies the gesture inside this renderer; the id the main
+  // process knows it by is `currentWireId`, which is only set once the
+  // `pet:drag_start` has been built.
+  const gesture = currentGesture;
+  // The id the main process knows this gesture by. 0 when the gesture never
+  // reached the drag threshold, or its start is still in flight.
+  const wireId = currentWireId;
   // Clear the gesture state FIRST, then release the pointer capture.
   //
   // The order matters. `releasePointerCapture` fires `lostpointercapture`
@@ -848,10 +1285,17 @@ function endDrag(force = false) {
   // throws if the id is not captured (it is a no-op only for a stale id the
   // browser already forgot).
   const capturedId = dragPointerId;
+  // Whether the press that started this gesture landed on the pet itself.
+  // It decides whether the release counts as a CLICK on the pet.
+  const onSprite = gestureOnSprite;
   pressing = false;
   didDrag = false;
   dragPointerId = null;
+  dragFamily = null;
+  gestureOnSprite = false;
   dragOwner = 'none';
+  currentGesture = 0;
+  currentWireId = 0;
   sprite.classList.remove('dragging');
   if (capturedId !== null) {
     try {
@@ -865,7 +1309,41 @@ function endDrag(force = false) {
   // controller's drag mutex. This is sent on EVERY exit path, including
   // the forced one, because it is the only way the main process learns
   // that the gesture is over.
-  try { M.pet.dragEnd(); } catch {}
+  //
+  // The gesture id travels with it so the main process can tell this
+  // end apart from a LATE end belonging to an older gesture — one that
+  // must not stop the drag that is running now.
+  //
+  // When this gesture's `pet:drag_start` is still in flight, the end is
+  // deferred until it has been sent — otherwise the end would overtake
+  // the start and leave the main process following the cursor forever.
+  // See `closePendingStart`.
+  const pending = (pendingStart && pendingStart.gesture === gesture) ? pendingStart : null;
+  if (pending) {
+    pendingStart = null;
+    // The id is read when the end is actually sent: it only exists once the
+    // start has been built, which is what the promise waits for.
+    const send = () => sendDragEnd(pending.wireId);
+    pending.promise.then(send, send);
+  } else if (force) {
+    // A forced teardown — the system came back from sleep, or the pointer
+    // device was re-created under us. The renderer cannot know whether the
+    // main process still believes a drag is running, and which gesture it
+    // belongs to, so it asks for a full stop: the id 0 means "stop
+    // whatever drag you are running".
+    sendDragEnd(0);
+  } else if (wasDragging) {
+    // The start already reached the main process, so it knows this gesture
+    // by its id.
+    sendDragEnd(wireId);
+  } else {
+    // No drag was ever started — this was a plain click. The main process
+    // cannot know about a gesture that never started, so the end goes out
+    // with the id 0, which means "stop whatever drag you are running".
+    // That is exactly right: the user pressed and released, so any drag
+    // still running on the other side belongs to a gesture that is over.
+    sendDragEnd(0);
+  }
   if (wasDragging) {
     return;
   }
@@ -873,6 +1351,12 @@ function endDrag(force = false) {
   // click side effects below — otherwise waking the machine up would
   // dismiss a pending reminder bubble the user never acknowledged.
   if (force) {
+    return;
+  }
+  // A press on the transparent margin around the pet starts a drag, but it
+  // is not a click ON the pet: it must not pause the pet and it must not
+  // acknowledge a reminder the user never looked at.
+  if (!onSprite) {
     return;
   }
   // Non-drag single click is now a no-op — the main window is gated by a
@@ -894,44 +1378,528 @@ function endDrag(force = false) {
   }
 }
 
-sprite.addEventListener('pointerdown', (e) => {
+// ---- Diagnostics ----
+//
+// The pet window records what it sees — every pointer press, every wake,
+// every drag takeover — to the diagnostic log in the main process (see
+// main/pet_diagnostics.js).
+//
+// This exists because "the pet cannot be dragged any more after the
+// machine sleeps" is a bug that only reproduces on real hardware: it needs
+// an actual system suspend. Two earlier attempts at this bug were
+// plausible, were wrong, and both looked right on paper. The log turns
+// the next reproduction into evidence instead of another guess.
+//
+// The snapshot deliberately records the things that tell the possible
+// causes apart: the pointer's coordinates in BOTH spaces, what element was
+// actually under the pointer, the sprite's geometry, the CSS variables
+// that size it, and the window's position on the desktop.
+//
+// Diagnostics must never break the pet: every call is wrapped, and a
+// failure is swallowed.
+
+// The geometry and state a diagnostic entry carries.
+function diagSnapshot(extra) {
+  const out = {};
+  try {
+    out.win = {
+      screenX: window.screenX, screenY: window.screenY,
+      innerWidth: window.innerWidth, innerHeight: window.innerHeight,
+      outerWidth: window.outerWidth, outerHeight: window.outerHeight,
+      dpr: window.devicePixelRatio,
+      hidden: document.hidden,
+      readyState: document.readyState,
+    };
+    out.screen = {
+      width: window.screen.width, height: window.screen.height,
+      availWidth: window.screen.availWidth, availHeight: window.screen.availHeight,
+    };
+    const cs = getComputedStyle(document.documentElement);
+    out.css = {
+      sizeW: cs.getPropertyValue('--size-w').trim(),
+      sizeH: cs.getPropertyValue('--size-h').trim(),
+      spriteW: cs.getPropertyValue('--sprite-w').trim(),
+      spriteH: cs.getPropertyValue('--sprite-h').trim(),
+    };
+    const r = sprite.getBoundingClientRect();
+    out.sprite = { x: r.x, y: r.y, w: r.width, h: r.height };
+  } catch (e) {
+    out.snapshotError = String(e);
+  }
+  return Object.assign(out, extra || {});
+}
+
+// Record a pointer event.
+//
+// `where` says which handler saw it: 'window' for the capture-phase
+// listener on the window (which sees EVERY press, whether or not it
+// landed on the pet) and 'sprite' for the sprite's own handler. The
+// difference between the two is what separates "the press never reached
+// the pet" from "the press reached the pet and the drag still did not
+// start".
+function diagEvent(where, e, extra) {
+  try {
+    if (!M.pet || typeof M.pet.diag !== 'function') return;
+    const info = { kind: 'pointerdown', where };
+    if (e) {
+      info.ev = {
+        screenX: e.screenX, screenY: e.screenY,
+        clientX: e.clientX, clientY: e.clientY,
+        pointerId: e.pointerId, button: e.button, buttons: e.buttons,
+        isTrusted: e.isTrusted,
+      };
+      try {
+        const hit = document.elementFromPoint(e.clientX, e.clientY);
+        info.hit = hit ? (hit.id || hit.className || hit.tagName) : null;
+      } catch (err) { info.hit = 'elementFromPoint failed: ' + err; }
+    }
+    M.pet.diag(diagSnapshot(Object.assign(info, extra || {})));
+  } catch (e) { /* diagnostics must never break the pet */ }
+}
+
+// Every press, whatever it landed on.
+//
+// Capture phase on the window, so it runs BEFORE the sprite's own
+// handler: the log then shows both a 'window' and a 'sprite' entry for a
+// press that reached the pet, and only a 'window' entry for one that did
+// not.
+//
+// THE WINDOW IS THE HIT TARGET
+// ----------------------------
+// The gesture starts here, not on the sprite.
+//
+// The sprite is 165 px wide inside a 216 px window, and the artwork
+// inside it is narrower still (the PNG is a wide image letterboxed into a
+// tall box), so a press that lands anywhere near the visible pet but
+// outside the sprite's box did NOTHING AT ALL: no gesture, no drag, no
+// feedback. The real machine's diagnostic log (2026-10-31) caught exactly
+// that — a `pointerdown` at clientX 210, where the sprite ends at 190,
+// hitting `BODY` and producing a grab that silently went nowhere.
+//
+// The pet walks around on its own, so the user aims at where the pet was
+// a moment ago and misses the 165 px box all the time. Making the whole
+// window draggable removes the whole class of "I grabbed it and nothing
+// happened".
+window.addEventListener('pointerdown', (e) => {
+  diagEvent('window', e);
+  countInputEvent('pointer');
   if (e.button !== 0) return;
+  if (isInteractiveTarget(e.target)) return;
+  beginGesture(e, 'pointer');
+}, true);
+
+// How many moves the current gesture has seen.
+//
+// The counter is what tells "the moves never arrived" apart from "the
+// moves arrived but the threshold was never crossed" — two failures that
+// look identical from the outside and need completely different fixes.
+let gestureMoves = 0;
+
+// Record a move of the gesture in flight.
+//
+// Only the FIRST move of a gesture is logged in full: a drag produces a
+// move every frame, and logging them all would bury the interesting
+// entries. The first move is the one that matters — it carries the
+// pointer's coordinates in both spaces and shows whether the threshold
+// was in reach.
+function diagMove(e, extra) {
+  try {
+    if (!M.pet || typeof M.pet.diag !== 'function') return;
+    const downDx = (Number.isFinite(e.clientX) ? e.clientX : 0) - downClientX;
+    const downDy = (Number.isFinite(e.clientY) ? e.clientY : 0) - downClientY;
+    M.pet.diag(diagSnapshot(Object.assign({
+      kind: 'pointermove',
+      where: 'renderer',
+      moves: gestureMoves,
+      ev: {
+        screenX: e.screenX, screenY: e.screenY,
+        clientX: e.clientX, clientY: e.clientY,
+        pointerId: e.pointerId, buttons: e.buttons,
+        isTrusted: e.isTrusted,
+      },
+      // The distance from the press, in the window's own coordinates.
+      // This is what the drag threshold is measured on.
+      fromPress: { dx: downDx, dy: downDy, dist: Math.hypot(downDx, downDy) },
+      didDrag,
+      dragOwner,
+    }, extra || {})));
+  } catch (e) { /* diagnostics must never break the drag */ }
+}
+
+// The offset of the grab point inside the pet window.
+//
+// The main process positions the window with `window = cursor - offset`, so
+// the offset decides where the pet sits relative to the pointer. It has to
+// describe the point the user actually grabbed.
+//
+// The offset is measured in the window's own coordinates, so it describes
+// a point inside the window by construction. This check is the safety net
+// for the case where it does not: a grab point outside the window means the
+// measurement and the window disagree about where they are, and dragging
+// with such an offset would fling the pet across the screen. It is
+// rejected and the pet is grabbed by its centre instead.
+function usableGrabOffset(off) {
+  if (!off || !Number.isFinite(off.dx) || !Number.isFinite(off.dy)) return null;
+  const w = window.innerWidth || 0;
+  const h = window.innerHeight || 0;
+  if (w > 0 && (off.dx < 0 || off.dx > w)) return null;
+  if (h > 0 && (off.dy < 0 || off.dy > h)) return null;
+  return off;
+}
+
+// Grab the pet by the middle of its sprite — the fallback when the grab
+// point cannot be trusted.
+function spriteCentreOffset() {
+  try {
+    const r = sprite.getBoundingClientRect();
+    if (r && r.width > 0 && r.height > 0) {
+      return { dx: r.x + r.width / 2, dy: r.y + r.height / 2 };
+    }
+  } catch {}
+  return { dx: (window.innerWidth || 0) / 2, dy: (window.innerHeight || 0) / 2 };
+}
+
+// Point the gesture at a different pointer device.
+//
+// A system suspend tears the pointer device down and the OS brings it back
+// as a NEW device with a NEW pointer id — while the button the user is
+// holding is still logically down. The gesture captured the dead id, so
+// every event the new mouse sends looks like it came from a stranger, and
+// the pet could not be dragged at all.
+//
+// This is only safe BEFORE the drag has started: the pet has not moved yet,
+// so following a different pointer cannot make it jump. Once the drag is
+// under way the pet IS the thing being moved, and a second device must not
+// take it over — that case tears the gesture down instead (see the
+// `pointermove` handler).
+function rebindToPointer(pointerId) {
+  const oldId = dragPointerId;
+  // The new id is stored BEFORE the old capture is released.
+  //
+  // `releasePointerCapture` fires `lostpointercapture` synchronously, and
+  // that handler tears the gesture down when the lost capture belongs to
+  // this gesture. Writing the new id first makes the old capture look like
+  // somebody else's, so the handler leaves the gesture alone.
+  dragPointerId = pointerId;
+  if (oldId !== null && oldId !== pointerId) {
+    try {
+      if (typeof sprite.hasPointerCapture === 'function'
+        && sprite.hasPointerCapture(oldId)) {
+        sprite.releasePointerCapture(oldId);
+      }
+    } catch {}
+  }
+  // Capture the new pointer, so the gesture survives the pointer travelling
+  // outside the 220 px pet window. The capture is what makes the drag keep
+  // working once the cursor leaves the box.
+  try { sprite.setPointerCapture(pointerId); } catch {}
+  try {
+    if (M.pet && typeof M.pet.diag === 'function') {
+      M.pet.diag(diagSnapshot({
+        kind: 'pointer_rebind',
+        where: 'renderer',
+        from: oldId,
+        to: pointerId,
+        didDrag,
+      }));
+    }
+  } catch (e) { /* diagnostics must never break the drag */ }
+}
+
+// Begin a gesture.
+//
+// `family` is 'pointer' or 'mouse' — which event family delivered the
+// press. The gesture is then driven by that family alone (see `dragFamily`),
+// so the two can never fight over the same press.
+function beginGesture(e, family) {
+  // A gesture from the OTHER family is stale by definition.
+  //
+  // The two families cannot both be alive for one press: in a healthy
+  // browser the `pointerdown` arrives first and its `preventDefault()`
+  // suppresses the compatibility mouse events entirely. So a mouse press
+  // arriving while a POINTER gesture is live means the pointer events are
+  // not coming — which is exactly the post-suspend state — and the pointer
+  // gesture can never be ended by a `pointerup` that will not arrive.
+  //
+  // Leaving it in place would wedge the pet for the rest of the session:
+  // the mouse press would be swallowed, so the pet could never be dragged
+  // again. Tearing the stale gesture down first lets the mouse family
+  // take over. The same applies the other way round — a `pointerdown`
+  // arriving while a MOUSE gesture is live means the pointer device came
+  // back, and the newer family wins.
+  if (pressing && dragFamily && dragFamily !== family) {
+    // …unless it is the COMPATIBILITY mouse event of the pointer press
+    // that started the live gesture.
+    //
+    // The compatibility event carries the same coordinates and is created
+    // in the same task, so it is told apart from a genuinely new press by
+    // both. (A real browser suppresses it entirely — the `pointerdown`
+    // handler calls `preventDefault()` — but not every environment does,
+    // and treating the compatibility event as a new press would tear the
+    // gesture down in the middle of the user's drag.)
+    const isCompatEvent = family === 'mouse'
+      && dragFamily === 'pointer'
+      && Math.abs((e.screenX || 0) - downScreenX) < 2
+      && Math.abs((e.screenY || 0) - downScreenY) < 2
+      && Math.abs((e.timeStamp || 0) - downTimeStamp) < 100;
+    if (isCompatEvent) return;
+    endDrag(true, 'family-switch');
+  }
   pressing = true;
   didDrag = false;
+  dragFamily = family;
+  // The move counter of this gesture — it goes into the diagnostic log, so
+  // it says how many moves the gesture actually saw.
+  gestureMoves = 0;
+  // The census of this gesture: how many moves each family produced. See
+  // the note on `gesturePointerMoves`.
+  gesturePointerMoves = 0;
+  gestureMouseMoves = 0;
+  // Remember where the press was, in the pointer family's terms. It is what
+  // tells a later compatibility mouse event apart from a genuine
+  // mouse-family move — see `isCompatMouseEvent`.
+  if (family === 'pointer') {
+    lastPointerScreenX = Number.isFinite(e.screenX) ? e.screenX : 0;
+    lastPointerScreenY = Number.isFinite(e.screenY) ? e.screenY : 0;
+    lastPointerTimeStamp = Number.isFinite(e.timeStamp) ? e.timeStamp : 0;
+  } else {
+    lastPointerTimeStamp = 0;
+  }
+  // The pet must not walk away while the user is holding it.
+  //
+  // The autonomous walk is only paused once the drag actually starts — but
+  // the walk does not wait for the drag: it keeps going, and the pet slides
+  // out from under the cursor in the moment between the press and the
+  // threshold. The user's moves then land on the desktop instead of on the
+  // pet, and the pet looks like it cannot be dragged. Pausing it on the
+  // press closes that window: the grab point is where the user pressed, and
+  // the pet stays there until the gesture ends.
+  try { M.pet.setPaused(2000); } catch {}
   // Ownership is decided when the drag threshold is crossed, not here — but
   // it must start from a clean slate in case a previous gesture ended
   // without going through `endDrag`.
   dragOwner = 'none';
-  downX = e.screenX;
-  downY = e.screenY;
-  lastX = e.screenX;
-  lastY = e.screenY;
-  dragPointerId = e.pointerId;
+  // The grab point, relative to the window. See the note on
+  // `downClientX` — this is the measurement the drag is built on.
+  downClientX = Number.isFinite(e.clientX) ? e.clientX : 0;
+  downClientY = Number.isFinite(e.clientY) ? e.clientY : 0;
+  // The same press in the other family's coordinates — see the note on
+  // `downScreenX`.
+  downScreenX = Number.isFinite(e.screenX) ? e.screenX : 0;
+  downScreenY = Number.isFinite(e.screenY) ? e.screenY : 0;
+  downTimeStamp = Number.isFinite(e.timeStamp) ? e.timeStamp : 0;
+  // Only the pointer family has a pointer id. The mouse family has no
+  // device to be confused by — which is exactly why it still works when the
+  // pointer devices are broken.
+  dragPointerId = (family === 'pointer' && Number.isFinite(e.pointerId))
+    ? e.pointerId
+    : null;
+  // Did the press land on the pet itself, or on the transparent margin
+  // around it? The margin starts a drag but is not a click on the pet.
+  //
+  // `contains` throws when it is given something that is not a Node (the
+  // window itself is not one), so the check is made defensively.
+  gestureOnSprite = false;
+  try {
+    if (e.target && typeof sprite.contains === 'function' && sprite.contains(e.target)) {
+      gestureOnSprite = true;
+    }
+  } catch (e) { /* not a node — the press was not on the pet */ }
+  // Every gesture gets its own id, so the main process can tell which
+  // drag messages belong to it.
+  //
+  // The id the main process knows it by is `gestureBase + this sequence`,
+  // which keeps growing across a renderer reload — see `gestureBase`.
+  currentGesture = ++gestureSeq;
+  // No id yet: the gesture has not reached the drag threshold, so nothing
+  // has been sent to the main process yet.
+  currentWireId = 0;
+  // A new press means the previous gesture is over. Close its drag: if
+  // its `pet:drag_start` is still in flight, the end has to wait for it
+  // so the two do not arrive swapped.
+  closePendingStart();
+  // Barrier: tell the main process that any drag it may still be running
+  // belongs to a gesture that is already over.
+  //
+  // A new press means the previous gesture ended, so its `pet:drag_end`
+  // has already been sent — but it may have been overtaken by a late
+  // `pet:drag_start`, leaving the main process following the cursor with
+  // nothing to stop it. The pet would then be glued to the pointer
+  // and could not be dragged anywhere, which is exactly the "the pet
+  // cannot be dragged" symptom. Ending the drag here — with the id 0,
+  // which means "stop whatever you are running" — clears that before the
+  // user can see it.
+  //
+  // Only sent when a drag is actually outstanding, so a normal gesture
+  // does not produce an extra message.
+  if (dragLive) sendDragEnd(0);
   // Capture the pointer so this element keeps receiving move/up events even
   // if the pointer travels outside the window. Without this the gesture
   // simply evaporates the moment the cursor leaves the 220 px box.
-  try { sprite.setPointerCapture(e.pointerId); } catch {}
+  //
+  // Only the pointer family can be captured — there is no pointer capture
+  // for the legacy mouse events, so a mouse gesture simply stops when the
+  // cursor leaves the window. That is survivable: by then the main process
+  // has usually taken the position over, and it follows the OS cursor.
+  if (family === 'pointer') {
+    try { sprite.setPointerCapture(e.pointerId); } catch {}
+  }
   e.preventDefault();
+}
+
+sprite.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  // The gesture was already started by the window's capture-phase handler
+  // — this listener only records that the press landed on the pet itself,
+  // which is what the log needs to tell "grabbed the pet" apart from
+  // "grabbed the transparent margin around it".
+  diagEvent('sprite', e);
+});
+// Every mouse press, whatever it landed on.
+//
+// The capture phase on the window sees EVERY press, whether or not it landed
+// on the pet — the mouse counterpart of the pointer listener above. It is
+// what proves, after a system suspend, that the mouse events still arrive
+// even though the pointer events have stopped.
+//
+// It is also where the gesture starts when the pointer events are the ones
+// that stopped: in a healthy browser the pointerdown handler above has
+// already called `preventDefault()`, which suppresses this compatibility
+// event entirely, so this path costs nothing.
+window.addEventListener('mousedown', (e) => {
+  diagMouse('window', e);
+  countInputEvent('mouse');
+  if (e.button !== 0) return;
+  if (isInteractiveTarget(e.target)) return;
+  beginGesture(e, 'mouse');
+}, true);
+// Record a mouse-family event.
+//
+// The mouse events are the fallback input path (see `dragFamily`), and they
+// are also the evidence for what really happens after a system suspend: the
+// POINTER events can stop arriving altogether while the MOUSE events keep
+// coming. Only the log can show that difference — from the outside, "the pet
+// cannot be dragged but the right-click menu works" looks like nonsense.
+function diagMouse(where, e, extra) {
+  try {
+    if (!M.pet || typeof M.pet.diag !== 'function') return;
+    const info = { kind: 'mouse', where };
+    if (e) {
+      info.ev = {
+        screenX: e.screenX, screenY: e.screenY,
+        clientX: e.clientX, clientY: e.clientY,
+        button: e.button, buttons: e.buttons,
+        isTrusted: e.isTrusted,
+      };
+      try {
+        const hit = document.elementFromPoint(e.clientX, e.clientY);
+        info.hit = hit ? (hit.id || hit.className || hit.tagName) : null;
+      } catch (err) { info.hit = 'elementFromPoint failed: ' + err; }
+    }
+    M.pet.diag(diagSnapshot(Object.assign(info, extra || {})));
+  } catch (e) { /* diagnostics must never break the pet */ }
+}
+
+// Record a release that had no press behind it.
+//
+// This is the log entry for "the first press after the wake did nothing":
+// the press itself never reached the renderer (it was swallowed while the
+// pointer device was being re-registered), so the release arrives with no
+// gesture waiting for it.
+function diagOrphanRelease(family, e) {
+  try {
+    if (!M.pet || typeof M.pet.diag !== 'function') return;
+    M.pet.diag(diagSnapshot({
+      kind: 'orphan_release',
+      where: 'renderer',
+      family,
+      ev: {
+        screenX: e.screenX, screenY: e.screenY,
+        clientX: e.clientX, clientY: e.clientY,
+        pointerId: e.pointerId, button: e.button,
+        isTrusted: e.isTrusted,
+      },
+    }));
+  } catch (e) { /* diagnostics must never break the pet */ }
+}
+
+// The legacy mouse events — the fallback for a browser whose pointer
+// events have stopped after a system suspend.
+//
+// `pressing` is the guard that keeps the two families apart: the pointer
+// family always delivers its press first (and its `preventDefault()`
+// suppresses the compatibility mouse events altogether), so a `mousedown`
+// that arrives while a gesture is live is never a second gesture.
+sprite.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  diagMouse('sprite', e);
 });
 
-window.addEventListener('pointermove', (e) => {
+// The move handling, shared by both event families.
+//
+// `family` is 'pointer' or 'mouse'. The only difference between them is the
+// foreign-pointer check: a mouse event has no pointer id, and the whole
+// "the pointer device was re-created under us" problem is a pointer-events
+// problem. Everything else — the threshold, the takeover, the local
+// fallback — is identical.
+function handleDragMove(e, family) {
   if (!pressing) return;
-  // Self-heal: an event from a pointer that is not the one this gesture
-  // captured means the captured pointer is gone — the device was re-created
-  // by a system suspend, or the gesture was hijacked by another pointer.
+  gestureMoves++;
+  // The census: how many moves each family produced during this gesture.
+  if (family === 'pointer') gesturePointerMoves++;
+  else gestureMouseMoves++;
+  // The first move of a gesture is logged in full: it shows the pointer's
+  // coordinates in both spaces and how far it was from the press, which is
+  // what tells "the move never arrived" apart from "the move arrived but
+  // did not reach the threshold".
+  if (gestureMoves === 1) diagMove(e, { family });
+  // An event from a pointer device this gesture did not capture.
   //
-  // The old code just `return`ed here, which left `dragPointerId` pointing
-  // at a dead id forever. Every subsequent event from the new mouse was
-  // rejected by the same guard, so the pet could never be dragged again for
-  // the rest of the session. Tearing the gesture down here frees the id and
-  // lets the next `pointerdown` start a clean drag.
-  if (dragPointerId !== null && e.pointerId !== dragPointerId) {
-    endDrag(true);
-    return;
+  // A system suspend tears the pointer device down, and the OS brings it
+  // back as a NEW device with a NEW pointer id — while the button the user
+  // is holding is still logically down. The gesture captured the old id,
+  // so every event the new mouse sends looks like it came from a stranger.
+  //
+  // Tearing the gesture down on the first of them left the pet
+  // undraggable: the press carried the old id and every move carried the
+  // new one, so the press was killed by the move that followed it, over
+  // and over. The pet could not be dragged at all — which is exactly what
+  // the user reported.
+  //
+  // So before the drag has started, the gesture follows the pointer that
+  // is actually moving. The pet has not moved yet, so following the new
+  // pointer cannot make it jump, and the drag can still begin.
+  //
+  // Once the drag HAS started, the captured device is the one the user is
+  // holding and the pet is already being moved — a second device must not
+  // take the drag over. The gesture ends instead, and the next press
+  // starts a clean one.
+  if (family === 'pointer' && dragPointerId !== null && e.pointerId !== dragPointerId) {
+    if (!didDrag) {
+      rebindToPointer(e.pointerId);
+    } else {
+      endDrag(true, 'foreign-pointer');
+      return;
+    }
   }
   if (!didDrag) {
-    if (Math.hypot(e.screenX - downX, e.screenY - downY) < DRAG_THRESHOLD_PX) return;
+    // The threshold is measured in the window's own coordinates.
+    //
+    // It only has to answer "did the pointer move far enough to count as
+    // a drag?", and the client coordinates answer that with no reference to
+    // anything outside the window. The screen coordinates would answer it
+    // just as well — as long as they still track the pointer, which is
+    // exactly the thing that cannot be assumed after the machine has been
+    // asleep: a renderer that was frozen across the sleep may deliver a
+    // first move whose screen coordinates are stale, and then the distance
+    // never reaches the threshold and the drag never starts.
+    const movedX = e.clientX - downClientX;
+    const movedY = e.clientY - downClientY;
+    if (Math.hypot(movedX, movedY) < DRAG_THRESHOLD_PX) return;
     didDrag = true;
+    // The move that crossed the threshold is worth its own entry: it is
+    // the moment the drag becomes real.
+    diagMove(e, { crossed: true, family });
     sprite.classList.add('dragging');
     try { M.pet.setPaused(2000); } catch {}
     // Hand the drag over to the main process. The offset is between the
@@ -950,59 +1918,184 @@ window.addEventListener('pointermove', (e) => {
     // `drag_start`, so nothing is lost by not guessing here — and guessing
     // would double-apply the movement once the takeover does land.
     //
-    // The grab offset is measured against the WINDOW's own screen position.
-    // `window.screenX` is the browser's view of it, which can be stale:
-    // after a suspend/resume the OS may have moved the window (display
-    // reconfiguration, monitor hotplug, dock undock), and the renderer is
-    // not guaranteed to have caught up. A stale value would offset the
-    // window by that delta the moment the drag starts, making the pet jump.
+    // The grab offset is the press's CLIENT coordinates — where inside the
+    // window the user grabbed the pet. It is not measured against the
+    // window's screen position: `window.screenX` is the browser's view of
+    // it, which can be stale. After a suspend/resume the OS may have moved
+    // the window (display reconfiguration, monitor hotplug, dock undock),
+    // and the renderer is not guaranteed to have caught up. A stale value
+    // would offset the window by that delta the moment the drag starts,
+    // making the pet jump — and it would need an IPC round-trip to the main
+    // process to get the authoritative position, which delays the takeover
+    // by a tick and can be lost entirely when the main process was frozen
+    // across the sleep.
     //
-    // So the offset is resolved against the main process's authoritative
-    // window position instead. `M.pet.getPosition()` returns the real,
-    // current coordinates. When it is unavailable or fails (an older main
-    // process) we fall back to `window.screenX`, which is the pre-existing
-    // behaviour.
+    // The client coordinates have no such second term to drift: they come
+    // from the same event that carries the pointer, measured against the
+    // viewport the event is dispatched into. So the offset needs no lookup
+    // at all, and the takeover is not delayed.
     //
-    // The lookup is asynchronous, so the takeover happens a tick later than
-    // it used to. That is harmless: the main process places the window
-    // under the cursor immediately on `drag_start`, and until then the
-    // renderer holds still (see the 'pending' ownership mode above).
+    // The whole chain — the gesture base and then the start — is ONE
+    // promise, registered here, synchronously.
     //
-    // The start must NOT be cancelled by a `pointerup` that lands while the
-    // lookup is still in flight — a quick flick (press, move, release) is
-    // over before the reply arrives, and skipping the start would leave the
-    // main process with a drag it knows nothing about. Instead the start is
-    // always sent, and the `drag_end` that follows it tears the main
-    // process's side back down. Both messages are ordered on the same
-    // channel, so the main process sees start-then-end and ends up idle.
+    // Registering it synchronously is what makes the ordering work. The
+    // user can release the button while the chain is still running (a
+    // quick flick: press, move, release), and `endDrag` then has to wait
+    // for this promise before it sends `pet:drag_end` — otherwise the end
+    // overtakes the start and the main process is left following the
+    // cursor with nothing left to stop it.
+    //
+    // The start is sent even if the gesture has already ended: skipping
+    // it would make a flick do nothing at all — the pet would stay where
+    // it was even though the user clearly moved it. The deferred end
+    // stops the drag right after, so the pet ends up where the flick
+    // took it.
+    //
+    // The gesture id travels with both messages so the main process can
+    // recognise a message that belongs to a gesture it has already
+    // finished — the safety net for the case the deferral cannot cover
+    // (a start from an OLDER gesture arriving late).
     dragOwner = 'pending';
-    const fallbackOffset = { dx: e.screenX - window.screenX, dy: e.screenY - window.screenY };
-    const startDrag = (offset) => {
-      Promise.resolve(M.pet.dragStart(offset.dx, offset.dy)).then(
-        () => { if (pressing && dragOwner === 'pending') dragOwner = 'main'; },
-        () => { if (pressing && dragOwner === 'pending') dragOwner = 'local'; }
-      );
+    const gesture = currentGesture;
+    // The grab offset: how far inside the pet window the user grabbed it.
+    //
+    // It is read from the PRESS, in the window's own coordinates
+    // (`downClientX`/`downClientY`). That is exactly the number the main
+    // process needs: it places the window with `window = cursor - offset`,
+    // so the offset it wants is "where inside the window is the cursor" —
+    // which is what the client coordinates are, by definition. The press
+    // point is also the only one that describes what the user actually
+    // grabbed; using the move that crossed the threshold instead folds
+    // everything the pointer travelled in between into the offset, and the
+    // main process cancels that distance right back out.
+    //
+    // It used to be measured from the SCREEN coordinates
+    // (`e.screenX - window.screenX`), which asks the browser where the
+    // window is on the desktop. That is a second, independent number, and
+    // after a system suspend the two can disagree: the OS may have moved
+    // the window while the machine was asleep, and the renderer's view of
+    // the window's screen origin is not guaranteed to have caught up. The
+    // offset then describes a point that is not on the pet, the pet is
+    // grabbed by the wrong part of itself, and the drag never starts.
+    //
+    // The client coordinates have no second term to drift: they come
+    // from the same event that carries the pointer, measured against the
+    // viewport the event is dispatched into.
+    const grabOffset = { dx: downClientX, dy: downClientY };
+    // The gesture id the main process knows this gesture by: the base it
+    // handed out at startup plus the local sequence number.
+    //
+    // The base is waited for here rather than assumed: a drag that starts
+    // before the answer arrives would otherwise use an id the main process
+    // has already seen, and the start would be refused as a replay. The
+    // answer is fetched at startup, so it is normally already there and
+    // this costs nothing.
+    //
+    // A fetch that failed is retried now — a drag is exactly the moment
+    // when an id the main process has already seen would do the most
+    // damage, so it is the moment to make sure the base is right.
+    const basePromise = gestureBaseFailed ? refreshGestureBase() : gestureBaseReady;
+    const pending = { gesture, wireId: 0, promise: null };
+    // Send the start, and report what the main process answered.
+    //
+    // The id is `base + gesture`. The main process refuses an id it has
+    // already seen (that is how it recognises a replayed message), so a
+    // base that is behind the main process's high-water mark makes the
+    // start come back as `false`.
+    const sendStart = (base) => {
+      const wireId = base + gesture;
+      // The id belongs to THIS gesture, whoever is current now.
+      pending.wireId = wireId;
+      // Only the live gesture may claim the renderer's own id — a chain
+      // that resolved late must not overwrite the id of the gesture that
+      // is running now, or the end would name the wrong gesture.
+      if (gesture === currentGesture) currentWireId = wireId;
+      // From here on the main process may be following the cursor, so a
+      // fresh press has to know that there is a drag to clean up.
+      //
+      // The highest id wins: the main process follows the newest drag it
+      // accepted, and a late chain from an older gesture must not hide it.
+      if (!dragLive || wireId > dragLive) dragLive = wireId;
+      // Reject an offset that does not describe a point inside the pet
+      // window — that means the pointer's screen coordinates and the
+      // window's position are in different spaces, which happens when the
+      // OS moved the window while the machine was asleep. Grabbing the pet
+      // by its centre is the safe answer.
+      const off = usableGrabOffset(grabOffset) || spriteCentreOffset();
+      // Record the takeover: the offset that was measured, and whether it
+      // had to be replaced by the sprite's centre (which means the
+      // measurement was not usable).
+      try {
+        if (M.pet && typeof M.pet.diag === 'function') {
+          M.pet.diag(diagSnapshot({
+            kind: 'drag_start',
+            where: 'renderer',
+            wireId,
+            grab: { dx: off.dx, dy: off.dy },
+            measured: grabOffset,
+            centred: off !== grabOffset,
+            family,
+          }));
+        }
+      } catch (e) { /* diagnostics must never break the drag */ }
+      return M.pet.dragStart(off.dx, off.dy, wireId);
     };
-    try {
-      if (typeof M.pet.getPosition === 'function') {
-        Promise.resolve(M.pet.getPosition()).then(
-          (pos) => {
-            // A malformed reply means the main process is not usable for
-            // this — fall back rather than dragging the pet to the origin.
-            if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
-              startDrag({ dx: e.screenX - pos.x, dy: e.screenY - pos.y });
-            } else {
-              startDrag(fallbackOffset);
-            }
-          },
-          () => startDrag(fallbackOffset)
-        );
-      } else {
-        startDrag(fallbackOffset);
-      }
-    } catch {
+    const chain = basePromise
+      .then((base) => sendStart(base))
+      .then((ok) => {
+        if (ok !== false) return ok;
+        // Refused: the main process has already seen this id, so our base
+        // is behind its high-water mark. Re-read the base and try once
+        // more.
+        //
+        // Dropping to the window-local fallback instead would look exactly
+        // like "the pet cannot be dragged": the local fallback can only
+        // move the pet inside its own 216 px window, because it works off
+        // the movement the renderer sees — and the renderer sees nothing
+        // once the cursor leaves the window.
+        return refreshGestureBase().then((base) => {
+          // The gesture may have ended while the base was being fetched.
+          if (gesture !== currentGesture) return ok;
+          return sendStart(base);
+        });
+      });
+    // Remember the in-flight chain, so `endDrag` sends the end after it
+    // instead of before it.
+    pending.promise = chain;
+    pendingStart = pending;
+    // The takeover must not wait forever — see the note on
+    // `DRAG_TAKEOVER_TIMEOUT_MS`.
+    const takeoverTimer = setTimeout(() => {
+      if (dragOwner !== 'pending') return;
+      if (gesture !== currentGesture) return;
+      // Close the drag the main process may already have started: the end
+      // is ordered after the pending start, so the main process cannot end
+      // up following the cursor with nothing to stop it.
+      closePendingStart();
+      // The main process never took the wheel — drive the window here.
       dragOwner = 'local';
-    }
+    }, DRAG_TAKEOVER_TIMEOUT_MS);
+    chain.then(
+      (ok) => {
+        clearTimeout(takeoverTimer);
+        try {
+          if (M.pet && typeof M.pet.diag === 'function') {
+            M.pet.diag(diagSnapshot({ kind: 'drag_takeover', where: 'renderer', accepted: ok, owner: 'main', family }));
+          }
+        } catch (e) { /* diagnostics must never break the drag */ }
+        if (!pressing || gesture !== currentGesture || dragOwner !== 'pending') return;
+        // The main process answers `false` when it refuses the start
+        // (a gesture it has already finished). Fall back to reporting
+        // the deltas ourselves, the way an older main process is
+        // handled.
+        dragOwner = (ok === false) ? 'local' : 'main';
+      },
+      () => {
+        clearTimeout(takeoverTimer);
+        if (!pressing || gesture !== currentGesture || dragOwner !== 'pending') return;
+        dragOwner = 'local';
+      }
+    );
   }
 
   // The window position is owned by the main process for the duration of
@@ -1010,22 +2103,126 @@ window.addEventListener('pointermove', (e) => {
   // renderer must NOT also apply a relative delta on top of that: the two
   // would compound and the pet would race away from the cursor.
   if (dragOwner === 'local') {
-    const dx = e.screenX - lastX;
-    const dy = e.screenY - lastY;
+    // The main process refused the takeover (or never answered), so the
+    // window is NOT following the pointer — which means the pointer's
+    // movement INSIDE the window is its movement on the screen.
+    //
+    // The delta is measured from the PRESS, not from the previous move.
+    // Moving the window changes the client coordinates, so a delta taken
+    // from the previous move would feed back into itself: the pet would
+    // travel at half the pointer's speed and drift away from it.
+    //
+    // Measured from the press it is exact, and it needs nothing but the
+    // event itself: the grabbed point stays under the pointer because the
+    // window moves by exactly the distance the pointer moved inside it.
+    // The screen coordinates are not used here on purpose — after a system
+    // suspend they can be stale, and a stale delta would move the pet by
+    // nothing at all.
+    const dx = (Number.isFinite(e.clientX) ? e.clientX : 0) - downClientX;
+    const dy = (Number.isFinite(e.clientY) ? e.clientY : 0) - downClientY;
     if (dx !== 0 || dy !== 0) {
       try { M.pet.moveBy(dx, dy); } catch {}
     }
   }
-  lastX = e.screenX;
-  lastY = e.screenY;
+}
+
+// The pointer events.
+//
+// The family gate is what keeps the two input paths apart: only the family
+// that started the gesture may drive it — with one exception, the handover
+// in `mousemove` below.
+window.addEventListener('pointermove', (e) => {
+  countInputEvent('pointer');
+  // Remember where the pointer is, so a compatibility mouse event can be
+  // recognised later (see `isCompatMouseEvent`).
+  lastPointerScreenX = Number.isFinite(e.screenX) ? e.screenX : 0;
+  lastPointerScreenY = Number.isFinite(e.screenY) ? e.screenY : 0;
+  lastPointerTimeStamp = Number.isFinite(e.timeStamp) ? e.timeStamp : 0;
+  if (dragFamily !== 'pointer') {
+    // The pointer family is moving while the gesture belongs to the mouse
+    // family. That means the pointer device came back in the middle of a
+    // gesture — the gesture takes the handover, but only while the pet has
+    // not started moving (see `switchGestureFamily`).
+    if (dragFamily === 'mouse' && pressing && !didDrag) {
+      if (distanceFromPress(e) >= DRAG_THRESHOLD_PX) {
+        switchGestureFamily('pointer', e);
+      }
+    }
+    return;
+  }
+  handleDragMove(e, 'pointer');
+});
+
+// The mouse events — the fallback for a browser whose pointer events have
+// stopped after a system suspend.
+//
+// A mouse gesture cannot be captured, so it only survives while the cursor
+// stays over the window. That is enough: the main process takes the
+// position over within a tick and follows the OS cursor from there.
+window.addEventListener('mousemove', (e) => {
+  countInputEvent('mouse');
+  if (dragFamily !== 'mouse') {
+    // The mouse family is moving while the gesture belongs to the pointer
+    // family. Two very different things can cause that:
+    //
+    //   * The browser is dispatching both families and this is the
+    //     COMPATIBILITY echo of a pointer move — the same position, in the
+    //     same task. It carries no information of its own and must be
+    //     ignored, or it would steal the gesture from the pointer family.
+    //
+    //   * The pointer pipeline died in the middle of the gesture. The press
+    //     arrived as a pointer event, the movement arrives as mouse events,
+    //     and the family gate would throw the movement away: the gesture
+    //     would sit there doing nothing until the release, and the pet
+    //     could not be dragged. The mouse family takes the handover — but
+    //     only once the movement is big enough to be a drag, and only while
+    //     the pet has not started moving.
+    if (dragFamily === 'pointer' && pressing && !didDrag && !isCompatMouseEvent(e)) {
+      if (distanceFromPress(e) >= DRAG_THRESHOLD_PX) {
+        gestureMouseMoves++;
+        switchGestureFamily('mouse', e);
+        handleDragMove(e, 'mouse');
+      } else {
+        gestureMouseMoves++;
+      }
+    }
+    return;
+  }
+  handleDragMove(e, 'mouse');
 });
 
 window.addEventListener('pointerup', (e) => {
+  if (dragFamily !== 'pointer') {
+    // The gesture belongs to the MOUSE family, and the pointer family has
+    // just delivered a release.
+    //
+    // That happens after a handover: the press arrived as a pointer event
+    // and the movement as mouse events, so the mouse family took the
+    // gesture over. The mouse family cannot capture the pointer, so its
+    // own release may never arrive — a `mouseup` is only delivered while
+    // the cursor is over the window. This release is a perfectly good
+    // ending, and taking it is what keeps the gesture from staying open
+    // (an open gesture swallows the next press, and the pet could never be
+    // dragged again).
+    if (dragFamily === 'mouse' && pressing) {
+      endDrag(false, 'pointerup');
+      return;
+    }
+    // A release with no press behind it.
+    //
+    // After a system suspend this is the signature of a press whose
+    // `pointerdown` was swallowed: the gesture never started, so nothing
+    // was waiting for this release. It only counts when the OTHER family
+    // has never been seen at all — otherwise every ordinary release would
+    // be reported as an orphan.
+    if (!pressing && mouseEventCount === 0) diagOrphanRelease('pointer', e);
+    return;
+  }
   // Same self-heal as in `pointermove`: a `pointerup` from a different
   // pointer proves the captured one is dead. End the stale gesture instead
   // of ignoring the event — otherwise the gesture stays wedged.
   if (dragPointerId !== null && e.pointerId !== dragPointerId) {
-    endDrag(true);
+    endDrag(true, 'foreign-pointer');
     return;
   }
   // The pointer capture is released by `endDrag` itself, and that happens
@@ -1043,7 +2240,52 @@ window.addEventListener('pointerup', (e) => {
   // effects at all — which is why the pet's click never dismissed the
   // reminder it was nagging about: that dismissal lived in exactly those
   // side effects, so it was dead code.
-  endDrag();
+  endDrag(false, 'pointerup');
+});
+
+// The mouse release — the fallback input path (see `dragFamily`).
+window.addEventListener('mouseup', (e) => {
+  if (dragFamily !== 'mouse') {
+    // The mirror image of the pointer case above: a release with no press
+    // behind it while the pointer family has never been seen at all.
+    if (!pressing && pointerEventCount === 0) diagOrphanRelease('mouse', e);
+    return;
+  }
+  diagMouse('window-up', e);
+  endDrag(false, 'mouseup');
+});
+
+// A mouse gesture can lose its release.
+//
+// The legacy mouse events have no pointer capture, so if the cursor leaves
+// the window before the release arrives, the `mouseup` is never delivered
+// and the gesture would stay open forever: `pressing` would remain true,
+// the next press on the pet would be swallowed by that guard, and the pet
+// could never be dragged again.
+//
+// The window follows the cursor once the drag starts, so the cursor normally
+// stays inside it and this never fires. It is the safety net for the case
+// where it does not — a fast flick that leaves the window before the drag
+// threshold is crossed.
+function endMouseGestureIfOpen(reason, e) {
+  if (dragFamily !== 'mouse' || !pressing) return;
+  diagMouse('window-leave', e, { reason });
+  endDrag(false, reason);
+}
+
+// `mouseleave` is the direct signal: it fires when the pointer leaves the
+// window. It does not bubble, so it is only heard on the window itself.
+window.addEventListener('mouseleave', (e) => {
+  endMouseGestureIfOpen('mouseleave', e);
+});
+
+// `mouseout` is the belt to that pair of braces: it bubbles, so it is heard
+// wherever the pointer was when it left. It only means "the pointer left the
+// window" when `relatedTarget` is null — a move to another element inside
+// the window has a related element, and must not end the gesture.
+window.addEventListener('mouseout', (e) => {
+  if (e.relatedTarget) return;
+  endMouseGestureIfOpen('mouseout', e);
 });
 
 // `pointercancel` fires when the gesture is torn down by the platform (a
@@ -1051,10 +2293,10 @@ window.addEventListener('pointerup', (e) => {
 // equivalent of a lost `mouseup`.
 window.addEventListener('pointercancel', (e) => {
   if (dragPointerId !== null && e.pointerId !== dragPointerId) {
-    endDrag(true);
+    endDrag(true, 'foreign-pointer');
     return;
   }
-  endDrag();
+  endDrag(false, 'pointercancel');
 });
 
 // `lostpointercapture` fires when the capture is released WITHOUT a
@@ -1075,23 +2317,24 @@ window.addEventListener('lostpointercapture', (e) => {
   if (!pressing) return;
   // Only tear down if the capture we lost is the one this gesture owns.
   if (dragPointerId !== null && e.pointerId !== dragPointerId) return;
-  endDrag(true);
+  endDrag(true, 'lostpointercapture');
 });
 
 // The window is `focusable: false`, so it never takes keyboard focus and
 // `blur` is not a reliable signal on its own — but `visibilitychange` (the
 // app being minimised or another window covering it) is. Both are wired up
 // so a gesture can never survive the app losing the foreground.
-window.addEventListener('blur', endDrag);
+window.addEventListener('blur', () => endDrag(true, 'blur'));
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) endDrag();
+  if (document.hidden) endDrag(false, 'hidden');
 });
 
 // ---- Drag watchdog (renderer side) ----
 //
 // The event-driven self-heal above already covers the "pointer identity
-// changed" case: the first `pointermove` after the wake tears the stale
-// gesture down. But that only helps if a `pointermove` actually arrives.
+// changed" case: the first `pointermove` after the wake rebinds the stale
+// gesture to the new pointer (or tears it down if it was already dragging).
+// But that only helps if a `pointermove` actually arrives.
 //
 // It might not. Two independent reasons:
 //
@@ -1133,14 +2376,25 @@ const dragWatchdog = setInterval(() => {
   if (gap <= DRAG_WATCHDOG_GAP_MS) return;
   // We were frozen — the machine slept. Any gesture in flight is stale:
   // its pointer device is gone and its `pointerup` was never delivered.
+  try {
+    if (M.pet && typeof M.pet.diag === 'function') {
+      M.pet.diag(diagSnapshot({
+        kind: 'freeze',
+        where: 'renderer',
+        gapMs: gap,
+        pressing, didDrag, dragPointerId, dragOwner, dragLive,
+      }));
+    }
+  } catch (e) { /* diagnostics must never break the recovery */ }
   if (pressing || didDrag || dragPointerId !== null) {
-    endDrag(true);
+    endDrag(true, 'watchdog');
   }
 }, DRAG_WATCHDOG_INTERVAL_MS);
 // The watchdog must not keep the page alive on its own.
 if (dragWatchdog && typeof dragWatchdog.unref === 'function') dragWatchdog.unref();
 
 window.addEventListener('contextmenu', (e) => {
+  diagMouse('contextmenu', e);
   e.preventDefault();
   M.pet.openContextMenu();
 });
@@ -1224,7 +2478,18 @@ if (M.on) {
   // main process learns the gesture is over even if it somehow still
   // believed a drag was running.
   M.on('pet:resume', () => {
-    endDrag(true);
+    // Record the wake before tearing the gesture down: the snapshot is
+    // what shows whether the pet's own geometry survived the sleep.
+    try {
+      if (M.pet && typeof M.pet.diag === 'function') {
+        M.pet.diag(diagSnapshot({ kind: 'resume', where: 'renderer' }));
+      }
+    } catch (e) { /* diagnostics must never break the recovery */ }
+    endDrag(true, 'resume');
+    // The main process is watching for proof that input is reaching this
+    // renderer again (see `countInputEvent`). The next wake needs a fresh
+    // report, so the flag goes back to "not reported yet".
+    inputAliveReported = false;
   });
   M.on('pet:state-changed', (payload) => {
     setState(payload.state, payload.count, payload.head);
@@ -1385,6 +2650,19 @@ if (M.on) {
 // ---- Init ----
 (async () => {
   try {
+    // Record the boot.
+    //
+    // The wake recovery can restart the pet, and the diagnostic log is the
+    // only place that can tell "the pet's page was rebuilt and the mouse
+    // still does not arrive" apart from "the pet's page was never rebuilt
+    // at all". The log line is written FIRST, before anything can fail, so
+    // a page that dies during init still leaves a trace.
+    try {
+      if (M.pet && typeof M.pet.diag === 'function') {
+        M.pet.diag(diagSnapshot({ kind: 'boot', where: 'renderer' }));
+      }
+    } catch (e) { /* diagnostics must never break the pet */ }
+
     const s = await M.pet.getState();
     setState(s.state, s.count, s.head);
     // Preload the per-pet click/dblclick config so the very first click

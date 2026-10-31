@@ -66,6 +66,15 @@
 // `WATCHDOG_*` constants in main/ipc.js) that detects the freeze from the
 // wall clock, with no dependency on any OS event.
 //
+// And if even that is not enough, the pet is RESTARTED outright — the pet
+// window is destroyed and a new one is created in its place (`recreatePetWindow`
+// in main/main.js). That is the last layer, because the real machine's
+// diagnostic log (2026-10-31) showed something the other layers cannot fix:
+// after the wake the renderer still received IPC — it answered `pet:resume`,
+// so it looked perfectly alive — but it never received a single mouse event
+// again. A window whose input path is broken stays broken across a page
+// reload, because the reload keeps the very same native window.
+//
 // This module deliberately has NO Electron import of its own beyond
 // `powerMonitor`, and it takes its collaborators as arguments, so it can be
 // unit-tested under a stubbed `electron` module (see
@@ -93,6 +102,10 @@ const RESUME_DEBOUNCE_MS = 2000;
 // `onResume` is called when the system comes back. It is expected to do the
 // actual recovery work.
 //
+// It receives the name of the event that fired ('resume' or
+// 'unlock-screen'), so the recovery can record which one it was and can
+// de-duplicate a wake that both of them report.
+//
 // Returns a `dispose()` function that removes the listeners — used by the
 // app's shutdown path so the handlers don't outlive the windows.
 function install({ onResume, onSuspend } = {}) {
@@ -104,7 +117,12 @@ function install({ onResume, onSuspend } = {}) {
   // `resume` event that Electron 32 emits.
   let lastResumeAt = 0;
 
-  const handleResume = () => {
+  // The wake is reported by two different events — `resume` (the machine
+  // came back) and `unlock-screen` (the user unlocked it). They are
+  // separate handlers rather than one shared function so the caller can
+  // tell WHICH one fired: the recovery logs it, and the pet's renderer
+  // restart is debounced across both.
+  const makeResumeHandler = (reason) => () => {
     const now = Date.now();
     if (now - lastResumeAt < RESUME_DEBOUNCE_MS) {
       // Duplicate event (electron/electron#44252). Ignore it.
@@ -112,9 +130,12 @@ function install({ onResume, onSuspend } = {}) {
     }
     lastResumeAt = now;
     if (typeof onResume === 'function') {
-      try { onResume(); } catch (e) { console.error('[pet_resume] resume handler failed:', e); }
+      try { onResume(reason); } catch (e) { console.error('[pet_resume] resume handler failed:', e); }
     }
   };
+
+  const handleResume = makeResumeHandler('resume');
+  const handleUnlock = makeResumeHandler('unlock-screen');
 
   const handleSuspend = () => {
     if (typeof onSuspend === 'function') {
@@ -129,14 +150,14 @@ function install({ onResume, onSuspend } = {}) {
   // see electron/electron#47739. We listen to it anyway, but only to do
   // bookkeeping; the real recovery happens on `resume` / `unlock-screen`.
   powerMonitor.on('resume', handleResume);
-  powerMonitor.on('unlock-screen', handleResume);
+  powerMonitor.on('unlock-screen', handleUnlock);
   powerMonitor.on('suspend', handleSuspend);
 
   return {
     dispose() {
       try {
         powerMonitor.removeListener('resume', handleResume);
-        powerMonitor.removeListener('unlock-screen', handleResume);
+        powerMonitor.removeListener('unlock-screen', handleUnlock);
         powerMonitor.removeListener('suspend', handleSuspend);
       } catch (e) { /* the module may already be torn down */ }
     },

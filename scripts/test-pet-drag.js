@@ -65,10 +65,14 @@ function bootPet(opts = {}) {
   const calls = [];
   // The main process's channel subscriptions, so a test can push one.
   const channels = new Map();
-  const record = (channel, args) => {
-    calls.push({ channel, args });
+  const record = (channel, args, gesture, results) => {
+    calls.push({ channel, args, gesture });
     // Every invoke resolves; `pet:drag_start` resolves truthy so the
     // renderer takes the 'main' ownership branch.
+    //
+    // `results` is a queue of answers for `pet:drag_start`: the main
+    // process answers `false` when it refuses the id as a replay.
+    if (results && results.length) return Promise.resolve(results.shift());
     return Promise.resolve(true);
   };
   // The live window position the main process would report. Defaults to
@@ -90,9 +94,31 @@ function bootPet(opts = {}) {
         ? undefined
         : Promise.resolve({ x: livePos.x, y: livePos.y })),
       moveBy: (dx, dy) => record('move_by', [dx, dy]),
-      dragStart: (dx, dy) => record('drag_start', [dx, dy]),
-      dragEnd: () => record('drag_end', []),
+      // The gesture id travels with both drag messages — it is what lets
+      // the main process recognise a message that belongs to a gesture it
+      // has already finished.
+      dragStart: (dx, dy, gestureId) => (opts.hangDragStart
+        // A takeover whose reply never arrives — the main process froze
+        // across a suspend and the answer was lost.
+        ? new Promise(() => {})
+        : record('drag_start', [dx, dy], gestureId, opts.dragStartResults)),
+      dragEnd: (gestureId) => record('drag_end', [], gestureId),
+      // The main process's gesture-id high-water mark. The renderer offsets
+      // its own ids by it, so they stay unique across a reload.
+      //
+      // `opts.gestureBases` hands out a different mark on every call, which
+      // is how a test models "the first fetch failed and the retry got the
+      // real one".
+      gestureBase: () => Promise.resolve(
+        opts.gestureBases && opts.gestureBases.length
+          ? opts.gestureBases.shift()
+          : (opts.gestureBase || 0)),
       setPaused: (ms) => record('set_paused', [ms]),
+      // The diagnostic log. The renderer writes the census of every
+      // gesture here — how many moves each family produced — which is what
+      // tells "the pointer pipeline died mid-gesture" apart from "the user
+      // did not move the mouse".
+      diag: (entry) => record('diag', [entry]),
       openContextMenu: () => record('context_menu', []),
       triggerAction: () => record('trigger_action', []),
       actionEnded: () => record('action_ended', []),
@@ -145,7 +171,19 @@ function bootPet(opts = {}) {
 
 // A minimal PointerEvent-ish object. jsdom has no PointerEvent, so build
 // one from MouseEvent and add the pointer fields the code reads.
-function pointer(win, type, { x, y, id = 1, button = 0 }) {
+//
+// `x`/`y` are the CLIENT coordinates — the pointer's position inside the
+// pet window. `sx`/`sy` are the SCREEN coordinates — its position on the
+// desktop. They default to the same values, which is what a browser
+// reports for a window parked at the desktop's origin.
+//
+// They are separate parameters because the two spaces can disagree after
+// a system suspend: the OS may have moved the window while the machine
+// was asleep, so the pointer's screen coordinates and the window's
+// position no longer line up. A test that has to model that has to be
+// able to say "the client coordinates are right and the screen ones are
+// stale" — see test 9.
+function pointer(win, type, { x, y, sx, sy, id = 1, button = 0 }) {
   const ev = new win.MouseEvent(type, {
     bubbles: true,
     cancelable: true,
@@ -154,8 +192,8 @@ function pointer(win, type, { x, y, id = 1, button = 0 }) {
     button,
   });
   Object.defineProperty(ev, 'pointerId', { value: id });
-  Object.defineProperty(ev, 'screenX', { value: x });
-  Object.defineProperty(ev, 'screenY', { value: y });
+  Object.defineProperty(ev, 'screenX', { value: sx === undefined ? x : sx });
+  Object.defineProperty(ev, 'screenY', { value: sy === undefined ? y : sy });
   return ev;
 }
 
@@ -281,8 +319,6 @@ function testBlurResetsGesture() {
   // The app is backgrounded — `blur` fires.
   window.dispatchEvent(new window.Event('blur'));
 
-  const ended = calls.filter((c) => c.channel === 'drag_end');
-  eq('drag_end was reported', ended.length, 1);
   check('the drag class is removed', !sprite.classList.contains('dragging'));
 
   // A stray move afterwards must not move the pet.
@@ -290,6 +326,14 @@ function testBlurResetsGesture() {
   window.dispatchEvent(pointer(window, 'pointermove', { x: 500, y: 500 }));
   const after = calls.filter((c) => c.channel === 'move_by').length;
   eq('no stray move_by after the reset', after, before);
+
+  // The end is deferred until the in-flight `drag_start` has gone out —
+  // the main process must never see the end before the start.
+  return new Promise((resolve) => setTimeout(() => {
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    eq('drag_end was reported', ended.length, 1);
+    resolve();
+  }, 20));
 }
 
 // ---------------------------------------------------------------------------
@@ -304,9 +348,14 @@ function testPointerCancelEndsGesture() {
   window.dispatchEvent(pointer(window, 'pointermove', { x: 120, y: 130 }));
   window.dispatchEvent(pointer(window, 'pointercancel', { x: 120, y: 130 }));
 
-  const ended = calls.filter((c) => c.channel === 'drag_end');
-  eq('drag_end was reported', ended.length, 1);
   check('the drag class is removed', !sprite.classList.contains('dragging'));
+
+  // The end waits for the in-flight start, so it cannot overtake it.
+  return new Promise((resolve) => setTimeout(() => {
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    eq('drag_end was reported', ended.length, 1);
+    resolve();
+  }, 20));
 }
 
 // ---------------------------------------------------------------------------
@@ -374,8 +423,6 @@ function testResumeResetsGesture() {
   // The main process announces the resume.
   emit('pet:resume');
 
-  const ended = calls.filter((c) => c.channel === 'drag_end');
-  eq('drag_end was reported to the main process', ended.length, 1);
   check('the drag class is removed', !sprite.classList.contains('dragging'));
 
   // A stray mouse move afterwards must NOT move the pet: the gesture is over.
@@ -388,6 +435,8 @@ function testResumeResetsGesture() {
   sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
   window.dispatchEvent(pointer(window, 'pointermove', { x: 140, y: 160 }));
   return new Promise((resolve) => setTimeout(() => {
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    eq('drag_end was reported to the main process', ended.length, 1);
     const started = calls.filter((c) => c.channel === 'drag_start');
     eq('a fresh drag still starts', started.length, 2);
     resolve();
@@ -432,42 +481,64 @@ function testResumeIsNotAClick() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 9 — the grab offset uses the main process's live window position.
+// Test 9 — the grab offset comes from the window-relative press.
 //
-// `window.screenX` can be stale after a suspend/resume (the OS may have
-// moved the window). The offset must be measured against the position the
-// main process reports, otherwise the pet jumps when the drag starts.
+// The main process places the window with `window = cursor - offset`, so
+// the offset it needs is "where inside the window is the cursor" — the
+// press's CLIENT coordinates, straight from the event.
+//
+// It used to be derived from the screen coordinates instead
+// (`e.screenX - window.screenX`), which drags the window's position on
+// the desktop into the measurement. After a system suspend the two can
+// disagree — the OS may have moved the window while the machine was
+// asleep — and the offset then describes a point that is not on the pet.
+//
+// So this test puts the window somewhere the screen coordinates do not
+// describe, and asserts that the offset still describes the grab point.
 // ---------------------------------------------------------------------------
-function testGrabOffsetUsesLivePosition() {
-  console.log('\n[9] the grab offset is measured against the live window position');
+function testGrabOffsetIsWindowRelative() {
+  console.log('\n[9] the grab offset is the window-relative press');
   const { window, calls, setLivePos } = bootPet();
   const sprite = spriteOf(window);
 
-  // The OS moved the window while the machine was asleep. The renderer's
-  // own `window.screenX` is stale at 0; the main process reports 500.
+  // The window really sits at (500, 400) on the desktop — but the
+  // renderer's screen coordinates are stale and say the pointer is at
+  // screen (600, 450), which would put the grab 100 px to the right of
+  // where the window actually is.
   setLivePos(500, 400);
 
-  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 600, y: 450 }));
-  window.dispatchEvent(pointer(window, 'pointermove', { x: 620, y: 470 }));
+  // The press: 100 px right of and 50 px below the window's top-left.
+  sprite.dispatchEvent(pointer(window, 'pointerdown', {
+    x: 100, y: 50, sx: 600, sy: 450,
+  }));
+  window.dispatchEvent(pointer(window, 'pointermove', {
+    x: 120, y: 70, sx: 620, sy: 470,
+  }));
 
   return new Promise((resolve) => setTimeout(() => {
     const started = calls.filter((c) => c.channel === 'drag_start');
     eq('the drag started', started.length, 1);
-    // Offset = pointer - live window position = (620-500, 470-400).
-    eq('the offset used the live position',
-      JSON.stringify(started[0].args), JSON.stringify([120, 70]));
+    // The offset is the press's position inside the window — (100, 50).
+    // It is NOT the position of the move that crossed the threshold
+    // (120, 70) — see test 21 — and it does not depend on where the
+    // window is on the desktop at all.
+    eq('the offset is the grab point inside the window',
+      JSON.stringify(started[0].args), JSON.stringify([100, 50]));
     resolve();
   }, 20));
 }
 
 // ---------------------------------------------------------------------------
-// Test 10 — a main process without `getPosition` still works.
+// Test 10 — the drag needs nothing from the main process to be measured.
 //
-// Older main processes don't expose the live position. The renderer must
-// fall back to `window.screenX` rather than break the drag.
+// The offset used to be resolved through an IPC round-trip to the main
+// process (to learn where the window is). That put a whole async hop —
+// and a whole class of failure — between the press and the drag. The
+// measurement is now local, so a main process that cannot answer still
+// gets a working drag.
 // ---------------------------------------------------------------------------
-function testGrabOffsetFallback() {
-  console.log('\n[10] the grab offset falls back when the live position is unavailable');
+function testGrabOffsetNeedsNoMainProcessLookup() {
+  console.log('\n[10] the grab offset needs no lookup on the main process');
   const { window, calls } = bootPet({ noGetPosition: true });
   const sprite = spriteOf(window);
 
@@ -477,9 +548,8 @@ function testGrabOffsetFallback() {
   return new Promise((resolve) => setTimeout(() => {
     const started = calls.filter((c) => c.channel === 'drag_start');
     eq('the drag started', started.length, 1);
-    // Fallback offset = pointer - window.screenX/Y = (120-0, 130-0).
-    eq('the offset used the fallback',
-      JSON.stringify(started[0].args), JSON.stringify([120, 130]));
+    eq('the offset is the grab point inside the window',
+      JSON.stringify(started[0].args), JSON.stringify([100, 100]));
     resolve();
   }, 20));
 }
@@ -507,14 +577,14 @@ function testNewPointerIdAfterSleepRecovers() {
   window.dispatchEvent(pointer(window, 'pointermove', { x: 200, y: 220, id: 2 }));
 
   // The stale gesture must have been torn down, not silently ignored.
-  const ended = calls.filter((c) => c.channel === 'drag_end');
-  eq('the stale gesture was ended', ended.length, 1);
   check('the drag class was removed', !sprite.classList.contains('dragging'));
 
   // And the pet must be draggable again.
   s.dispatchEvent(pointer(window, 'pointerdown', { x: 300, y: 300, id: 2 }));
   window.dispatchEvent(pointer(window, 'pointermove', { x: 340, y: 350, id: 2 }));
   return new Promise((resolve) => setTimeout(() => {
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    eq('the stale gesture was ended', ended.length, 1);
     const started = calls.filter((c) => c.channel === 'drag_start');
     eq('a fresh drag starts after the pointer id changed', started.length, 2);
     resolve();
@@ -589,13 +659,12 @@ function testLostPointerCaptureEndsGesture() {
   // The capture is revoked by the platform (no pointerup).
   capture.release(9);
 
-  const ended = calls.filter((c) => c.channel === 'drag_end');
-  eq('drag_end was reported', ended.length, 1);
-
   // And the pet is draggable again.
   s.dispatchEvent(pointer(window, 'pointerdown', { x: 200, y: 200, id: 10 }));
   window.dispatchEvent(pointer(window, 'pointermove', { x: 240, y: 240, id: 10 }));
   return new Promise((resolve) => setTimeout(() => {
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    eq('drag_end was reported', ended.length, 1);
     const started = calls.filter((c) => c.channel === 'drag_start');
     check('a fresh drag still starts', started.length >= 1);
     resolve();
@@ -708,6 +777,742 @@ function testBubbleClickClosesReminder() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 19 — THE REGRESSION: the drag end must never overtake the drag
+// start.
+//
+// The renderer resolves the grab offset asynchronously (it asks the main
+// process where the window is), so the `pet:drag_start` it sends can be
+// overtaken by the `pet:drag_end` of the same gesture — a quick flick
+// (press, move, release) is over before the reply comes back, and after a
+// resume the main process can be slow to answer at all.
+//
+// The main process then ends up following the cursor with nothing left to
+// stop it: the pet is glued to the pointer (it cannot be dragged
+// anywhere) and the controller's drag mutex stays held, so the pet never
+// walks on its own again. The right-click menu keeps working, because it
+// does not go through the drag protocol at all — which is what made the
+// symptom look so odd.
+//
+// This is the bug the user reported: the pet is draggable at startup and
+// stops being draggable after the machine sleeps and wakes, because the
+// first drag after the wake is the one that gets wedged.
+// ---------------------------------------------------------------------------
+function testDragEndNeverOvertakesDragStart() {
+  console.log('\n[19] the drag end never overtakes the drag start');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  // Press, cross the 4 px threshold and release — all in one tick, so the
+  // position lookup has not answered yet.
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 120, y: 130 }));
+  window.dispatchEvent(pointer(window, 'pointerup', { x: 120, y: 130 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const order = calls
+      .filter((c) => c.channel === 'drag_start' || c.channel === 'drag_end')
+      .map((c) => c.channel);
+    const startIdx = order.indexOf('drag_start');
+    const endIdx = order.indexOf('drag_end');
+    check('the drag started', startIdx >= 0);
+    check('the drag ended', endIdx >= 0);
+    check('the start was sent before the end',
+      startIdx >= 0 && endIdx >= 0 && startIdx < endIdx,
+      `order was ${JSON.stringify(order)}`);
+    resolve();
+  }, 30));
+}
+
+// ---------------------------------------------------------------------------
+// Test 20 — every drag message carries the id of its gesture.
+//
+// The id is what lets the main process recognise a message that belongs to
+// a gesture it has already finished — the safety net behind the ordering
+// fix in test 19.
+// ---------------------------------------------------------------------------
+function testGestureIdTravelsWithTheDragMessages() {
+  console.log('\n[20] every drag message carries its gesture id');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 120, y: 130 }));
+  window.dispatchEvent(pointer(window, 'pointerup', { x: 120, y: 130 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    check('the start carries a gesture id',
+      started.length === 1 && typeof started[0].gesture === 'number' && started[0].gesture > 0);
+    check('the end carries the same gesture id',
+      ended.length === 1 && ended[0].gesture === started[0].gesture);
+
+    // A second gesture gets a HIGHER id, so the main process can order
+    // the messages it receives.
+    sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 300, y: 300 }));
+    window.dispatchEvent(pointer(window, 'pointermove', { x: 320, y: 330 }));
+    window.dispatchEvent(pointer(window, 'pointerup', { x: 320, y: 330 }));
+    setTimeout(() => {
+      const started2 = calls.filter((c) => c.channel === 'drag_start');
+      check('the next gesture gets a higher id',
+        started2.length === 2 && started2[1].gesture > started2[0].gesture);
+      resolve();
+    }, 30);
+  }, 30));
+}
+
+// ---------------------------------------------------------------------------
+// Test 21 — THE REAL-WORLD REGRESSION: the grab offset is measured from the
+// PRESS, not from the move that crossed the drag threshold.
+//
+// The main process positions the window with `window = cursor - offset`, so
+// whatever the offset folds in is movement the pet refuses to make.
+//
+// The threshold is only 4 px, so normally the offset is a few pixels out and
+// the pet merely lags a touch behind the cursor. After a resume it is not:
+// the renderer is slow to hand over pointer events, so the first move it
+// delivers already carries everything the mouse did while it was stalled.
+// Measuring the offset from that move made the offset swallow the WHOLE
+// movement, the pet stayed exactly where it was, and the drag looked dead.
+//
+// This is the bug the user reported: the pet is freely draggable at
+// startup, and cannot be dragged at all after the machine sleeps and wakes.
+// ---------------------------------------------------------------------------
+function testGrabOffsetComesFromThePress() {
+  console.log('\n[21] the grab offset is measured from the press');
+  const { window, calls, setLivePos } = bootPet();
+  const sprite = spriteOf(window);
+
+  setLivePos(500, 400);
+
+  // The press — where the user grabbed the pet, 100 px right of and 50 px
+  // below the window's top-left.
+  sprite.dispatchEvent(pointer(window, 'pointerdown', {
+    x: 100, y: 50, sx: 600, sy: 450,
+  }));
+  // The renderer was stalled across the sleep. The first move it delivers
+  // arrives with everything the mouse did while it was stalled: 200 px
+  // away, in one go.
+  window.dispatchEvent(pointer(window, 'pointermove', {
+    x: 300, y: 250, sx: 800, sy: 650,
+  }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('the drag started', started.length, 1);
+    // The offset has to describe where the pet was GRABBED, so the stalled
+    // movement is still movement the pet makes: (100, 50).
+    eq('the offset describes the grab point, not the stalled position',
+      JSON.stringify(started[0].args), JSON.stringify([100, 50]));
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 22 — a grab point outside the pet window is rejected.
+//
+// A measurement that does not describe a point inside the window means the
+// measurement and the window disagree about where they are. Dragging with
+// such an offset would fling the pet across the screen, so the pet is
+// grabbed by its centre instead.
+// ---------------------------------------------------------------------------
+function testOffsetOutsideTheWindowIsRejected() {
+  console.log('\n[22] a grab point outside the window is rejected');
+  const { window, calls, setLivePos } = bootPet();
+  const sprite = spriteOf(window);
+
+  setLivePos(0, 0);
+  // A grab point that cannot be inside the window.
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 5000, y: 4000 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 5020, y: 4020 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('the drag started', started.length, 1);
+    const [dx, dy] = started[0].args;
+    check('the offset points inside the pet window',
+      dx >= 0 && dx <= window.innerWidth && dy >= 0 && dy <= window.innerHeight,
+      `offset = [${dx}, ${dy}], window = ${window.innerWidth}x${window.innerHeight}`);
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 23 — the drag threshold is measured in the window's coordinates.
+//
+// The threshold only has to answer "has the pointer moved far enough to
+// count as a drag?". It is measured in the window's own coordinates so
+// that a stale screen coordinate cannot stall the drag: after a system
+// suspend the renderer may deliver pointer events whose screen
+// coordinates no longer track the pointer, and a threshold measured
+// there would never be crossed — the pet would simply not be draggable.
+// ---------------------------------------------------------------------------
+function testThresholdIgnoresStaleScreenCoordinates() {
+  console.log('\n[23] the drag threshold does not depend on the screen coordinates');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  // The press. The screen coordinates are stale from here on — they stay
+  // exactly where the press was, whatever the pointer does.
+  sprite.dispatchEvent(pointer(window, 'pointerdown', {
+    x: 100, y: 100, sx: 600, sy: 450,
+  }));
+  // The pointer moves 40 px inside the window. The screen coordinates say
+  // it did not move at all.
+  window.dispatchEvent(pointer(window, 'pointermove', {
+    x: 140, y: 130, sx: 600, sy: 450,
+  }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('the drag started even though the screen coordinates did not move', started.length, 1);
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 24 — a takeover that is never answered falls back to the renderer.
+//
+// `pet:drag_start` is a round-trip to the main process. If the reply is
+// lost — the main process can be frozen across a system suspend — the
+// renderer must not wait for it forever: it does not own the window
+// position while the takeover is pending, so the pet would not move at
+// all. After the timeout the renderer drives the window itself.
+// ---------------------------------------------------------------------------
+function testLostTakeoverFallsBackToTheRenderer() {
+  console.log('\n[24] a takeover that is never answered falls back to the renderer');
+  const { window, calls } = bootPet({ hangDragStart: true });
+  const sprite = spriteOf(window);
+
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 120, y: 130 }));
+
+  // The takeover timeout is 400 ms; wait past it and then move again.
+  return new Promise((resolve) => setTimeout(() => {
+    window.dispatchEvent(pointer(window, 'pointermove', { x: 140, y: 160 }));
+    setTimeout(() => {
+      const moved = calls.filter((c) => c.channel === 'move_by');
+      check('the renderer moved the window itself', moved.length > 0,
+        `move_by calls = ${moved.length}`);
+      resolve();
+    }, 20);
+  }, 500));
+}
+
+// ---------------------------------------------------------------------------
+// Test 25 — the press and the move can come from DIFFERENT pointer devices.
+//
+// This is the wedge the old code created. A system suspend tears the
+// pointer device down and the OS brings it back as a new one, so the press
+// carries the OLD id and the first move carries the NEW one.
+//
+// The old code tore the gesture down on the first foreign event, so the
+// press was always killed by the move that followed it — the pet could not
+// be dragged at all, which is exactly what the user reported.
+//
+// The gesture now follows the pointer that is actually moving, as long as
+// the pet has not started moving yet.
+// ---------------------------------------------------------------------------
+function testForeignPointerBeforeTheThresholdRebinds() {
+  console.log('\n[25] a foreign pointer before the threshold rebinds the gesture');
+  const { window, calls, capture } = bootPet();
+  const sprite = spriteOf(window);
+
+  // The press, on the pre-sleep mouse.
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100, id: 1 }));
+  eq('the pre-sleep pointer is captured', capture.has(1), true);
+
+  // The machine sleeps. On wake the mouse is a NEW device with id 2, and
+  // the very first move already carries it. The gesture has not crossed the
+  // threshold yet, so it has to rebind instead of tearing down.
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 140, y: 160, id: 2 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('the drag started on the new pointer', started.length, 1);
+    eq('the grab offset is still the press point',
+      JSON.stringify(started[0] && started[0].args), JSON.stringify([100, 100]));
+    check('the sprite is being dragged', sprite.classList.contains('dragging'));
+    eq('the dead pointer is no longer captured', capture.has(1), false);
+    eq('the new pointer is captured', capture.has(2), true);
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 26 — the local fallback measures the movement in the window's own
+// coordinates.
+//
+// The fallback runs when the main process refuses the takeover or never
+// answers it. The window then does NOT follow the pointer, so the pointer's
+// movement inside the window IS its movement on the screen.
+//
+// The screen coordinates cannot be used for it: after a system suspend
+// they can be stale, and a stale delta moves the pet by nothing at all —
+// which is the very symptom being chased.
+// ---------------------------------------------------------------------------
+function testLocalFallbackIgnoresStaleScreenCoordinates() {
+  console.log('\n[26] the local fallback does not depend on the screen coordinates');
+  const { window, calls } = bootPet({ hangDragStart: true });
+  const sprite = spriteOf(window);
+
+  // The press. The screen coordinates are stale from here on.
+  sprite.dispatchEvent(pointer(window, 'pointerdown', {
+    x: 100, y: 100, sx: 600, sy: 450,
+  }));
+  window.dispatchEvent(pointer(window, 'pointermove', {
+    x: 140, y: 160, sx: 600, sy: 450,
+  }));
+
+  // The takeover timeout is 400 ms; wait past it, then move again.
+  return new Promise((resolve) => setTimeout(() => {
+    window.dispatchEvent(pointer(window, 'pointermove', {
+      x: 180, y: 220, sx: 600, sy: 450,
+    }));
+    setTimeout(() => {
+      const moved = calls.filter((c) => c.channel === 'move_by');
+      eq('the window was moved once', moved.length, 1);
+      // The delta is measured from the press: 180-100, 220-100.
+      eq('the delta is the movement inside the window',
+        JSON.stringify(moved[0] && moved[0].args), JSON.stringify([80, 120]));
+      resolve();
+    }, 20);
+  }, 500));
+}
+
+// ---------------------------------------------------------------------------
+// Test 27 — THE REAL-WORLD REGRESSION: after a system suspend the POINTER
+// events can stop arriving altogether, while the MOUSE events keep coming.
+//
+// The symptom the user reported is exactly this: the pet cannot be dragged
+// (the drag was built on pointer events) but the right-click menu still
+// works (a `contextmenu` DOM event — a mouse event) and a click still plays
+// the pet's action (a `click` DOM event — also a mouse event).
+//
+// Chromium's pointer events are built from the raw input by a factory that
+// needs a REGISTERED pointer device; the legacy mouse events are built
+// straight from the raw mouse input and need no device. A suspend tears the
+// pointer device down and the OS brings it back as a new one, and the
+// device registry can end up not knowing about it — so the raw input
+// produces mouse events but no pointer events.
+//
+// So the drag has to work on the mouse events too. This test drives the
+// gesture with NOTHING but mouse events — exactly what the renderer would
+// see in that state.
+// ---------------------------------------------------------------------------
+function testMouseEventsCanDriveTheDrag() {
+  console.log('\n[27] a drag driven by mouse events alone works');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  // No pointer event at all — this is the state after the suspend.
+  sprite.dispatchEvent(pointer(window, 'mousedown', { x: 100, y: 100 }));
+  window.dispatchEvent(pointer(window, 'mousemove', { x: 120, y: 130 }));
+  window.dispatchEvent(pointer(window, 'mouseup', { x: 120, y: 130 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    eq('drag_start was reported once', started.length, 1);
+    eq('drag_end was reported once', ended.length, 1);
+    check('the drag class is removed on release', !sprite.classList.contains('dragging'));
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 28 — the two families never fight over the same press.
+//
+// In a healthy browser the pointer events always win: `pointerdown` is
+// dispatched before the compatibility mouse events, and the sprite's
+// `pointerdown` handler calls `preventDefault()`, which suppresses the
+// compatibility `mousedown` altogether. A `mousedown` that arrives while a
+// gesture is live must therefore be ignored — not start a second gesture.
+// ---------------------------------------------------------------------------
+function testMouseDownDoesNotStartASecondGesture() {
+  console.log('\n[28] a mousedown during a live gesture does not start a second one');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+  // The compatibility mouse event of the SAME physical press.
+  sprite.dispatchEvent(pointer(window, 'mousedown', { x: 100, y: 100 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 120, y: 130 }));
+  window.dispatchEvent(pointer(window, 'pointerup', { x: 120, y: 130 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('drag_start was reported once', started.length, 1);
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 29 — a mouse gesture that loses its release must not stay open.
+//
+// The legacy mouse events have no pointer capture, so a `mouseup` that
+// happens outside the window is never delivered. Without a safety net the
+// gesture would stay open forever: `pressing` would remain true, the next
+// press would be swallowed by that guard, and the pet could never be
+// dragged again — the very symptom this whole fallback exists to cure.
+//
+// The cursor leaving the window is the signal that the release was lost.
+// ---------------------------------------------------------------------------
+function testMouseGestureClosesWhenTheCursorLeavesTheWindow() {
+  console.log('\n[29] a mouse gesture closes when the cursor leaves the window');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  sprite.dispatchEvent(pointer(window, 'mousedown', { x: 100, y: 100 }));
+  window.dispatchEvent(pointer(window, 'mouseleave', { x: 400, y: 400 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    check('the gesture was closed', ended.length >= 1,
+      `drag_end count = ${ended.length}`);
+
+    // The real point: the NEXT press must still work.
+    sprite.dispatchEvent(pointer(window, 'mousedown', { x: 100, y: 100 }));
+    window.dispatchEvent(pointer(window, 'mousemove', { x: 140, y: 160 }));
+    window.dispatchEvent(pointer(window, 'mouseup', { x: 140, y: 160 }));
+
+    setTimeout(() => {
+      const started = calls.filter((c) => c.channel === 'drag_start');
+      check('the next press still starts a drag', started.length >= 1,
+        `drag_start count = ${started.length}`);
+      resolve();
+    }, 20);
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 30 — a `mouseout` inside the window must NOT end the gesture.
+//
+// The `mouseout` listener is the safety net for a lost release, but it must
+// not be over-eager: the pointer moving from the sprite to another element
+// of the same window produces a `mouseout` with a `relatedTarget`, and that
+// is not the pointer leaving. Ending the gesture there would break every
+// ordinary drag.
+// ---------------------------------------------------------------------------
+function testMouseOutInsideTheWindowKeepsTheGesture() {
+  console.log('\n[30] a mouseout inside the window keeps the gesture alive');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  sprite.dispatchEvent(pointer(window, 'mousedown', { x: 100, y: 100 }));
+
+  // The pointer moved to another element of the same window.
+  const out = pointer(window, 'mouseout', { x: 100, y: 100 });
+  Object.defineProperty(out, 'relatedTarget', { value: window.document.body });
+  sprite.dispatchEvent(out);
+
+  window.dispatchEvent(pointer(window, 'mousemove', { x: 140, y: 160 }));
+  window.dispatchEvent(pointer(window, 'mouseup', { x: 140, y: 160 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('drag_start was reported once', started.length, 1);
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    eq('drag_end was reported once', ended.length, 1);
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 31 — a press on the transparent margin around the pet still drags.
+//
+// The pet sprite is 165 px wide inside a 216 px window, and the artwork
+// inside it is narrower still. A press that landed anywhere near the
+// visible pet but outside the sprite's box used to do NOTHING AT ALL —
+// no gesture, no drag, no feedback.
+//
+// The real machine's diagnostic log caught exactly that: a `pointerdown`
+// at clientX 210, where the sprite ends at 190, hitting `BODY` and
+// producing a grab that silently went nowhere.
+//
+// The whole window is the drag target now.
+// ---------------------------------------------------------------------------
+function testPressOutsideTheSpriteStillDrags() {
+  console.log('\n[31] a press on the transparent margin still drags the pet');
+  const { window, calls } = bootPet();
+  const body = window.document.body;
+
+  // The press lands on the BODY, not on the sprite — exactly what the
+  // diagnostic log recorded after the wake.
+  body.dispatchEvent(pointer(window, 'pointerdown', { x: 210, y: 261 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 240, y: 280 }));
+  window.dispatchEvent(pointer(window, 'pointerup', { x: 240, y: 280 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('drag_start was reported once', started.length, 1);
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 32 — a press on the reminder bubble does not start a drag.
+//
+// The bubble is the one place the user has to be able to CLICK: clicking
+// it closes the reminder. Now that the whole window drags, it has to be
+// excluded explicitly, or a click on the bubble would start a drag and
+// swallow the click.
+// ---------------------------------------------------------------------------
+function testPressOnTheBubbleDoesNotStartADrag() {
+  console.log('\n[32] a press on the reminder bubble does not start a drag');
+  const { window, calls } = bootPet();
+  const bubble = window.document.getElementById('pet-bubble');
+  bubble.classList.remove('hidden');
+
+  bubble.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 40 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 140, y: 60 }));
+  window.dispatchEvent(pointer(window, 'pointerup', { x: 140, y: 60 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('no drag was started', started.length, 0);
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 33 — a stale pointer gesture must not block the mouse fallback.
+//
+// The scenario: the pointer device dies across a suspend. The press that
+// came before the sleep started a pointer gesture whose `pointerup` never
+// arrived, so the gesture is still open. The pointer events are now dead,
+// so the user's next press arrives as a MOUSE event — and if that press
+// were swallowed, the pet could never be dragged again for the rest of
+// the session.
+//
+// The mouse press takes over: the stale pointer gesture is torn down and
+// the mouse gesture drives the drag.
+// ---------------------------------------------------------------------------
+function testStalePointerGestureDoesNotBlockTheMouseFallback() {
+  console.log('\n[33] a stale pointer gesture does not block the mouse fallback');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  // A pointer press whose release never arrives (the device died).
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+
+  // The user's next press — a mouse event, somewhere else, later.
+  window.dispatchEvent(pointer(window, 'mousedown', { x: 160, y: 170 }));
+  window.dispatchEvent(pointer(window, 'mousemove', { x: 190, y: 200 }));
+  window.dispatchEvent(pointer(window, 'mouseup', { x: 190, y: 200 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('the mouse gesture took over', started.length, 1);
+    const ended = calls.filter((c) => c.channel === 'drag_end');
+    check('the stale pointer gesture was torn down', ended.length >= 1,
+      `drag_end count = ${ended.length}`);
+    resolve();
+  }, 20));
+}
+
+// ---------------------------------------------------------------------------
+// Test 34 — a refused gesture id is retried with a fresh base.
+//
+// The main process refuses a start whose id it has already seen. When the
+// renderer hands out an id below the main process's high-water mark — the
+// base fetch failed, or the renderer reloaded — every drag is refused.
+//
+// Dropping to the window-local fallback instead looks exactly like "the
+// pet cannot be dragged": the local fallback can only move the pet inside
+// its own 216 px window. So the renderer re-reads the base and tries
+// again.
+// ---------------------------------------------------------------------------
+function testRefusedGestureIdIsRetried() {
+  console.log('\n[34] a refused gesture id is retried with a fresh base');
+  const bases = [0, 5];
+  const results = [false, true];
+  const { window, calls } = bootPet({
+    gestureBases: bases,
+    dragStartResults: results,
+  });
+  const sprite = spriteOf(window);
+
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 130, y: 150 }));
+
+  // The button is still held: the retry only makes sense while the
+  // gesture is alive — a gesture that has already ended needs no start.
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('the start was sent twice', started.length, 2);
+    if (started.length === 2) {
+      const first = started[0].gesture;
+      const second = started[1].gesture;
+      check('the retry used a higher id', second > first,
+        `first id ${first}, second id ${second}`);
+      window.dispatchEvent(pointer(window, 'pointerup', { x: 130, y: 150 }));
+      setTimeout(() => {
+        const ended = calls.filter((c) => c.channel === 'drag_end');
+        const lastEnd = ended[ended.length - 1];
+        check('the end names the id the main process accepted',
+          lastEnd && lastEnd.gesture === second,
+          `end id ${lastEnd && lastEnd.gesture}, accepted id ${second}`);
+        resolve();
+      }, 20);
+    } else {
+      resolve();
+    }
+  }, 40));
+}
+
+// ---------------------------------------------------------------------------
+// Test 35 — the mouse family takes over a gesture whose pointer moves
+// never arrive.
+//
+// THE CASE
+// --------
+// After a system suspend the pointer pipeline can die in the MIDDLE of a
+// gesture: the press arrives as a pointer event (the device was alive at
+// that moment), and the movement arrives as mouse events (the device is
+// gone by then).
+//
+// The family gate used to throw that movement away — the gesture was owned
+// by the pointer family, so every mouse move was ignored. The result was
+// the worst kind of failure: the press was registered, the release was
+// registered, and the pet never moved. From the outside that is
+// indistinguishable from "the user did not drag".
+//
+// The handover fixes it, and it is safe because it only happens while the
+// pet has not started moving: the grab point is the same either way, so
+// switching cannot make the pet jump.
+// ---------------------------------------------------------------------------
+function testMouseFamilyTakesOverAPointerPress() {
+  console.log('\n[35] the mouse family takes over a pointer press whose moves never arrive');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  // The press — the pointer device was still alive.
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+
+  // The movement — but the pointer device is gone, so it comes as mouse
+  // events.
+  window.dispatchEvent(pointer(window, 'mousemove', { x: 160, y: 170 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const started = calls.filter((c) => c.channel === 'drag_start');
+    eq('the drag started anyway', started.length, 1);
+    const switches = calls.filter((c) => c.channel === 'diag'
+      && c.args[0] && c.args[0].kind === 'family_switch');
+    eq('the handover was recorded', switches.length, 1);
+    if (switches.length) {
+      eq('it handed over from the pointer family', switches[0].args[0].from, 'pointer');
+      eq('it handed over to the mouse family', switches[0].args[0].to, 'mouse');
+    }
+    window.dispatchEvent(pointer(window, 'pointerup', { x: 160, y: 170 }));
+    setTimeout(() => {
+      const ended = calls.filter((c) => c.channel === 'drag_end');
+      check('the gesture was closed', ended.length >= 1, `drag_end count = ${ended.length}`);
+      resolve();
+    }, 20);
+  }, 40));
+}
+
+// ---------------------------------------------------------------------------
+// Test 36 — the compatibility mouse echo does not steal the gesture.
+//
+// A browser that dispatches both families synthesises a `mousemove` next to
+// every `pointermove`: the same position, in the same task. If the
+// handover treated that echo as a genuine mouse move, it would take the
+// gesture away from the pointer family in a perfectly healthy browser —
+// and the gesture would end up being driven by the family that has no
+// pointer capture, so a release outside the window would be lost.
+//
+// The echo is recognised by its position and its moment, exactly like the
+// compatibility `mousedown` is.
+// ---------------------------------------------------------------------------
+function testCompatMouseEchoDoesNotStealTheGesture() {
+  console.log('\n[36] the compatibility mouse echo does not steal the gesture');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+  // The pointer move crosses the threshold — the pointer family owns the
+  // gesture from here.
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 130, y: 150 }));
+  // The browser's echo of that very move: same position, same moment.
+  window.dispatchEvent(pointer(window, 'mousemove', { x: 130, y: 150 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const switches = calls.filter((c) => c.channel === 'diag'
+      && c.args[0] && c.args[0].kind === 'family_switch');
+    eq('the gesture was not handed over', switches.length, 0);
+    window.dispatchEvent(pointer(window, 'pointerup', { x: 130, y: 150 }));
+    setTimeout(() => {
+      const ends = calls.filter((c) => c.channel === 'diag'
+        && c.args[0] && c.args[0].kind === 'drag_end');
+      const last = ends[ends.length - 1];
+      check('the gesture ended in the pointer family',
+        last && last.args[0].family === 'pointer',
+        last && last.args[0].family ? `family ${last.args[0].family}` : 'no drag_end record');
+      resolve();
+    }, 20);
+  }, 40));
+}
+
+// ---------------------------------------------------------------------------
+// Test 37 — the census: how many moves each family produced.
+//
+// The log has to be able to answer "did the moves arrive at all, and which
+// family carried them?". Without the census the losing family was
+// invisible, and the two failures that look identical from the outside
+// ("the pointer pipeline died" and "the user did not move the mouse")
+// could not be told apart.
+// ---------------------------------------------------------------------------
+function testTheCensusCountsBothFamilies() {
+  console.log('\n[37] the census counts the moves of both families');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 130, y: 150 }));
+  window.dispatchEvent(pointer(window, 'pointermove', { x: 140, y: 160 }));
+  window.dispatchEvent(pointer(window, 'pointerup', { x: 140, y: 160 }));
+
+  return new Promise((resolve) => setTimeout(() => {
+    const ends = calls.filter((c) => c.channel === 'diag'
+      && c.args[0] && c.args[0].kind === 'drag_end');
+    const last = ends[ends.length - 1];
+    check('the gesture was recorded', !!last);
+    if (last) {
+      eq('the pointer family delivered both moves', last.args[0].pointerMoves, 2);
+      eq('the mouse family delivered none', last.args[0].mouseMoves, 0);
+    }
+    resolve();
+  }, 30));
+}
+
+// ---------------------------------------------------------------------------
+// Test 38 — the pet does not walk away while it is being grabbed.
+//
+// The autonomous walk used to be paused only once the drag had actually
+// started. Between the press and the threshold the walk carried on, so the
+// pet could slide out from under the cursor — the user's moves then landed
+// on the desktop, and the pet looked like it could not be dragged.
+//
+// The walk is now paused on the press.
+// ---------------------------------------------------------------------------
+function testTheWalkIsPausedOnThePress() {
+  console.log('\n[38] the pet stops walking while it is being grabbed');
+  const { window, calls } = bootPet();
+  const sprite = spriteOf(window);
+
+  sprite.dispatchEvent(pointer(window, 'pointerdown', { x: 100, y: 100 }));
+
+  const paused = calls.filter((c) => c.channel === 'set_paused');
+  check('the pet was paused on the press', paused.length >= 1,
+    `set_paused count = ${paused.length}`);
+  // The drag itself has not started yet — no movement has happened.
+  const started = calls.filter((c) => c.channel === 'drag_start');
+  eq('no drag was started', started.length, 0);
+}
+
+// ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 (async () => {
@@ -721,8 +1526,8 @@ function testBubbleClickClosesReminder() {
   await testResumeResetsGesture();
   testResumeAlwaysEndsDrag();
   testResumeIsNotAClick();
-  await testGrabOffsetUsesLivePosition();
-  await testGrabOffsetFallback();
+  await testGrabOffsetIsWindowRelative();
+  await testGrabOffsetNeedsNoMainProcessLookup();
   await testNewPointerIdAfterSleepRecovers();
   await testClickAfterSleepRecovers();
   testCaptureIsReleasedOnForcedTeardown();
@@ -730,6 +1535,26 @@ function testBubbleClickClosesReminder() {
   await testClickClosesReminder();
   await testClickWithoutReminderDoesNothing();
   await testBubbleClickClosesReminder();
+  await testDragEndNeverOvertakesDragStart();
+  await testGestureIdTravelsWithTheDragMessages();
+  await testGrabOffsetComesFromThePress();
+  await testOffsetOutsideTheWindowIsRejected();
+  await testThresholdIgnoresStaleScreenCoordinates();
+  await testLostTakeoverFallsBackToTheRenderer();
+  await testForeignPointerBeforeTheThresholdRebinds();
+  await testLocalFallbackIgnoresStaleScreenCoordinates();
+  await testMouseEventsCanDriveTheDrag();
+  await testMouseDownDoesNotStartASecondGesture();
+  await testMouseGestureClosesWhenTheCursorLeavesTheWindow();
+  await testMouseOutInsideTheWindowKeepsTheGesture();
+  await testPressOutsideTheSpriteStillDrags();
+  await testPressOnTheBubbleDoesNotStartADrag();
+  await testMouseFamilyTakesOverAPointerPress();
+  await testCompatMouseEchoDoesNotStealTheGesture();
+  await testTheCensusCountsBothFamilies();
+  testTheWalkIsPausedOnThePress();
+  await testStalePointerGestureDoesNotBlockTheMouseFallback();
+  await testRefusedGestureIdIsRetried();
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length) {

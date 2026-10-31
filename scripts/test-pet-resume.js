@@ -49,11 +49,15 @@ const calls = {
   send: [],
   show: [],
   ignoreMouse: [],
+  reload: [],
+  recreate: [],
 };
 
 let cursor = { x: 500, y: 400 };
 let windowPos = [100, 200];
 let windowVisible = true;
+// Set by test 12: make the window recreation fail.
+let failRecreate = false;
 
 const fakeWindow = {
   isDestroyed: () => false,
@@ -63,6 +67,10 @@ const fakeWindow = {
   isVisible: () => windowVisible,
   show: () => { calls.show.push(true); windowVisible = true; },
   setIgnoreMouseEvents: (on) => { calls.ignoreMouse.push(on); },
+  // The recovery restarts the pet's renderer — the "just restart the pet"
+  // recovery. The window, its position and the main process all stay as
+  // they are; only the page is rebuilt.
+  reload: () => { calls.reload.push(true); },
   webContents: { send: (...a) => calls.send.push(a) },
   on: () => {},
   show: () => { calls.show.push(true); windowVisible = true; },
@@ -97,7 +105,10 @@ const electronStub = {
     removeHandler(channel) { this._handlers.delete(channel); },
   },
   app: {
-    getPath: () => ROOT,
+    // The data directory is the OS temp directory, NOT the repository: the
+    // diagnostic log is written there, and a test must not leave files
+    // behind in the working tree.
+    getPath: () => require('os').tmpdir(),
     isPackaged: false,
     on: () => {},
     getName: () => 'SoulDesktopPet',
@@ -162,6 +173,18 @@ ipc.register({
   queue: { on: () => {}, activeCount: () => 0, activeHead: () => null },
   winMain: fakeWindow,
   winPet: fakeWindow,
+  getWinPet: () => fakeWindow,
+  // The wake recovery restarts the pet by recreating its window. The
+  // recreation itself lives in main/main.js (it owns the window); here it
+  // is just recorded.
+  //
+  // `failRecreate` makes the recreation throw, which is how test 12 checks
+  // that a failed restart still leaves the pet with a working recovery
+  // (a page reload) instead of nothing at all.
+  recreatePetWindow: (reason) => {
+    if (failRecreate) throw new Error('the pet window could not be recreated');
+    calls.recreate.push(reason);
+  },
   setPetState: () => {},
   getPetState: () => false,
   setActiveReminder: () => {},
@@ -228,6 +251,18 @@ eq('the renderer was notified over pet:resume', resumeSends.length, 1);
 // The window state must have been re-asserted.
 check('setIgnoreMouseEvents(false) was re-applied', calls.ignoreMouse.includes(false));
 check('the pet was clamped back into view', petController.clamped > 0);
+
+// The pet must be RESTARTED: after a sleep the pet can end up in a state
+// where it cannot be dragged at all, and a fresh window is the one thing
+// that is known to clear it.
+//
+// It is a full restart — the window is destroyed and created again — and
+// not a reload of the page: the real machine's diagnostic log showed a
+// reloaded renderer that kept receiving IPC while never receiving a
+// single mouse event again. The window's position and the main process
+// stay exactly where they were.
+eq('the pet was restarted', calls.recreate.length, 1);
+eq('the page was not merely reloaded', calls.reload.length, 0);
 
 // ---------------------------------------------------------------------------
 // Test 3 — the mutex is released even when the main process thought no
@@ -335,7 +370,28 @@ eq('the cursor poller stopped', calls.setPosition.length, afterWatchdog);
 Date.now = realNow;
 
 // ---------------------------------------------------------------------------
-// Test 8 — the watchdog must NOT fire on a normal tick.
+// Test 8 — the pet is restarted ONCE per wake.
+//
+// The same sleep can be reported more than once: the `resume` event and the
+// clock-jump watchdog both notice it. The user should see the pet restart
+// once per sleep, not once per report — the pet blinking twice for one
+// wake looks like a glitch.
+// ---------------------------------------------------------------------------
+console.log('\n[8] the pet is restarted once per wake');
+await waitOutDebounce();
+calls.recreate.length = 0;
+
+// Two wakes, far enough apart that the resume de-duplication does not
+// swallow the second one, but close enough that the restart de-duplication
+// does.
+powerMonitor.emit('resume');
+await waitOutDebounce();
+powerMonitor.emit('resume');
+
+eq('the pet was restarted once', calls.recreate.length, 1);
+
+// ---------------------------------------------------------------------------
+// Test 9 — the watchdog must NOT fire on a normal tick.
 //
 // The gap between two healthy heartbeats is already ~the heartbeat
 // interval, so a threshold BELOW the interval would fire on every single
@@ -344,7 +400,7 @@ Date.now = realNow;
 //
 // This test guards that threshold relationship.
 // ---------------------------------------------------------------------------
-console.log('\n[8] the watchdog does not fire on a normal heartbeat');
+console.log('\n[9] the watchdog does not fire on a normal heartbeat');
 await waitOutDebounce();
 calls.send.length = 0;
 
@@ -353,6 +409,96 @@ await sleep(11000);
 
 eq('no recovery ran on a normal heartbeat',
   calls.send.filter((c) => c[0] === 'pet:resume').length, 0);
+
+// ---------------------------------------------------------------------------
+// Test 10 — THE REGRESSION: a drag start that arrives AFTER its own drag
+// end must not start a drag.
+//
+// The renderer resolves the grab offset asynchronously, so the
+// `pet:drag_start` it sends can be overtaken by the `pet:drag_end` of
+// the same gesture — a quick flick is over before the reply comes back,
+// and after a resume the main process can be slow to answer at all.
+//
+// The main process would then be left following the cursor with nothing
+// to stop it: the pet is glued to the pointer (it cannot be dragged
+// anywhere) and the controller's drag mutex stays held, so the pet never
+// walks on its own again.
+//
+// The gesture id is what makes the two messages orderable, so this test
+// drives the handlers in the wrong order and checks that the main
+// process refuses the late start.
+// ---------------------------------------------------------------------------
+console.log('\n[10] a drag start that arrives after its end is refused');
+calls.dragging.length = 0;
+calls.setPosition.length = 0;
+
+// The end overtakes the start — the order the renderer used to produce.
+invoke('pet:drag_end', 7);
+const accepted = invoke('pet:drag_start', 100, 80, 7);
+eq('the late start was refused', accepted, false);
+
+// Nothing may be left running.
+await sleep(120);
+eq('the cursor poller is not running', calls.setPosition.length, 0);
+check('the controller mutex was not taken',
+  calls.dragging.indexOf(true) === -1,
+  `setDragging calls were ${JSON.stringify(calls.dragging)}`);
+
+// ---------------------------------------------------------------------------
+// Test 11 — a drag end for an OLDER gesture must not stop the drag that
+// is running now.
+//
+// The messages of two overlapping gestures can be interleaved. A late end
+// belonging to the older one must be ignored, or the pet would be left
+// where the user put it while a newer drag is still in flight.
+// ---------------------------------------------------------------------------
+console.log('\n[11] a late end for an older gesture does not stop the live drag');
+calls.dragging.length = 0;
+calls.setPosition.length = 0;
+
+invoke('pet:drag_start', 100, 80, 20);
+eq('the drag took the controller mutex', calls.dragging[calls.dragging.length - 1], true);
+
+// The end of an older gesture arrives late.
+invoke('pet:drag_end', 19);
+await sleep(60);
+check('the live drag is still following the cursor', calls.setPosition.length > 0);
+check('the controller mutex is still held',
+  calls.dragging[calls.dragging.length - 1] === true);
+
+// The real end stops it.
+invoke('pet:drag_end', 20);
+const afterEnd = calls.setPosition.length;
+await sleep(120);
+eq('the cursor poller stopped', calls.setPosition.length, afterEnd);
+check('the controller mutex was released',
+  calls.dragging[calls.dragging.length - 1] === false);
+
+// ---------------------------------------------------------------------------
+// Test 12 — a FAILED window recreation still leaves a recovery behind.
+//
+// The window restart is the last layer of the wake recovery, so it has to
+// work when it can. But if the recreation itself throws (a native call that
+// fails on a wedged display, for instance), the pet must not be left with
+// NO recovery at all: the page reload is weaker than a new window, but it
+// still rebuilds the pet's page, and something is better than nothing.
+//
+// The restart de-duplication (10 s) has to be waited out first, otherwise
+// this resume is swallowed as a duplicate of the previous one.
+// ---------------------------------------------------------------------------
+console.log('\n[12] a failed window recreation falls back to a page reload');
+await waitOutDebounce();
+await sleep(10500);
+
+calls.reload.length = 0;
+calls.recreate.length = 0;
+failRecreate = true;
+powerMonitor.emit('resume');
+
+eq('the page was reloaded as a fallback', calls.reload.length, 1);
+eq('the window was not recreated', calls.recreate.length, 0);
+
+failRecreate = false;
 
 console.log(`\n${passed} passed, ${failures.length} failed`);
 if (failures.length) {

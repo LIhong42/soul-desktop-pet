@@ -4,24 +4,52 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('mp', {
   pet: {
     getState: () => ipcRenderer.invoke('pet:get_state'),
-    // The pet window's CURRENT position on the desktop, straight from the
-    // main process. The renderer uses it to measure the drag grab offset:
-    // `window.screenX` can be stale after a suspend/resume (the OS may have
-    // moved the window), and a stale value makes the pet jump when the drag
-    // starts.
-    getPosition: () => ipcRenderer.invoke('pet:get_position'),
     // Legacy alias for getCurrent (kept so older renderer code keeps working).
     getSpecies: () => ipcRenderer.invoke('pet:get_current'),
     showMain: () => ipcRenderer.invoke('window:show_main'),
     openReminder: () => ipcRenderer.invoke('window:open_reminder'),
     moveBy: (dx, dy) => ipcRenderer.invoke('pet:move_by', dx, dy),
-    // Main-process drag. `dragStart(grabDX, grabDY)` hands the main process
-    // the offset between the pointer and the window's top-left; from then on
-    // the main process follows the cursor itself (screen.getCursorScreenPoint),
-    // so the drag keeps working after the pointer leaves the 220 px pet
-    // window. `dragEnd()` releases it.
-    dragStart: (grabDX, grabDY) => ipcRenderer.invoke('pet:drag_start', grabDX, grabDY),
-    dragEnd: () => ipcRenderer.invoke('pet:drag_end'),
+    // Main-process drag. `dragStart(grabDX, grabDY, gestureId)` hands the main
+    // process the offset between the pointer and the window's top-left; from
+    // then on the main process follows the cursor itself
+    // (screen.getCursorScreenPoint), so the drag keeps working after the
+    // pointer leaves the 220 px pet window. `dragEnd(gestureId)` releases it.
+    //
+    // `gestureId` identifies the pointer gesture the message belongs to.
+    // The main process uses it to recognise a message that arrives after its
+    // gesture has already ended — see the note on `pet:drag_start` in
+    // main/ipc.js. `dragEnd(0)` means "stop whatever drag you are running".
+    dragStart: (grabDX, grabDY, gestureId) =>
+      ipcRenderer.invoke('pet:drag_start', grabDX, grabDY, gestureId),
+    dragEnd: (gestureId) => ipcRenderer.invoke('pet:drag_end', gestureId),
+    // The gesture-id high-water mark of the main process.
+    //
+    // The renderer counts its gestures from 1, but the ids have to stay
+    // unique for the whole life of the app: the main process refuses a
+    // start whose id it has already seen, so a renderer that reloaded would
+    // otherwise have every one of its drags refused as a replay — and the
+    // pet could not be dragged again until the app was restarted.
+    //
+    // Asking the main process for the current mark lets a fresh renderer
+    // pick up where the last one left off.
+    gestureBase: () => ipcRenderer.invoke('pet:gesture_base'),
+    // Append one entry to the diagnostic log (main/pet_diagnostics.js).
+    //
+    // The pet window records every pointer press, every wake and every
+    // drag takeover there. The "cannot be dragged after a sleep" bug only
+    // reproduces on real hardware, so the app writes down what it sees
+    // instead of guessing at the cause.
+    diag: (entry) => ipcRenderer.invoke('pet:diag', entry),
+    // "Input is reaching this renderer again."
+    //
+    // Sent once per wake, by the renderer, the first time it sees any
+    // input event. The main process watches for it: if the OS cursor moves
+    // over the pet and this message never arrives, the window's input path
+    // is dead — a renderer can be alive and deaf at the same time, because
+    // it still answers IPC while no mouse event ever reaches it. No
+    // in-process recovery can fix that (the pointer device registry lives
+    // in the browser process), so the main process restarts the app.
+    inputAlive: () => ipcRenderer.invoke('pet:input_alive'),
     setPaused: (ms) => ipcRenderer.invoke('pet:set_paused', ms),
     openContextMenu: () => ipcRenderer.invoke('pet:context_menu'),
     triggerAction: (action, ms) => ipcRenderer.invoke('pet:trigger_action', action, ms),

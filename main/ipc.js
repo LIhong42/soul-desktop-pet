@@ -27,6 +27,12 @@ const petActionTexts = require('./pet_action_texts');
 const petBubbles = require('./pet_bubbles');
 // 系统睡眠/唤醒后的桌宠拖拽状态恢复。见 main/pet_resume.js 的说明。
 const petResumeMod = require('./pet_resume');
+// 桌宠窗口的诊断日志（指针事件、唤醒、拖拽接管）。见 main/pet_diagnostics.js。
+const petDiagnostics = require('./pet_diagnostics');
+// 唤醒后的"输入通路是否还活着"探测器。见 main/pet_input_probe.js。
+const { createInputProbe } = require('./pet_input_probe');
+// 最后的手段：杀掉当前进程并重启整个应用。见 main/app_relaunch.js。
+const { relaunchApp } = require('./app_relaunch');
 // 文本框 catalog (resources/text_boxes) — scanned, not hard-coded.
 const petTextBoxes = require('./pet_text_boxes');
 const videoFrameSplit = require('./video_frame_split');
@@ -109,7 +115,22 @@ function shutdown() {
   }
 }
 
-function register({ queue, winMain, winPet, setPetState, getPetState, setActiveReminder, broadcastPetState, petController, petRegistry }) {
+function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreatePetWindow, setPetState, getPetState, setActiveReminder, broadcastPetState, petController, petRegistry }) {
+  // The CURRENT pet window, or null when there is none.
+  //
+  // The pet window can be destroyed and recreated by the wake recovery (the
+  // "just restart the pet" recovery — see `recoverPetAfterResume`), so every
+  // use of the pet window in this module goes through this helper instead of
+  // holding the window that existed when the handlers were registered.
+  //
+  // It returns null for a missing OR a destroyed window, so the usual
+  // `if (!winPet || winPet.isDestroyed()) return;` guard becomes
+  // `if (!petWin()) return;`.
+  const petWin = () => {
+    const w = typeof getWinPet === 'function' ? getWinPet() : initialPetWindow;
+    return (w && !w.isDestroyed()) ? w : null;
+  };
+
   // ---- 文本气泡引擎 ----
   // Two responsibilities live here, both of them needing an Electron
   // capability the rule engine deliberately doesn't depend on:
@@ -122,8 +143,8 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   //      platform query, not a rule concern. Sampling it here keeps
   //      pet_bubbles.js runnable under plain node.
   const broadcastBubble = (payload) => {
-    if (winPet && !winPet.isDestroyed()) {
-      winPet.webContents.send(petBubbles.BROADCAST_CHANNEL, payload);
+    if (petWin()) {
+      petWin().webContents.send(petBubbles.BROADCAST_CHANNEL, payload);
     }
   };
 
@@ -164,8 +185,8 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
   // Send a one-shot particle to the pet window. char is the emoji/glyph;
   // optional `x/y` lets the renderer anchor it (defaults to center).
   const sendParticle = (char, opts) => {
-    if (!winPet || winPet.isDestroyed()) return;
-    winPet.webContents.send('pet:particle', Object.assign({ char }, opts || {}));
+    if (!petWin()) return;
+    petWin().webContents.send('pet:particle', Object.assign({ char }, opts || {}));
   };
 
   // Recompute bond + cozy + mood and push them to both windows on the
@@ -193,7 +214,7 @@ function register({ queue, winMain, winPet, setPetState, getPetState, setActiveR
         cozy_today_interactions: cozy.today_interactions,
         lonely_hours: Math.round((cozy.lonely_hours | 0) * 10) / 10,
       };
-      if (winPet && !winPet.isDestroyed()) winPet.webContents.send('pet:status-changed', payload);
+      if (petWin()) petWin().webContents.send('pet:status-changed', payload);
       if (winMain && !winMain.isDestroyed()) winMain.webContents.send('pet:status-changed', payload);
     } catch (e) {
       console.error('[pushPetStatusNow]', e && e.message ? e.message : e);
@@ -1501,8 +1522,8 @@ function normFreeText(s) {
     if (!Number.isFinite(px) || !Number.isFinite(py)) return false;
     db.setSetting('pet_x', String(px));
     db.setSetting('pet_y', String(py));
-    if (winPet && !winPet.isDestroyed()) {
-      winPet.setPosition(px, py);
+    if (petWin()) {
+      petWin().setPosition(px, py);
     }
     return true;
   });
@@ -1516,8 +1537,8 @@ function normFreeText(s) {
     // and after a suspend/resume the OS may have moved the window without
     // the renderer having caught up. The live `getPosition()` is
     // authoritative.
-    if (winPet && !winPet.isDestroyed()) {
-      const [x, y] = winPet.getPosition();
+    if (petWin()) {
+      const [x, y] = petWin().getPosition();
       return { x, y };
     }
     // Fall back to the persisted position when the window is gone.
@@ -2227,8 +2248,8 @@ function normFreeText(s) {
   ipcMain.handle('bubbles:force', (_e, ruleName) => {
     const rule = petBubbles.BUILTIN_RULES.find((r) => r.name === ruleName);
     if (!rule) return { ok: false };
-    if (winPet && !winPet.isDestroyed()) {
-      winPet.webContents.send(petBubbles.BROADCAST_CHANNEL, {
+    if (petWin()) {
+      petWin().webContents.send(petBubbles.BROADCAST_CHANNEL, {
         text: (typeof rule.forceText === 'function') ? rule.forceText() : rule.name,
         kind: rule.kind,
         rule: rule.name,
@@ -2274,15 +2295,15 @@ function normFreeText(s) {
   // would add the full cumulative delta to the window's *current* position
   // each tick and the window would run away from the cursor.)
   ipcMain.handle('pet:move_by', (_e, dx, dy) => {
-    if (!winPet || winPet.isDestroyed()) return false;
+    if (!petWin()) return false;
     // A non-numeric delta would make `nx`/`ny` NaN, and `setPosition(NaN, NaN)`
     // throws "conversion failure" — which takes down the whole handler and
     // leaves the pet frozen. Coerce and reject instead.
     const ddx = Number(dx), ddy = Number(dy);
     if (!Number.isFinite(ddx) || !Number.isFinite(ddy)) return false;
-    const [x, y] = winPet.getPosition();
-    const w = winPet.getBounds().width;
-    const h = winPet.getBounds().height;
+    const [x, y] = petWin().getPosition();
+    const w = petWin().getBounds().width;
+    const h = petWin().getBounds().height;
     const nx = x + ddx;
     const ny = y + ddy;
     const display = screen.getDisplayMatching({ x: nx, y: ny, width: w, height: h })
@@ -2294,7 +2315,7 @@ function normFreeText(s) {
     // on a fractional one. The mouse deltas the renderer reports are
     // integers, but the accumulated position can still drift into a
     // fraction over many small moves — round before handing it over.
-    winPet.setPosition(Math.round(cx), Math.round(cy));
+    petWin().setPosition(Math.round(cx), Math.round(cy));
     // Pause autonomous movement for ~2 s so the pet doesn't run away right
     // after the user releases the drag. The renderer also calls setPaused at
     // the start of every drag (see src/js/pet.js) — this is a safety net
@@ -2337,7 +2358,86 @@ function normFreeText(s) {
     // Offset from the pointer to the window's top-left, in screen px.
     grabDX: 0,
     grabDY: 0,
+    // The highest gesture id this process has seen.
+    //
+    // The renderer owns the gesture lifecycle and stamps every drag
+    // message with the id of the gesture it belongs to. The ids increase
+    // monotonically, so this is a high-water mark: any message carrying
+    // an id at or below it belongs to a gesture that has already been
+    // finished here, and must not be allowed to (re)start a drag.
+    //
+    // See `pet:drag_start` below for why that matters.
+    lastGestureId: 0,
   };
+
+  // ---- The input-path probe ----
+  //
+  // When the renderer last told us that input is reaching it.
+  //
+  // The renderer sends `pet:input_alive` the first time it sees any input
+  // event after a wake. It is the proof that the window's input path still
+  // works — the renderer can be alive and deaf at the same time (it keeps
+  // answering IPC while no mouse event ever reaches it), and only the
+  // renderer itself can tell the two apart.
+  let petInputAliveAt = 0;
+
+  // When the app was last restarted (on the monotonic clock).
+  //
+  // One sleep can be reported more than once — the `resume` event, the
+  // `unlock-screen` event and the clock-jump watchdog all notice it — and
+  // the app must be restarted once, not three times.
+  let lastAppRelaunchAt = -Infinity;
+
+  // Should the app be restarted when the input path turns out to be dead?
+  //
+  //   'always' (default) — on every wake, no questions asked: kill the
+  //                        process and start a new one. This is the
+  //                        user's explicitly requested fallback, and it
+  //                        is the default because the in-process recovery
+  //                        does NOT cure every case: on the real machine
+  //                        (2026-10-31) the pet was still undraggable
+  //                        after a wake WITH a live input path — the
+  //                        pointer events arrived, the pet simply did
+  //                        not move. A fresh process is the only state
+  //                        that is known to work, because it is the state
+  //                        `npm start` produces.
+  //   'auto'            — only when the probe actually sees a dead input
+  //                        path. The restart is disruptive (the main
+  //                        window closes and reopens), so it must not
+  //                        happen on a healthy wake.
+  //   'off'             — never.
+  const petRestartOnWakeSetting = () => {
+    try {
+      const v = db.getSetting('pet_restart_app_on_wake');
+      return v === 'always' || v === 'off' || v === 'auto' ? v : 'always';
+    } catch (e) { return 'always'; }
+  };
+
+  // The probe itself. See main/pet_input_probe.js for how it decides that
+  // the input path is dead.
+  const petInputProbe = createInputProbe({
+    getWindow: petWin,
+    getCursor: () => screen.getCursorScreenPoint(),
+    hasInputAlive: () => petInputAliveAt > 0,
+    log: (entry) => {
+      try { petDiagnostics.append(Object.assign({ src: 'main' }, entry)); } catch (e) {}
+    },
+    onAlive: () => { petInputAliveAt = 0; },
+    onDead: (why) => {
+      // The window is deaf. Nothing inside this process can fix that, so
+      // the app is restarted — a fresh browser process registers the
+      // pointer device from scratch.
+      try {
+        petDiagnostics.append({
+          src: 'main',
+          kind: 'input_path_dead',
+          reason: why || 'resume',
+          action: 'relaunch',
+        });
+      } catch (e) {}
+      relaunchOnWake('input-path-dead:' + (why || 'resume'));
+    },
+  });
 
   // How often the main process samples the cursor while a drag is active.
   // ~60 Hz: fast enough that the pet tracks the pointer smoothly, slow
@@ -2351,9 +2451,9 @@ function normFreeText(s) {
   // (bubble headroom above it) and wider than it (side room), so the
   // window's box — not the sprite's — is what has to stay on screen.
   function applyDragPosition(cursorX, cursorY) {
-    if (!winPet || winPet.isDestroyed()) return;
-    const w = winPet.getBounds().width;
-    const h = winPet.getBounds().height;
+    if (!petWin()) return;
+    const w = petWin().getBounds().width;
+    const h = petWin().getBounds().height;
     const nx = cursorX - petDrag.grabDX;
     const ny = cursorY - petDrag.grabDY;
     const display = screen.getDisplayMatching({ x: nx, y: ny, width: w, height: h })
@@ -2370,7 +2470,7 @@ function normFreeText(s) {
     // `Math.round` (not `Math.floor`) keeps the window centred on the
     // cursor within half a pixel instead of drifting a pixel in one
     // direction.
-    winPet.setPosition(Math.round(cx), Math.round(cy));
+    petWin().setPosition(Math.round(cx), Math.round(cy));
   }
 
   // Tear down the main process's side of the drag.
@@ -2411,9 +2511,39 @@ function normFreeText(s) {
     }
   }
 
-  ipcMain.handle('pet:drag_start', (_e, grabDX, grabDY) => {
-    if (!winPet || winPet.isDestroyed()) return false;
-    const [wx, wy] = winPet.getPosition();
+  ipcMain.handle('pet:drag_start', (_e, grabDX, grabDY, gestureId) => {
+    if (!petWin()) return false;
+    // Reject a start for a gesture this process has already finished.
+    //
+    // The renderer resolves the grab offset asynchronously (it asks the
+    // main process where the window is), so the `pet:drag_start` it sends
+    // can arrive AFTER the `pet:drag_end` of the same gesture — a quick
+    // flick (press, move, release) is over before the reply comes back,
+    // and after a system resume the main process can be slow to answer at
+    // all.
+    //
+    // The messages arrive in the order they were SENT, and the start is
+    // sent from a promise callback — so the end genuinely overtakes it.
+    // Without this check the main process would start following the
+    // cursor with nothing left to stop it: the pet would be glued to the
+    // pointer (it could not be dragged anywhere) and the controller's
+    // drag mutex would stay held, so the pet would never walk on its own
+    // again. The right-click menu would keep working, because it does not
+    // go through the drag protocol at all — which is what made the
+    // symptom look so odd.
+    //
+    // The renderer applies the same rule before sending the start, so the
+    // two sides agree on what a stale message is.
+    const g = Number(gestureId);
+    if (Number.isFinite(g) && g > 0) {
+      if (g <= petDrag.lastGestureId) {
+        // Already seen this gesture (or a newer one) — its end has
+        // already been processed. Ignore the start.
+        return false;
+      }
+      petDrag.lastGestureId = g;
+    }
+    const [wx, wy] = petWin().getPosition();
     // `screen.getCursorScreenPoint()` returns a Point OBJECT ({x, y}), not an
     // array — destructuring it as one throws "object is not iterable".
     const cursor = screen.getCursorScreenPoint();
@@ -2430,6 +2560,19 @@ function normFreeText(s) {
     petDrag.grabDX = dx;
     petDrag.grabDY = dy;
     petDrag.active = true;
+    // Record the takeover: the offset the renderer measured, the cursor it
+    // was measured against and the window it applies to. If the pet does
+    // not follow the pointer, these three numbers say why.
+    try {
+      petDiagnostics.append({
+        src: 'main',
+        kind: 'drag_start',
+        gestureId: g,
+        grab: { dx, dy },
+        cursor: { x: cx, y: cy },
+        win: { x: wx, y: wy },
+      });
+    } catch (e) { /* diagnostics must never break the drag */ }
     // Take the mutex BEFORE the first position write, so no controller tick
     // can interleave and move the window between the grab and the first
     // follow.
@@ -2439,7 +2582,7 @@ function normFreeText(s) {
     if (!petDrag.timer) {
       petDrag.timer = setInterval(() => {
         if (!petDrag.active) return;
-        if (!winPet || winPet.isDestroyed()) {
+        if (!petWin()) {
           stopPetDrag();
           return;
         }
@@ -2453,8 +2596,58 @@ function normFreeText(s) {
     return true;
   });
 
-  ipcMain.handle('pet:drag_end', () => {
+  ipcMain.handle('pet:drag_end', (_e, gestureId) => {
+    // An end that belongs to an OLDER gesture must not stop the drag that
+    // is running now — that would leave the pet glued to the cursor
+    // again, this time in the other direction.
+    //
+    // A gesture id of 0 (or none at all, from an older renderer) means
+    // "stop whatever drag you are running": that is the forced teardown
+    // the renderer sends when it cannot know whether a drag is still in
+    // flight — after a system resume, for instance.
+    const g = Number(gestureId);
+    if (Number.isFinite(g) && g > 0) {
+      if (g < petDrag.lastGestureId) return true;
+      petDrag.lastGestureId = g;
+    }
     stopPetDrag();
+    return true;
+  });
+
+  // Hand out the gesture-id high-water mark so the renderer can build ids
+  // that are unique for the whole life of the app.
+  //
+  // The renderer counts its gestures from 1 every time it loads, but the
+  // gesture ids have to keep increasing across a renderer reload — the
+  // main process refuses a start whose id it has already seen, and after a
+  // reload the fresh renderer would start at 1 again and have every one of
+  // its drags refused as a replay. The pet would then be undraggable for
+  // as long as the reloaded renderer lived.
+  //
+  // Handing out the current high-water mark lets a fresh renderer pick up
+  // where the last one left off.
+  ipcMain.handle('pet:gesture_base', () => petDrag.lastGestureId);
+
+  // ---- Diagnostics ----
+  //
+  // The pet window appends what it sees to the diagnostic log: every
+  // pointer press, every wake, every drag takeover. See
+  // main/pet_diagnostics.js for why this exists — the "the pet cannot be
+  // dragged after the machine sleeps" bug only reproduces on real
+  // hardware, so the app records the facts instead of guessing.
+  ipcMain.handle('pet:diag', (_e, entry) => {
+    petDiagnostics.append(Object.assign({ src: 'renderer' }, entry || {}));
+    return true;
+  });
+
+  // "Input is reaching the pet renderer again."
+  //
+  // Sent by the renderer once per wake, the first time it sees any input
+  // event. The input probe watches for it: if the OS cursor moves over the
+  // pet and this message never arrives, the window's input path is dead,
+  // and the only cure left is a new process (main/app_relaunch.js).
+  ipcMain.handle('pet:input_alive', () => {
+    petInputAliveAt = Date.now();
     return true;
   });
 
@@ -2468,65 +2661,315 @@ function normFreeText(s) {
   // mutex held so the pet never moves on its own again.
   //
   // So on resume we tear the drag down unconditionally, re-assert the
-  // window's visibility and mouse state, and tell the renderer to forget its
-  // gesture.
+  // window's visibility and mouse state, tell the renderer to forget its
+  // gesture, and — as the last resort — RESTART the pet: the pet window is
+  // destroyed and created again, so the pet starts from the same clean
+  // state it had before the machine slept.
   //
   // See main/pet_resume.js for the details and the upstream Electron issues
   // this works around.
-  function recoverPetAfterResume() {
-    // 1. Kill any drag the main process still believes in. `force` releases
-    //    the controller's mutex even if `petDrag.active` was already false —
-    //    the renderer might have died with the gesture and never sent
-    //    `pet:drag_end`.
-    stopPetDrag(true);
-
-    if (!winPet || winPet.isDestroyed()) return;
-
-    // 2. Re-assert the window state.
+  //
+  // How long to wait before the pet may be restarted again.
+  //
+  // One wake can be reported more than once: the `resume` event and the
+  // clock-jump watchdog both notice it, and Electron 32 emits `resume`
+  // twice by itself (electron/electron#44252). The user should see the pet
+  // restart once per sleep, not once per report.
+  const PET_RESTART_DEBOUNCE_MS = 10000;
+  function recoverPetAfterResume(reason) {
+    // Record what the world looked like when the machine came back.
     //
-    //    `show()` is the documented recovery for a frameless + transparent
-    //    window that comes back black or frozen after a resume
-    //    (electron/electron#37361). `isVisible()` is checked first so an
-    //    already-visible window is not needlessly re-shown — re-showing
-    //    would briefly steal the z-order.
+    // The window's position, the display layout and the cursor's position
+    // are the three things that decide whether a drag can work at all —
+    // if the pet ended up on a display that is gone, or the cursor is
+    // nowhere near it, the drag cannot start and the log is the only place
+    // that will show it.
     try {
-      if (!winPet.isVisible()) winPet.show();
-    } catch (e) {
-      console.error('[pet_resume] could not re-show the pet window:', e);
-    }
-    //
-    //    `setIgnoreMouseEvents` state can be lost across a resume: the
-    //    Windows mouse-forwarding implementation was buggy until the
-    //    electron/electron#52633 refactor (Electron 44+), and this project
-    //    ships Electron 32. Re-asserting it is cheap and idempotent.
-    try {
-      winPet.setIgnoreMouseEvents(false);
-    } catch (e) {
-      console.error('[pet_resume] could not restore mouse-event state:', e);
-    }
+      const displays = screen.getAllDisplays().map((d) => ({
+        id: d.id, bounds: d.bounds, workArea: d.workArea, scaleFactor: d.scaleFactor,
+      }));
+      const cursor = screen.getCursorScreenPoint();
+      petDiagnostics.append({
+        src: 'main',
+        kind: 'resume',
+        reason: reason || 'resume',
+        win: petWin() ? petWin().getPosition() : null,
+        cursor: { x: cursor.x, y: cursor.y },
+        displays,
+        dragActive: petDrag.active,
+        lastGestureId: petDrag.lastGestureId,
+      });
+    } catch (e) { /* diagnostics must never break the recovery */ }
 
-    // 3. Tell the renderer to forget its gesture state.
+    // 0. The blunt mode: kill the process and start a new one.
     //
-    //    The renderer's `pressing` flag can be stuck true if the `pointerup`
-    //    never arrived. Left alone, the next mouse move over the pet would
-    //    compute a delta against a stale baseline. The renderer resets
-    //    itself on this message.
-    try {
-      winPet.webContents.send('pet:resume');
-    } catch (e) {
-      console.error('[pet_resume] could not notify the pet renderer:', e);
-    }
+    //    This is the user's explicitly requested fallback, and it is the
+    //    DEFAULT. The in-process recovery below does not cure every case:
+    //    on the real machine (2026-10-31) the pet was still undraggable
+    //    after a wake WITH a live input path — the pointer events arrived,
+    //    the right-click menu opened, and the pet simply did not move. A
+    //    fresh process is the only state that is known to work, because it
+    //    is exactly the state `npm start` produces.
+    //
+    //    It happens LAST, after the in-process recovery — not instead of
+    //    it. The recovery still has work worth doing even when the process
+    //    is about to be replaced: it pulls the pet back into the visible
+    //    work area (the OS may have moved the window while the machine was
+    //    asleep, and the new process starts the pet at the position that
+    //    was persisted). And it happens in a `finally`, so a step that
+    //    throws cannot swallow the restart — that would leave the user in
+    //    exactly the state this is meant to escape.
 
-    // 4. Pull the pet back into the visible work area.
-    //
-    //    The OS may have moved the window while the machine was asleep (a
-    //    monitor was unplugged, the resolution changed, a dock was
-    //    undocked). Left outside the work area, the pet is unreachable —
-    //    the user cannot drag it back.
-    if (petController && typeof petController.clampIntoView === 'function') {
-      try { petController.clampIntoView(); } catch (e) {
-        console.error('[pet_resume] could not re-clamp the pet into view:', e);
+    try {
+      // 1. Kill any drag the main process still believes in. `force` releases
+      //    the controller's mutex even if `petDrag.active` was already false —
+      //    the renderer might have died with the gesture and never sent
+      //    `pet:drag_end`.
+      stopPetDrag(true);
+
+      if (!petWin()) return;
+
+      // 2. Re-assert the window state.
+      //
+      //    `show()` is the documented recovery for a frameless + transparent
+      //    window that comes back black or frozen after a resume
+      //    (electron/electron#37361). `isVisible()` is checked first so an
+      //    already-visible window is not needlessly re-shown — re-showing
+      //    would briefly steal the z-order.
+      try {
+        if (!petWin().isVisible()) petWin().show();
+      } catch (e) {
+        console.error('[pet_resume] could not re-show the pet window:', e);
       }
+      //
+      //    `setIgnoreMouseEvents` state can be lost across a resume: the
+      //    Windows mouse-forwarding implementation was buggy until the
+      //    electron/electron#52633 refactor (Electron 44+), and this project
+      //    ships Electron 32. Re-asserting it is cheap and idempotent.
+      try {
+        petWin().setIgnoreMouseEvents(false);
+      } catch (e) {
+        console.error('[pet_resume] could not restore mouse-event state:', e);
+      }
+
+      // 3. Tell the renderer to forget its gesture state.
+      //
+      //    The renderer's `pressing` flag can be stuck true if the `pointerup`
+      //    never arrived. Left alone, the next mouse move over the pet would
+      //    compute a delta against a stale baseline. The renderer resets
+      //    itself on this message.
+      //
+      //    The "input is alive" report is reset FIRST, so the report the
+      //    renderer sends next really belongs to this wake. A report left
+      //    over from before the sleep would tell the input probe that the
+      //    window is fine when it may not be.
+      petInputAliveAt = 0;
+      try {
+        petWin().webContents.send('pet:resume');
+      } catch (e) {
+        console.error('[pet_resume] could not notify the pet renderer:', e);
+      }
+
+      // 4. Pull the pet back into the visible work area.
+      //
+      //    The OS may have moved the window while the machine was asleep (a
+      //    monitor was unplugged, the resolution changed, a dock was
+      //    undocked). Left outside the work area, the pet is unreachable —
+      //    the user cannot drag it back.
+      if (petController && typeof petController.clampIntoView === 'function') {
+        try { petController.clampIntoView(); } catch (e) {
+          console.error('[pet_resume] could not re-clamp the pet into view:', e);
+        }
+      }
+
+      // 5. Remember where the pet is.
+      //
+      //    The new process starts the pet at the persisted position, and the
+      //    window's own `moved` handler writes it — but that handler is an
+      //    EVENT, and in the default mode this process is about to be
+      //    killed. A `setPosition` whose event fires a moment too late
+      //    would be lost, and the pet would come back where it was before
+      //    the clamp instead of where the clamp put it. So the position is
+      //    written to the database here, while the process is still alive.
+      try {
+        const win = petWin();
+        if (win && !win.isDestroyed()) {
+          const [mx, my] = win.getPosition();
+          db.setSetting('pet_x', String(mx));
+          db.setSetting('pet_y', String(my));
+        }
+        // The database is written to disk on a five-second timer, and in the
+        // default mode this process is about to be killed — so the write is
+        // flushed HERE, not left to a timer that may never fire again.
+        db.save();
+      } catch (e) {
+        console.error('[pet_resume] could not persist the pet position:', e);
+      }
+
+      // 6. Restart the pet.
+      //
+      //    This is the "just restart the pet" recovery, and it is the user's
+      //    explicit request: after a sleep the pet sometimes ends up in a
+      //    state where it cannot be dragged at all, and the one thing that is
+      //    known to work is a fresh start.
+      //
+      //    "Fresh start" means the pet WINDOW is destroyed and created again,
+      //    not merely reloaded. The diagnostic log from the real machine
+      //    (2026-10-31) showed why a reload is not enough: after the reload
+      //    the renderer kept receiving IPC — it answered `pet:resume`, so it
+      //    looked perfectly alive — but it never received a single mouse
+      //    event again. A window whose input path is broken stays broken
+      //    across a reload, because the reload keeps the same native window.
+      //    A brand-new window has a brand-new native window, a brand-new
+      //    renderer and a brand-new input registration.
+      //
+      //    What is preserved: the window's position and size, the main
+      //    window, the database and the pet's identity. What changes: the
+      //    pet's page is built from scratch — which is the whole point.
+      //
+      //    The restart is debounced: a wake can be reported twice (the
+      //    `resume` event and the clock-jump watchdog can both fire), and
+      //    restarting twice would make the pet blink twice for one sleep.
+      restartPet(reason || 'resume');
+    } catch (e) {
+      // A step that throws must not take the rest of the recovery with it.
+      console.error('[pet_resume] the in-process recovery failed:', e);
+    } finally {
+      // 7. Watch the pet's INPUT PATH — or, in the default mode, kill the
+      //    process and start a new one.
+      //
+      //    Everything above repairs the app from the inside. One failure
+      //    cannot be repaired that way: a renderer that is alive and deaf —
+      //    it still answers IPC, so it looks healthy, while not a single
+      //    mouse event reaches it. The cause is Chromium's pointer-device
+      //    registry, which lives in the BROWSER process and is shared by
+      //    every window, so a new window inherits the broken registry and a
+      //    reload certainly does.
+      //
+      //    The probe watches the OS cursor (which the main process can read
+      //    whether or not the renderer can) against the renderer's own
+      //    "input is alive" report. If the cursor moves over the pet and the
+      //    renderer stays silent, the input path is dead — and then the app
+      //    is restarted, which is the user's explicitly requested fallback:
+      //    kill the old process and start a new one.
+      //
+      //    This sits in a `finally` on purpose: it is the step the whole
+      //    mechanism exists for, so nothing above may swallow it.
+      startPetInputProbe(reason || 'resume');
+    }
+  }
+
+  // Start watching the pet's input path after a wake.
+  //
+  // `reason` says what woke the machine; it goes into the diagnostic log
+  // so the probe can be lined up with the wake.
+  function startPetInputProbe(reason) {
+    const mode = petRestartOnWakeSetting();
+    if (mode === 'off') {
+      try {
+        petDiagnostics.append({ src: 'main', kind: 'input_probe_skipped', reason, mode });
+      } catch (e) {}
+      return;
+    }
+    if (mode === 'always') {
+      // The blunt version: on every wake, kill the process and start a
+      // new one. Nothing is probed — the user asked for the pet to come
+      // back from a clean process every time.
+      relaunchOnWake(reason);
+      return;
+    }
+    petInputProbe.start(reason || 'resume');
+  }
+
+  // Kill the process and start a new one.
+  //
+  // Debounced like the pet restart: one sleep is reported more than once
+  // (the `resume` event, the `unlock-screen` event and the clock-jump
+  // watchdog can all fire for it), and the app must be restarted once, not
+  // three times.
+  function relaunchOnWake(reason) {
+    const now = monotonicNow();
+    if (now - lastAppRelaunchAt < PET_RESTART_DEBOUNCE_MS) return false;
+    lastAppRelaunchAt = now;
+    try {
+      petDiagnostics.append({ src: 'main', kind: 'app_relaunch', reason, mode: 'always' });
+    } catch (e) {}
+    return relaunchApp('wake:' + (reason || 'resume'));
+  }
+
+  // Restart the pet.
+  //
+  // `reason` says what triggered it ('resume', 'unlock-screen', 'watchdog'),
+  // and it goes into the diagnostic log so the restarts can be lined up
+  // with the wake events.
+  //
+  // A monotonic clock is used for the de-duplication, not `Date.now()`.
+  //
+  // The wall clock can jump BACKWARDS — a clock change, an NTP correction —
+  // and a gap that comes out negative would suppress the restart for the
+  // next ten minutes, leaving the pet in its broken state for exactly as
+  // long as it matters. `performance.now()` is monotonic: it never goes
+  // backwards, and it keeps counting across a suspend (unlike the timers,
+  // which do not fire while the process is frozen).
+  const monotonicNow = () => (
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now()
+  );
+  // The time of the last restart, on the monotonic clock. It starts at
+  // minus infinity so that the FIRST restart is never suppressed — the
+  // monotonic clock starts near zero when the process starts, so a plain
+  // zero would swallow a restart that happens within the first ten seconds
+  // of the app's life.
+  let lastPetRestartAt = -Infinity;
+  function restartPet(reason) {
+    if (!petWin()) return;
+    const now = monotonicNow();
+    // One restart per wake. The `resume` event and the clock-jump watchdog
+    // can both fire for the same sleep, and the user should see the pet
+    // restart once, not twice.
+    if (now - lastPetRestartAt < PET_RESTART_DEBOUNCE_MS) return;
+    lastPetRestartAt = now;
+
+    // The real restart: a new window in the old one's place.
+    //
+    // If the recreation itself fails, the fallback below takes over — a
+    // page reload is weaker than a new window, but it is still a restart,
+    // and the pet must not be left in the broken state.
+    if (typeof recreatePetWindow === 'function') {
+      let recreated = false;
+      try {
+        recreatePetWindow(reason);
+        recreated = true;
+      } catch (e) {
+        console.error('[pet_resume] could not restart the pet window:', e);
+      }
+      if (recreated) {
+        // The new window starts at the old one's position, but the OS may
+        // have moved that position off-screen while the machine was asleep.
+        if (petController && typeof petController.clampIntoView === 'function') {
+          try { petController.clampIntoView(); } catch (e) {
+            console.error('[pet_resume] could not re-clamp the pet into view:', e);
+          }
+        }
+        return;
+      }
+    }
+
+    // Fallback for a host that cannot recreate the window (the unit test
+    // drives the recovery without one): reload the page in place.
+    try {
+      petDiagnostics.append({
+        src: 'main',
+        kind: 'pet_reload',
+        reason,
+        win: petWin().getPosition(),
+      });
+    } catch (e) { /* diagnostics must never break the recovery */ }
+    try {
+      petWin().reload();
+    } catch (e) {
+      console.error('[pet_resume] could not reload the pet window:', e);
     }
   }
 
@@ -2575,7 +3018,7 @@ function normFreeText(s) {
     // A gap this large means the process was frozen — the machine slept.
     if (gap > WATCHDOG_GAP_MS) {
       console.log(`[pet_resume] detected a ${Math.round(gap / 1000)}s freeze (no power event) — recovering`);
-      try { recoverPetAfterResume(); } catch (e) {
+      try { recoverPetAfterResume('watchdog'); } catch (e) {
         console.error('[pet_resume] watchdog recovery failed:', e);
       }
     }
@@ -2605,6 +3048,16 @@ function normFreeText(s) {
   // itself; the renderer hook in src/js/auth.js handles reminder replay
   // after unlock.
   ipcMain.handle('pet:context_menu', () => {
+    // The right-click menu is the proof that the renderer still receives
+    // MOUSE events. After a system suspend the pointer events can stop
+    // arriving altogether while the mouse events keep coming — and the
+    // symptom ("the pet cannot be dragged but the right-click menu still
+    // works") only makes sense in that world. So the fact that this
+    // handler runs is recorded: it is the evidence that separates "no
+    // mouse events at all" from "no POINTER events".
+    try {
+      petDiagnostics.append({ src: 'main', kind: 'context_menu' });
+    } catch (e) { /* diagnostics must never break the menu */ }
     // No bond-tier read here: every menu item is available at any tier.
     // fireBondAction wraps the IPC calls into a single helper so we can
     // route a click through to the pet renderer (which doubles as the
@@ -2763,7 +3216,7 @@ function normFreeText(s) {
         },
       },
     ]);
-    menu.popup({ window: winPet });
+    menu.popup({ window: petWin() });
     return true;
   });
 

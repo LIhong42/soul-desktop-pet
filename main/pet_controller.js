@@ -329,8 +329,7 @@ class PetController {
     // is advanced inside `_startRandomAction` so the same loop list round-
     // robins deterministically instead of random-shuffling on each pass.
     this.loopVariants = ['default'];
-    this._variantCursor = 0;
-    // Load the active pet's per-pet `pet_actions_config:<petId>` so the
+    this._variantCursor = 0;    // Load the active pet's per-pet `pet_actions_config:<petId>` so the
     // idle loop reflects the user's saved variant list, not just `['default']`.
     // Without this, a pet that has 9 user-configured loop variants
     // (e.g. `imported-cb19789a4afbe952` with eating/dancing/blinking/...)
@@ -372,6 +371,18 @@ class PetController {
   }
   stop() {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  }
+
+  // Point the controller at a NEW pet window.
+  //
+  // The wake recovery destroys the pet window and creates a new one in its
+  // place (the "just restart the pet" recovery — see `recreatePetWindow` in
+  // main/main.js). The controller moves the window on its own, so it has to
+  // be told about the new one — otherwise the pet would keep trying to move
+  // a window that no longer exists, and every action it sends would go to a
+  // destroyed renderer.
+  setWindow(win) {
+    this.win = win;
   }
 
   // Pull the pet window back inside the visible work area.
