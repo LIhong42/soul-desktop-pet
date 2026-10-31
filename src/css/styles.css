@@ -3358,33 +3358,6 @@ body.locked #pin-modal.hidden { display: none !important; }
   margin-top: 10px;
 }
 .diary-block { position: relative; }
-.diary-block-bar {
-  display: flex;
-  gap: 6px;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-.diary-block:hover .diary-block-bar,
-.diary-block:focus-within .diary-block-bar { opacity: 1; }
-/* The first block's toolbar stays visible: it is the only way to add a
-   picture, and on an empty page there is nothing else to hover. */
-.diary-blocks > .diary-block:first-child .diary-block-bar { opacity: 1; }
-.diary-block-bar .btn-tiny {
-  /* The flat band color, so the button always reads as a small chip on
-     the page surface. */
-  background: var(--diary-bg-flat);
-  color: var(--diary-muted);
-  border-color: var(--diary-rule);
-}
-/* The app's own `.btn.secondary:hover` rule is more specific, so the
-   themed hover has to be spelled out — otherwise the button turns the
-   app's cream on a dark page and its label disappears. */
-.diary-block-bar .btn-tiny:hover,
-.diary-gallery-bar .btn-tiny:hover {
-  background: var(--diary-bg-flat);
-  color: var(--diary-text);
-  border-color: var(--diary-muted);
-}
 
 /* A text block. It auto-grows with its content so the page has no inner
    scrollbar — the writing surface scrolls as one document. */
@@ -3522,49 +3495,77 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   height: auto;
 }
 
-.diary-gallery-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  /* Faded rather than hidden: the layout and size controls have to be
-     findable without hunting for a hover state. */
-  opacity: 0.55;
-  transition: opacity 0.12s ease;
+/* ---- The right-click menu ------------------------------------------------
+   The controls of a text block and of a gallery do not sit in the
+   document — they live in this menu, which opens where the user presses.
+   The menu floats above the writing surface, so it is styled with the
+   app's own panel colors rather than with the paper's. */
+.ctx-menu {
+  position: fixed;
+  z-index: 400;
+  min-width: 172px;
+  padding: 5px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  color: var(--text);
+  user-select: none;
 }
-.diary-block:hover .diary-gallery-bar,
-.diary-block:focus-within .diary-gallery-bar { opacity: 1; }
-.diary-gallery-group {
-  display: inline-flex;
-  gap: 4px;
+.ctx-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
 }
-/* How many photos the group holds. */
-.diary-gallery-count {
-  align-self: center;
-  color: var(--diary-muted);
-  font-size: 12px;
-  opacity: 0.8;
+.ctx-item:hover:not(:disabled) { background: var(--accent-soft); }
+.ctx-item:disabled {
+  color: var(--muted);
+  opacity: 0.45;
+  cursor: default;
 }
-.diary-gallery-bar .btn-tiny {
-  /* The flat band color, so the button always reads as a small chip on
-     the page surface. */
-  background: var(--diary-bg-flat);
-  color: var(--diary-muted);
-  border-color: var(--diary-rule);
-}
-.diary-gallery-bar .btn-tiny:hover {
-  color: var(--diary-text);
-  border-color: var(--diary-muted);
-}
-.diary-gallery-bar .btn-tiny.selected {
-  color: var(--diary-text);
-  border-color: var(--diary-muted);
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.danger:hover:not(:disabled) { background: rgba(210, 63, 63, 0.08); }
+/* The chosen layout, marked so the menu says which one is in use. */
+.ctx-item.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
 }
+/* A row of small buttons — the layout switcher. */
+.ctx-row {
+  display: flex;
+  gap: 4px;
+}
+.ctx-row .ctx-item {
+  width: auto;
+  flex: 1;
+  padding: 5px 8px;
+  text-align: center;
+}
+.ctx-sep {
+  height: 1px;
+  margin: 5px 2px;
+  background: var(--border);
+}
+/* A muted, inert line — the photo counter. */
+.ctx-info {
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
 
-/* The shared file picker. It is opened by the "插入图片" button on a text
-   block and by the "+ 加图" button on a gallery — it has no button of its
+/* The shared file picker. It is opened by the 「插入图片」 action on a text
+   block and by the "+ 加图" action on a gallery — it has no button of its
    own, so it stays hidden. */
 .diary-page input[type="file"] { display: none; }
 

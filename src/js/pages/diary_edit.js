@@ -40,6 +40,19 @@
 // are left untouched on save — they keep whatever the old form wrote, so
 // an entry created before the diary editor existed still shows its
 // structured fields in the detail view and in search results.
+//
+// ---- Where the controls live ----
+//
+// The controls of a block do NOT sit in the document. A 「插入图片 / 删除此段」
+// row under every text block, and a layout switcher under every gallery,
+// broke the flow of the writing: the buttons read as part of the page.
+//
+// So they live in a right-click menu instead (src/js/context_menu.js):
+// right-click a text block for its two actions, right-click a gallery for
+// the layout switch, the photo counter and the text insertions. The
+// buttons are the same ones as before — only the way they appear changed.
+// The text block's menu also carries the editing commands (剪切 / 复制 /
+// 粘贴 / 全选), because the custom menu replaces the browser's own.
 
 import {
   api, escapeHtml, displayName, toast,
@@ -47,6 +60,7 @@ import {
   nowDatetimeLocal, wireDateInputs,
 } from '../api.js';
 import { register, navigate, getReferrerPath } from '../router.js';
+import { openContextMenu } from '../context_menu.js';
 import {
   DIARY_THEMES, DEFAULT_THEME_ID, getDiaryTheme, diaryThemeVars,
 } from '../diary_themes.js';
@@ -229,8 +243,115 @@ function makeTextBlock(text) {
   // Auto-grow: the textarea has no inner scrollbar, it just gets taller
   // as the user types. That keeps the page reading as one document.
   ta.addEventListener('input', () => autoGrow(ta));
+  // The block's controls live in a right-click menu, so the writing
+  // surface stays a clean document.
+  ta.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openTextMenu(block, e);
+  });
   block.el = ta;
   return block;
+}
+
+// ---- The block menus -----------------------------------------------------
+//
+// The menu of a text block: the two actions the block used to carry, plus
+// the editing commands the browser's own right-click menu would have
+// offered (the custom menu replaces it, so they have to be here).
+//
+// The caret is captured when the menu opens: the picture lands where the
+// user pressed, not where the caret happened to be.
+function openTextMenu(block, e) {
+  const ta = block.el;
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  // Focus first, then put the caret back: focusing a textarea can move
+  // the caret to the end of the text.
+  ta.focus();
+  try { ta.setSelectionRange(start, end); } catch (err) { /* no selection */ }
+  const hasSelection = end > start;
+
+  openContextMenu({
+    x: e.clientX,
+    y: e.clientY,
+    items: [
+      { act: 'insert-image', label: '插入图片' },
+      { act: 'delete-block', label: '删除此段', danger: true },
+      { sep: true },
+      { row: [
+        { act: 'cut', label: '剪切', disabled: !hasSelection },
+        { act: 'copy', label: '复制', disabled: !hasSelection },
+        { act: 'paste', label: '粘贴' },
+        { act: 'select-all', label: '全选' },
+      ]},
+    ],
+    onAction: (act, value) => handleTextMenuAction(block, act, value, { start, end }),
+  });
+}
+
+// Run the action the user picked in a text block's menu.
+function handleTextMenuAction(block, act, value, sel) {
+  const ta = block.el;
+  switch (act) {
+    case 'insert-image': {
+      // The picture goes in at the caret: the text above it stays above,
+      // the text below moves under it.
+      const fileInput = document.getElementById('diary-photos');
+      pendingInsertFor = block;
+      pendingInsertCaret = sel.start;
+      ta.focus();
+      if (fileInput) fileInput.click();
+      break;
+    }
+    case 'delete-block': {
+      const i = pageState.blocks.indexOf(block);
+      if (i >= 0) removeBlock(i);
+      break;
+    }
+    case 'cut':
+    case 'copy':
+      restoreSelection(ta, sel);
+      document.execCommand(act);
+      break;
+    case 'paste':
+      pasteIntoTextarea(ta, sel);
+      break;
+    case 'select-all':
+      ta.focus();
+      ta.select();
+      break;
+  }
+}
+
+// Put the caret (and the selection) back where it was. The menu's press
+// does not move the focus, but a click on the page behind it would.
+function restoreSelection(ta, sel) {
+  ta.focus();
+  try { ta.setSelectionRange(sel.start, sel.end); } catch (err) { /* no selection */ }
+}
+
+// Paste the clipboard into a text block at the caret.
+//
+// The clipboard API is the way in; the browser's own paste command is the
+// fallback for the case where it is not available.
+async function pasteIntoTextarea(ta, sel) {
+  let text = '';
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (e) {
+    restoreSelection(ta, sel);
+    document.execCommand('paste');
+    return;
+  }
+  if (!text) return;
+  restoreSelection(ta, sel);
+  // insertText keeps the undo stack working; if the browser refuses it,
+  // the text is spliced in by hand.
+  const ok = document.execCommand('insertText', false, text);
+  if (!ok) {
+    ta.value = ta.value.slice(0, sel.start) + text + ta.value.slice(sel.end);
+    ta.dispatchEvent(new Event('input'));
+  }
 }
 
 // Resize a text block to fit its content.
@@ -270,14 +391,13 @@ function makeGalleryBlock(photos, layout) {
     selectedId: list.length ? list[0].photoId : null,
     el: null,
     itemsEl: null,
-    barEl: null,
   };
   buildGalleryEl(block);
   return block;
 }
 
-// Build the gallery's DOM: the row of photos and the toolbar with the
-// layout switch, the add button and the text-insert buttons.
+// Build the gallery's DOM: the row of photos. The gallery's controls live
+// in a right-click menu, so the pictures stay the only thing on the page.
 function buildGalleryEl(block) {
   const fig = document.createElement('figure');
   fig.className = 'diary-block-gallery';
@@ -286,43 +406,80 @@ function buildGalleryEl(block) {
   items.className = 'diary-gallery-items';
   fig.appendChild(items);
 
-  const bar = document.createElement('div');
-  bar.className = 'diary-gallery-bar';
-  bar.innerHTML = `
-    <span class="diary-gallery-group">
-      ${DIARY_GALLERY_LAYOUTS.map((l) => `
-        <button type="button" class="btn secondary btn-tiny" data-layout="${l.id}"
-                title="${l.name}排版">${l.name}</button>`).join('')}
-    </span>
-    <button type="button" class="btn secondary btn-tiny" data-act="gallery-add">+ 加图</button>
-    <span class="diary-gallery-count" data-act="gallery-count"></span>
-    <button type="button" class="btn secondary btn-tiny" data-act="insert-before">↑ 上方插入文字</button>
-    <button type="button" class="btn secondary btn-tiny" data-act="insert-after">↓ 下方插入文字</button>
-  `;
-  fig.appendChild(bar);
-
-  bar.querySelectorAll('[data-layout]').forEach((btn) => {
-    btn.onclick = () => setGalleryLayout(block, btn.dataset.layout);
+  // Right-clicking the gallery (or one of its pictures) opens its menu.
+  fig.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openGalleryMenu(block, e);
   });
-  bar.querySelector('[data-act="gallery-add"]').onclick = () => {
-    pendingGalleryFor = block;
-    const fileInput = document.getElementById('diary-photos');
-    if (fileInput) fileInput.click();
-  };
-  bar.querySelector('[data-act="insert-before"]').onclick = () => {
-    const i = pageState.blocks.indexOf(block);
-    if (i >= 0) insertBlock(i, makeTextBlock(''));
-  };
-  bar.querySelector('[data-act="insert-after"]').onclick = () => {
-    const i = pageState.blocks.indexOf(block);
-    if (i >= 0) insertBlock(i + 1, makeTextBlock(''));
-  };
 
   block.el = fig;
   block.itemsEl = items;
-  block.barEl = bar;
   syncGalleryEl(block);
   return fig;
+}
+
+// The gallery's menu: the layout switch, the add button, the photo
+// counter and the two text insertions. Right-clicking one of the
+// pictures adds that picture's own action on top.
+function openGalleryMenu(block, e) {
+  const itemEl = e.target && e.target.closest
+    ? e.target.closest('.diary-gallery-item')
+    : null;
+  const photo = itemEl ? block.photos.find((p) => p.el === itemEl) : null;
+
+  const items = [];
+  if (photo) {
+    items.push({ act: 'delete-photo', label: '删除这张图片', danger: true });
+    items.push({ sep: true });
+  }
+  items.push({
+    row: DIARY_GALLERY_LAYOUTS.map((l) => ({
+      act: 'layout',
+      value: l.id,
+      label: l.name,
+      selected: l.id === block.layout,
+    })),
+  });
+  items.push({ act: 'gallery-add', label: '+ 加图' });
+  items.push({ info: true, label: block.photos.length ? `${block.photos.length} 张` : '还没有照片' });
+  items.push({ sep: true });
+  items.push({ act: 'insert-before', label: '↑ 上方插入文字' });
+  items.push({ act: 'insert-after', label: '↓ 下方插入文字' });
+
+  openContextMenu({
+    x: e.clientX,
+    y: e.clientY,
+    items,
+    onAction: (act, value) => handleGalleryMenuAction(block, act, value, photo),
+  });
+}
+
+// Run the action the user picked in a gallery's menu.
+function handleGalleryMenuAction(block, act, value, photo) {
+  switch (act) {
+    case 'layout':
+      setGalleryLayout(block, value);
+      break;
+    case 'gallery-add': {
+      pendingGalleryFor = block;
+      const fileInput = document.getElementById('diary-photos');
+      if (fileInput) fileInput.click();
+      break;
+    }
+    case 'insert-before': {
+      const i = pageState.blocks.indexOf(block);
+      if (i >= 0) insertBlock(i, makeTextBlock(''));
+      break;
+    }
+    case 'insert-after': {
+      const i = pageState.blocks.indexOf(block);
+      if (i >= 0) insertBlock(i + 1, makeTextBlock(''));
+      break;
+    }
+    case 'delete-photo':
+      if (photo) removeGalleryPhoto(block, photo);
+      break;
+  }
 }
 
 // Build the DOM of one photo in a gallery: the picture, a delete button
@@ -427,9 +584,6 @@ function syncGalleryEl(block) {
     }
     if (src && img.getAttribute('src') !== src) img.setAttribute('src', src);
   });
-  for (const btn of block.barEl.querySelectorAll('[data-layout]')) {
-    btn.classList.toggle('selected', btn.dataset.layout === block.layout);
-  }
 }
 
 // Apply the photo's width to its element: its own size if the user set
@@ -660,28 +814,9 @@ function renderBlocks() {
     wrap.className = 'diary-block';
     wrap.dataset.blockType = block.type;
     if (block.type === 'text') {
+      // The text block is just the text: its controls live in the
+      // right-click menu (see openTextMenu).
       wrap.appendChild(block.el);
-      // The per-block toolbar. "插入图片" puts the picture right at the
-      // caret, which is what makes text and images interleave.
-      const bar = document.createElement('div');
-      bar.className = 'diary-block-bar';
-      bar.innerHTML = `
-        <button type="button" class="btn secondary btn-tiny" data-act="insert-image">插入图片</button>
-        <button type="button" class="btn secondary btn-tiny" data-act="delete-block">删除此段</button>
-      `;
-      bar.querySelector('[data-act="insert-image"]').onclick = () => {
-        // Insert at the caret: the text above the caret stays above the
-        // picture, the text below moves under it.
-        const fileInput = document.getElementById('diary-photos');
-        block.el.focus();
-        pendingInsertFor = block;
-        if (fileInput) fileInput.click();
-      };
-      bar.querySelector('[data-act="delete-block"]').onclick = () => {
-        const i = pageState.blocks.indexOf(block);
-        if (i >= 0) removeBlock(i);
-      };
-      wrap.appendChild(bar);
     } else {
       syncGalleryEl(block);
       wrap.appendChild(block.el);
@@ -698,18 +833,20 @@ function renderBlocks() {
   for (const b of pageState.blocks) {
     if (b.type === 'text') autoGrow(b.el);
   }
-  updateBlockHints();
 }
 
 // Insert a gallery at the caret of a text block, splitting it so the text
 // before the caret stays above the pictures and the text after stays
 // below. Every picked file lands in the SAME gallery — one insertion
 // point can hold any number of photos.
-async function insertGalleryAfterTextBlock(textBlock, files) {
+//
+// `caretPos` is where the picture goes: the position the user pressed
+// at, when the insertion came from the block's right-click menu.
+async function insertGalleryAfterTextBlock(textBlock, files, caretPos) {
   const idx = pageState.blocks.indexOf(textBlock);
   if (idx < 0) return;
   const ta = textBlock.el;
-  const caret = ta.selectionStart;
+  const caret = (typeof caretPos === 'number') ? caretPos : ta.selectionStart;
   const before = ta.value.slice(0, caret);
   const after = ta.value.slice(caret);
 
@@ -743,16 +880,6 @@ async function makePendingPhotos(files) {
   return photos;
 }
 
-// The photo count of each gallery, shown in its own toolbar. The count
-// belongs to the gallery, so it lives there rather than on the page.
-function updateBlockHints() {
-  for (const b of pageState.blocks) {
-    if (b.type !== 'gallery' || !b.barEl) continue;
-    const count = b.barEl.querySelector('[data-act="gallery-count"]');
-    if (count) count.textContent = b.photos.length ? `${b.photos.length} 张` : '';
-  }
-}
-
 // ---- Page ----------------------------------------------------------------
 
 // Exported so the test harness (scripts/test-diary-editor.js) can drive
@@ -769,6 +896,7 @@ export async function render(args, params) {
   // A pending target from a previous visit to this page would send the
   // next file pick to the wrong place.
   pendingInsertFor = null;
+  pendingInsertCaret = null;
   pendingGalleryFor = null;
   // The back link and the post-save navigation follow the page the user
   // actually came from; the memorial list is the fallback.
@@ -836,9 +964,10 @@ export async function render(args, params) {
           <div class="diary-blocks" id="diary-blocks"></div>
 
           <!-- The file input lives at the end of the page. It is opened
-               by the "插入图片" button on a text block and by the "+ 加图"
-               button on a gallery, so it has no button of its own — the
-               picture is always added where the user is working. -->
+               by the 「插入图片」 action on a text block and by the
+               "+ 加图" action on a gallery, so it has no button of its
+               own — the picture is always added where the user is
+               working. -->
           <input type="file" id="diary-photos" accept="image/*" multiple/>
         </div>
         <!-- The decorative strip at the bottom of the page. It is a layer
@@ -1003,16 +1132,20 @@ function wireContactPicker(contacts) {
 
 // ---- Photos --------------------------------------------------------------
 
-// The text block whose "插入图片" button was clicked. When set, the next
+// The text block whose 「插入图片」 action was picked. When set, the next
 // file pick is inserted AT THE CARET inside that block (splitting it).
 let pendingInsertFor = null;
 
-// The gallery whose "+ 加图" button was clicked. When set, the next file
+// Where in that block the picture goes: the position the user pressed at
+// when the action came from the block's right-click menu.
+let pendingInsertCaret = null;
+
+// The gallery whose "+ 加图" action was picked. When set, the next file
 // pick joins that gallery instead of starting a new one.
 let pendingGalleryFor = null;
 
-// The shared file picker. It is opened by the "插入图片" button on a text
-// block and by the "+ 加图" button on a gallery, so the picture always
+// The shared file picker. It is opened by the 「插入图片」 action on a text
+// block and by the "+ 加图" action on a gallery, so the picture always
 // lands where the user is working.
 function wirePhotoInput() {
   const fileInput = document.getElementById('diary-photos');
@@ -1033,13 +1166,15 @@ function wirePhotoInput() {
       return;
     }
 
-    // "插入图片" on a text block: split the block at the caret and drop
+    // 「插入图片」 on a text block: split the block at the caret and drop
     // the gallery in between. Every picked file goes into that one
     // gallery.
     if (pendingInsertFor) {
       const target = pendingInsertFor;
+      const caret = pendingInsertCaret;
       pendingInsertFor = null;
-      await insertGalleryAfterTextBlock(target, files);
+      pendingInsertCaret = null;
+      await insertGalleryAfterTextBlock(target, files, caret);
       return;
     }
 

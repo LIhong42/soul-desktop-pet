@@ -44,6 +44,18 @@ function makePhoto(name, from, to, w, h) {
   return new File([bytes], name, { type: 'image/png' });
 }
 
+// The block controls live in a right-click menu now: press on the block,
+// then pick the entry.
+function openMenu(el, x, y) {
+  el.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true, clientX: x, clientY: y,
+  }));
+}
+function clickMenu(sel) {
+  const btn = document.querySelector('#ctx-menu ' + sel);
+  if (btn) btn.click();
+}
+
 // Fill in the first text block, then split it with a gallery of three
 // photos so the screenshot shows the mixed layout.
 const ta = document.querySelector('.diary-block-text');
@@ -78,14 +90,16 @@ fileInput.click = () => {
   Object.defineProperty(fileInput, 'files', { value: files, configurable: true });
   fileInput.dispatchEvent(new Event('change'));
 };
-document.querySelector('.diary-block-bar [data-act="insert-image"]').click();
+openMenu(ta, 200, 240);
+clickMenu('[data-ctx-act="insert-image"]');
 
 // The insert is async (the files are read into data URLs first).
 await new Promise(r => setTimeout(r, 400));
 
 // Switch the gallery to the two-up layout.
 const gallery = document.querySelector('.diary-block-gallery');
-gallery.querySelector('[data-layout="two"]').click();
+openMenu(gallery, 200, 240);
+clickMenu('[data-ctx-act="layout"][data-ctx-value="two"]');
 await new Promise(r => setTimeout(r, 100));
 
 // Start a drag of the first photo onto the second one, so the screenshot
@@ -141,10 +155,17 @@ app.whenReady().then(async () => {
     const pb = page.getBoundingClientRect();
     const fb = foot.getBoundingClientRect();
     const bb = body.getBoundingClientRect();
+    // Which layout is in use — the menu says so.
+    g.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: 200, clientY: 240,
+    }));
+    const picked = document.querySelector('#ctx-menu [data-ctx-act="layout"].selected');
+    const selected = picked ? picked.dataset.ctxValue : null;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return {
       widths: Array.from(g.querySelectorAll('.diary-gallery-item')).map(i => i.style.width),
       rects: Array.from(g.querySelectorAll('.diary-gallery-item')).map(i => Math.round(i.getBoundingClientRect().width)),
-      selected: (g.querySelector('[data-layout].selected') || { dataset: {} }).dataset.layout || null,
+      selected,
       // The geometry of the three layers, in document coordinates.
       bodyBottom: Math.round(bb.bottom + window.scrollY),
       footTop: Math.round(fb.top + window.scrollY),

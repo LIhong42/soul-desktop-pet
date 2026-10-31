@@ -63,6 +63,40 @@ const routerMod = await import('./js/router.js');
 const editor = await import('./js/pages/diary_edit.js');
 const list = await import('./js/pages/events_memorial.js');
 
+// Drive the right-click menus the way the user does: press on the block,
+// then pick an entry. The block's controls do not sit in the document any
+// more — they live in this menu.
+window.__menu = {
+  open(el, x = 120, y = 140) {
+    el.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: x, clientY: y,
+    }));
+    return window.__menu.items();
+  },
+  items() {
+    return Array.from(document.querySelectorAll('#ctx-menu [data-ctx-act]')).map(b => ({
+      act: b.dataset.ctxAct,
+      value: b.dataset.ctxValue || '',
+      label: b.textContent.trim(),
+      selected: b.classList.contains('selected'),
+      disabled: b.disabled,
+    }));
+  },
+  click(sel) {
+    const btn = document.querySelector('#ctx-menu ' + sel);
+    if (!btn) throw new Error('menu entry missing: ' + sel);
+    btn.click();
+    return true;
+  },
+  isOpen() {
+    const el = document.getElementById('ctx-menu');
+    return !!el && el.style.display === 'block';
+  },
+  close() {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  },
+};
+
 window.__themes = themes;
 window.__editor = editor;
 window.__list = list;
@@ -191,7 +225,10 @@ app.whenReady().then(async () => {
       // looked alike but inserted the picture in different places.
       // Only the per-block one is left.
       pageAddButton: !!document.getElementById('diary-add-photo'),
-      insertImageButtons: document.querySelectorAll('.diary-block-bar [data-act="insert-image"]').length,
+      // The block controls do NOT sit in the document any more: they live
+      // in the right-click menu, so the writing surface stays clean.
+      blockBars: document.querySelectorAll('.diary-block-bar').length,
+      galleryBars: document.querySelectorAll('.diary-gallery-bar').length,
       hasSave: !!document.getElementById('save'),
       textBlocks: document.querySelectorAll('.diary-block-text').length,
       tiles: tiles.length,
@@ -238,8 +275,8 @@ app.whenReady().then(async () => {
   checkTrue('the editor renders the block container', editorResult.hasBlocks);
   checkTrue('the editor renders the photo file input', editorResult.hasFileInput);
   checkTrue('the page has no second "add picture" button', !editorResult.pageAddButton);
-  check('the only "插入图片" button is the per-block one',
-    editorResult.insertImageButtons, 1);
+  check('the document carries no block toolbar', editorResult.blockBars, 0);
+  check('the document carries no gallery toolbar', editorResult.galleryBars, 0);
   checkTrue('the editor renders a save button', editorResult.hasSave);
   checkTrue('the editor starts with one text block', editorResult.textBlocks >= 1);
   check('the style picker shows all six tiles', editorResult.tiles, 6);
@@ -268,11 +305,11 @@ app.whenReady().then(async () => {
     ta.setSelectionRange(6, 6);
     ta.dispatchEvent(new Event('input'));
 
-    // Simulate the user clicking 「插入图片」 on that block and picking a
-    // file. The editor splits the block at the caret.
-    const bar = document.querySelector('.diary-block-bar');
-    const insertBtn = bar.querySelector('[data-act="insert-image"]');
-    // The button opens the file picker. We can't drive a native picker
+    // Simulate the user right-clicking that block and picking
+    // 「插入图片」, then picking a file. The editor splits the block at
+    // the caret.
+    //
+    // The action opens the file picker. We can't drive a native picker
     // from the test, so we stub the click method to fire the change
     // handler with a synthetic file instead — the same path the real
     // picker takes.
@@ -283,7 +320,8 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
 
-    insertBtn.click();
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
     await new Promise(r => setTimeout(r, 60));
 
     const blocks = Array.from(document.querySelectorAll('.diary-block'));
@@ -365,17 +403,19 @@ app.whenReady().then(async () => {
       Object.defineProperty(fileInput, 'files', { value: files, configurable: true });
       fileInput.dispatchEvent(new Event('change'));
     };
-    document.querySelector('.diary-block-bar [data-act="insert-image"]').click();
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
     await new Promise(r => setTimeout(r, 120));
 
     const gallery = document.querySelector('.diary-block-gallery');
     const items = Array.from(document.querySelectorAll('.diary-gallery-item'));
     const widthBefore = items.map(i => i.style.width);
-    const layoutButtons = Array.from(gallery.querySelectorAll('[data-layout]'));
+    // The layouts live in the gallery's right-click menu.
+    const menuItems = window.__menu.open(gallery);
+    const layoutIds = menuItems.filter(i => i.act === 'layout').map(i => i.value);
 
     // Switch the arrangement to 「双图」.
-    const twoBtn = layoutButtons.find(b => b.dataset.layout === 'two');
-    twoBtn.click();
+    window.__menu.click('[data-ctx-act="layout"][data-ctx-value="two"]');
     await new Promise(r => setTimeout(r, 20));
     const widthAfterLayout = items.map(i => i.style.width);
 
@@ -404,17 +444,23 @@ app.whenReady().then(async () => {
       return m ? Math.round(parseFloat(m[1])) / 100 : null;
     };
 
+    // The menu says which layout is in use.
+    const menuAfter = window.__menu.open(gallery);
+    const selectedLayout = (menuAfter.find(i => i.act === 'layout' && i.selected) || {}).value || null;
+    window.__menu.close();
+
     return {
       galleryCount: document.querySelectorAll('.diary-block-gallery').length,
       itemCount: items.length,
-      layoutButtonIds: layoutButtons.map(b => b.dataset.layout),
+      layoutButtonIds: layoutIds,
       widthBefore: widthBefore.map(frac),
       widthAfterLayout: widthAfterLayout.map(frac),
       widthAfterDrag: widthAfterDrag.map(frac),
-      toolbarTexts: Array.from(gallery.querySelectorAll('.diary-gallery-bar button'))
-        .map(b => b.textContent.trim()),
-      selectedLayout: gallery.querySelector('[data-layout].selected')
-        ? gallery.querySelector('[data-layout].selected').dataset.layout : null,
+      // The gallery's menu carries the layouts, the add button, the photo
+      // counter and the two text insertions — and nothing else.
+      menuLabels: menuItems.map(i => i.label),
+      menuActs: menuItems.map(i => i.act),
+      selectedLayout,
       savedLayout: galleryBlock && galleryBlock.layout,
       savedPhotos: galleryBlock && galleryBlock.photos,
       notes: row && row.notes,
@@ -422,17 +468,20 @@ app.whenReady().then(async () => {
   `);
   check('the three picked files share one gallery', multiResult.galleryCount, 1);
   check('the gallery shows all three photos', multiResult.itemCount, 3);
-  check('the gallery offers four layouts',
+  check('the gallery menu offers four layouts',
     multiResult.layoutButtonIds, ['one', 'two', 'three', 'grid']);
   check('the chosen layout is marked', multiResult.selectedLayout, 'two');
   check('the 双图 layout puts two photos on a row',
     multiResult.widthAfterLayout[0], 0.5);
   checkTrue('dragging the handle makes the photo bigger',
     multiResult.widthAfterDrag[0] !== multiResult.widthAfterLayout[0]);
-  checkTrue('the gallery toolbar has no size presets left',
-    !multiResult.toolbarTexts.some(t => t === '大' || t === '中' || t === '小'));
-  checkTrue('the gallery toolbar has no move buttons left',
-    !multiResult.toolbarTexts.some(t => t.includes('前移') || t.includes('后移')));
+  checkTrue('the gallery menu has no size presets left',
+    !multiResult.menuLabels.some(t => t === '大' || t === '中' || t === '小'));
+  checkTrue('the gallery menu has no move buttons left',
+    !multiResult.menuLabels.some(t => t.includes('前移') || t.includes('后移')));
+  checkTrue('the gallery menu still carries every action',
+    ['gallery-add', 'insert-before', 'insert-after']
+      .every(a => multiResult.menuActs.includes(a)));
   check('the saved gallery keeps the chosen layout', multiResult.savedLayout, 'two');
   check('the saved gallery keeps all three photos',
     multiResult.savedPhotos && multiResult.savedPhotos.length, 3);
@@ -466,7 +515,8 @@ app.whenReady().then(async () => {
       Object.defineProperty(fileInput, 'files', { value: files, configurable: true });
       fileInput.dispatchEvent(new Event('change'));
     };
-    document.querySelector('.diary-block-bar [data-act="insert-image"]').click();
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
     await new Promise(r => setTimeout(r, 120));
 
     const gallery = document.querySelector('.diary-block-gallery');
@@ -558,7 +608,8 @@ app.whenReady().then(async () => {
       Object.defineProperty(fileInput, 'files', { value: files, configurable: true });
       fileInput.dispatchEvent(new Event('change'));
     };
-    document.querySelector('.diary-block-bar [data-act="insert-image"]').click();
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
     await new Promise(r => setTimeout(r, 150));
 
     const items = Array.from(document.querySelectorAll('.diary-gallery-item'));
@@ -632,7 +683,8 @@ app.whenReady().then(async () => {
       Object.defineProperty(fileInput, 'files', { value: files, configurable: true });
       fileInput.dispatchEvent(new Event('change'));
     };
-    document.querySelector('.diary-block-bar [data-act="insert-image"]').click();
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
     await new Promise(r => setTimeout(r, 150));
 
     const item = document.querySelector('.diary-gallery-item');
@@ -716,7 +768,8 @@ app.whenReady().then(async () => {
       Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
       fileInput.dispatchEvent(new Event('change'));
     };
-    document.querySelector('.diary-block-bar [data-act="insert-image"]').click();
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
     await new Promise(r => setTimeout(r, 120));
 
     // Give the picture a real height — the picked bytes are not an image,
@@ -784,6 +837,116 @@ app.whenReady().then(async () => {
     noTagResult.rowTags.filter(t => ['生日', '纪念日', '节日', '未分类'].includes(t)), []);
   check('every list row still shows the background swatch',
     noTagResult.swatches, noTagResult.rows);
+
+  // ---- 10. The controls live in a right-click menu ---------------------
+  //
+  // The block controls do NOT sit in the document: they used to sit in a
+  // bar under every text block and under every gallery, which broke the
+  // flow of the writing. Now they appear when the user presses on the
+  // block — nothing is on the page until then, and everything is in the
+  // menu when it is.
+  console.log('\n== 右键菜单 ==');
+  const menuResult = await evalIn(win, `
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 60));
+
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = '一段话。';
+    ta.focus();
+    ta.setSelectionRange(3, 3);
+    ta.dispatchEvent(new Event('input'));
+
+    // Nothing is on the page before the press.
+    const beforePress = {
+      blockBars: document.querySelectorAll('.diary-block-bar').length,
+      galleryBars: document.querySelectorAll('.diary-gallery-bar').length,
+      menuOpen: window.__menu.isOpen(),
+    };
+
+    // Right-click the text block.
+    const textMenu = window.__menu.open(ta);
+    const afterPress = {
+      menuOpen: window.__menu.isOpen(),
+      acts: textMenu.map(i => i.act),
+      labels: textMenu.map(i => i.label),
+      // The editing commands the browser's own menu would have offered.
+      hasCopy: textMenu.some(i => i.act === 'copy'),
+      hasPaste: textMenu.some(i => i.act === 'paste'),
+      hasSelectAll: textMenu.some(i => i.act === 'select-all'),
+    };
+
+    // The menu goes away again.
+    window.__menu.close();
+    const afterClose = { menuOpen: window.__menu.isOpen() };
+
+    // Now a gallery: right-click it and add a picture, so the gallery
+    // has a photo of its own.
+    const fileInput = document.getElementById('diary-photos');
+    fileInput.click = () => {
+      const file = new File([new Uint8Array([1,2,3])], 'one.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+      fileInput.dispatchEvent(new Event('change'));
+    };
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
+    await new Promise(r => setTimeout(r, 80));
+
+    const gallery = document.querySelector('.diary-block-gallery');
+    const galleryMenu = window.__menu.open(gallery);
+    const galleryActs = galleryMenu.map(i => i.act);
+    const galleryLabels = galleryMenu.map(i => i.label);
+
+    // The photo counter lives in the menu too.
+    const counter = galleryMenu.find(i => i.label.includes('张'));
+
+    // Right-clicking a PICTURE adds that picture's own action.
+    const photo = document.querySelector('.diary-gallery-item');
+    const photoMenu = window.__menu.open(photo);
+    const photoActs = photoMenu.map(i => i.act);
+    window.__menu.close();
+
+    // The block's own action still works: 「删除此段」 takes the block
+    // away.
+    const blocksBefore = document.querySelectorAll('.diary-block').length;
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="delete-block"]');
+    await new Promise(r => setTimeout(r, 40));
+    const blocksAfter = document.querySelectorAll('.diary-block').length;
+
+    return {
+      beforePress, afterPress, afterClose,
+      galleryActs, galleryLabels,
+      counter: counter ? counter.label : null,
+      photoActs,
+      blocksBefore, blocksAfter,
+    };
+  `);
+  check('the document carries no block toolbar',
+    menuResult.beforePress.blockBars, 0);
+  check('the document carries no gallery toolbar',
+    menuResult.beforePress.galleryBars, 0);
+  checkTrue('no menu is on screen before the press',
+    !menuResult.beforePress.menuOpen);
+  checkTrue('right-clicking a text block opens the menu',
+    menuResult.afterPress.menuOpen);
+  check('the text menu carries the block actions',
+    menuResult.afterPress.acts.slice(0, 2), ['insert-image', 'delete-block']);
+  check('the text menu carries the editing commands',
+    [menuResult.afterPress.hasCopy, menuResult.afterPress.hasPaste,
+     menuResult.afterPress.hasSelectAll], [true, true, true]);
+  checkTrue('the menu goes away again', !menuResult.afterClose.menuOpen);
+  check('the gallery menu carries the layout switch, the add button and '
+    + 'the text insertions',
+    ['layout', 'gallery-add', 'insert-before', 'insert-after']
+      .every(a => menuResult.galleryActs.includes(a)), true);
+  checkTrue('the gallery menu shows the photo counter',
+    !!menuResult.counter && menuResult.counter.includes('张'));
+  checkTrue('right-clicking a picture offers to delete that picture',
+    menuResult.photoActs.includes('delete-photo'));
+  checkTrue('right-clicking a picture still offers the gallery actions',
+    menuResult.photoActs.includes('gallery-add'));
+  check('「删除此段」 removes the block',
+    menuResult.blocksAfter, menuResult.blocksBefore - 1);
 
   console.log(`\n== ${pass} passed, ${fail} failed ==\n`);
   cleanup(win, fail === 0 ? 0 : 1);
