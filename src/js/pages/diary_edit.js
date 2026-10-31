@@ -64,6 +64,10 @@ import { openContextMenu } from '../context_menu.js';
 import {
   DIARY_THEMES, DEFAULT_THEME_ID, getDiaryTheme, diaryThemeVars,
 } from '../diary_themes.js';
+import {
+  DIARY_GALLERY_LAYOUTS, galleryLayout, defaultLayoutFor, photoCssWidth,
+  parseDiaryContent,
+} from '../diary_layout.js';
 
 const MEMORIAL_LIST_ROUTE = '/events/memorial';
 
@@ -197,38 +201,12 @@ let blockSeq = 0;
 //
 // Dragging a photo's handle overrides that default for that one photo,
 // so a gallery can end up with one big picture next to two small ones.
-
-const GALLERY_GAP = 8; // keep in sync with .diary-gallery-items in styles.css
-
-const DIARY_GALLERY_LAYOUTS = [
-  { id: 'one',   name: '单图', width: 1 },
-  { id: 'two',   name: '双图', width: 0.5 },
-  { id: 'three', name: '三图', width: 1 / 3 },
-  { id: 'grid',  name: '网格', width: 0.25 },
-];
-
-function galleryLayout(id) {
-  return DIARY_GALLERY_LAYOUTS.find((l) => l.id === id) || null;
-}
-
-// The layout a new gallery starts with: one photo wants the full width,
-// two a pair, three a trio, more than that the dense grid.
-function defaultLayoutFor(count) {
-  if (count <= 1) return 'one';
-  if (count === 2) return 'two';
-  if (count === 3) return 'three';
-  return 'grid';
-}
-
-// The rendered width of a photo, as a CSS width.
 //
-// The flex row has a gap, so N photos of width w plus the gaps between
-// them have to fit in 100%. Each photo therefore gives up a share of the
-// gap — (1 - w) * gap — and a full-width photo (w = 1) gives up nothing.
-function photoCssWidth(frac) {
-  const w = Math.min(1, Math.max(0.06, frac));
-  return `calc(${(w * 100).toFixed(3)}% - ${((1 - w) * GALLERY_GAP).toFixed(2)}px)`;
-}
+// The layout table and the width math live in src/js/diary_layout.js —
+// the 回忆事件 list draws the same galleries inside its cards, and the two
+// have to agree on what "双图" means.
+
+const DEFAULT_GALLERY_LAYOUT_FALLBACK = DIARY_GALLERY_LAYOUTS[1];
 
 // Build one text block. `text` is its initial content.
 function makeTextBlock(text) {
@@ -590,7 +568,7 @@ function syncGalleryEl(block) {
 // one, the layout's default otherwise.
 function applyPhotoWidth(block, photo) {
   if (!photo.el) return;
-  const layout = galleryLayout(block.layout) || DIARY_GALLERY_LAYOUTS[1];
+  const layout = galleryLayout(block.layout) || DEFAULT_GALLERY_LAYOUT_FALLBACK;
   const frac = photo.width != null ? photo.width : layout.width;
   photo.el.style.width = photoCssWidth(frac);
 }
@@ -717,7 +695,7 @@ function startGalleryResize(block, photo, ev) {
   if (!items) return;
   const containerWidth = items.getBoundingClientRect().width || 1;
   const startX = ev.clientX;
-  const layout = galleryLayout(block.layout) || DIARY_GALLERY_LAYOUTS[1];
+  const layout = galleryLayout(block.layout) || DEFAULT_GALLERY_LAYOUT_FALLBACK;
   const startFrac = photo.width != null ? photo.width : layout.width;
 
   selectGalleryPhoto(block, photo);
@@ -1021,36 +999,19 @@ export async function render(args, params) {
 // to a single text block holding the legacy `notes` body, so old entries
 // open in the new editor without losing their text.
 //
-// Two document shapes are understood:
-//   { type: 'gallery', layout, photos: [{ photo_id, width }] }  — current
-//   { type: 'image',  photo_id }                                — retired
-// The retired shape held a single photo per block; it loads as a
-// one-photo gallery so the old entries still open.
+// The document is read with the shared parser (src/js/diary_layout.js), so
+// the editor and the 回忆事件 list card read the same document the same
+// way.
 function loadBlocks(ev) {
   const blocks = [];
-  let parsed = null;
-  if (ev.content) {
-    try {
-      parsed = JSON.parse(ev.content);
-    } catch (e) {
-      console.error('diary content is not valid JSON:', e);
-      parsed = null;
-    }
-  }
-  if (Array.isArray(parsed) && parsed.length) {
+  const parsed = parseDiaryContent(ev.content);
+  if (parsed.length) {
     for (const b of parsed) {
-      if (!b || typeof b !== 'object') continue;
       if (b.type === 'text') {
-        blocks.push(makeTextBlock(typeof b.text === 'string' ? b.text : ''));
+        blocks.push(makeTextBlock(b.text));
       } else if (b.type === 'gallery') {
-        const gallery = makeGalleryBlock(loadGalleryPhotos(b), galleryLayout(b.layout) ? b.layout : 'two');
+        const gallery = makeGalleryBlock(loadGalleryPhotos(b), b.layout);
         if (gallery.photos.length) blocks.push(gallery);
-      } else if (b.type === 'image' && typeof b.photo_id === 'string') {
-        const photo = pageState.existingPhotos.find((p) => p.id === b.photo_id);
-        blocks.push(makeGalleryBlock(
-          [makeGalleryPhoto(b.photo_id, photo ? photo.original_name : '', null, null)],
-          'one'
-        ));
       }
     }
   } else if (ev.notes) {

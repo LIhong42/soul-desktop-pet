@@ -1288,6 +1288,11 @@ function migrateMemorialEventsV3() {
 //   - second_photo_id: id of the second-earliest uploaded photo (or null
 //     when there are fewer than two). The list page can render up to two
 //     small thumbnails side-by-side without a second round-trip.
+//   - photo_ids[]: EVERY attached photo id, oldest first. The list page
+//     renders a card that mirrors the diary editor's layout, and that
+//     layout is described by the `content` document, which references the
+//     photos by id — the card needs to know every id, not just the first
+//     two, to place them the way the entry was written.
 function listMemorialEvents(opts = {}) {
   let sql = `SELECT me.*,
                     (SELECT COUNT(*) FROM memorial_event_photos p WHERE p.memorial_event_id = me.id) AS photo_count,
@@ -1327,6 +1332,15 @@ function listMemorialEvents(opts = {}) {
     );
     r.contact_ids = links.map((l) => l.contact_id);
     r.contact_names = links.map((l) => l.name);
+    // Every attached photo id, oldest first — the list page's card lays
+    // the photos out the way the diary editor wrote them.
+    r.photo_ids = all(
+      `SELECT p.id
+         FROM memorial_event_photos p
+        WHERE p.memorial_event_id = ?
+        ORDER BY p.created_at ASC`,
+      [r.id]
+    ).map((p) => p.id);
   }
   return rows;
 }

@@ -14,6 +14,10 @@ const { contextBridge } = require('electron');
 
 const rows = {};
 const uploads = [];
+// The bytes the fake photo reader hands back, keyed by photo id. A
+// preview can seed real pictures here so the list shows photographs
+// instead of empty boxes.
+const photoBytes = {};
 let nextId = 1;
 let nextPhotoId = 1;
 
@@ -46,7 +50,7 @@ const mem = {
       return photo;
     },
     delete: async () => true,
-    read: async () => ({ data_url: '' }),
+    read: async (photoId) => ({ data_url: photoBytes[photoId] || '' }),
   },
 };
 
@@ -81,4 +85,11 @@ contextBridge.exposeInMainWorld('__testRows', {
 contextBridge.exposeInMainWorld('__testUploads', {
   all: () => uploads.slice(),
   clear: () => { uploads.length = 0; },
+});
+
+// The bytes the fake photo reader hands back. A preview seeds real
+// pictures here so the list shows photographs rather than empty boxes.
+contextBridge.exposeInMainWorld('__testPhotos', {
+  set: (id, dataUrl) => { photoBytes[id] = dataUrl; return true; },
+  all: () => Object.assign({}, photoBytes),
 });

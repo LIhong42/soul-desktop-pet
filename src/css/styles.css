@@ -851,96 +851,7 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   min-width: 92px;          /* reserve so a short "明天 09:00" still anchors */
 }
 
-/* ---- Memorial-event row layout (revised 2026-10-07) ----
-   Override the default `.list-row` three-column grid with a three-block
-   layout that matches the user request:
-     column 1: title (with kind tag)        — leftmost
-     column 2: contact names + relative time — middle, on a single row
-     column 3: up to two photo thumbnails    — right edge
-   Contact names share the title's font weight/size so the row reads as
-   one horizontal strip instead of "big title / small subtitle". The avatar
-   glyph in front of the contact name was removed — the title column
-   already carries the category icon, so a second avatar just added noise. */
-.memorial-row {
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) auto;
-  gap: 16px;
-  align-items: center;
-}
-.memorial-row .mr-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.memorial-row .mr-title .cat-icon {
-  width: 32px;
-  height: 32px;
-  font-size: 16px;
-  border-radius: 8px;
-}
-.memorial-row .mr-title .lr-title {
-  flex: 1;
-  min-width: 0;
-}
-.memorial-row .mr-mid {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-.memorial-row .contact-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-.memorial-row .contact-time {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.memorial-row .mr-thumbs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.memorial-row .thumb-stack {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.memorial-row .thumb {
-  width: 44px;
-  height: 44px;
-  border-radius: 6px;
-  margin-left: 0;
-  border: 1px solid var(--border);
-  background: var(--accent-soft);
-  object-fit: cover;
-}
-.memorial-row .thumb-more {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 6px;
-  border-radius: 14px;
-  background: var(--accent-soft);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-/* Category glyph — a soft-tinted rounded square holding the emoji.
+/* ---- Category glyph — a soft-tinted rounded square holding the emoji.
    Background echoes the data-kind color at low opacity so the row reads
    as belonging to a category without competing with the title. */
 .cat-icon {
@@ -3646,14 +3557,318 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 }
 .diary-theme-tile.selected .diary-theme-check { opacity: 1; }
 
-/* The background-style swatch on a 回忆事件 list row: a small bar in the
-   color of the diary page's header, so the list reads like a shelf of
-   diary pages. */
-.mr-bg-swatch {
-  display: inline-block;
-  width: 18px;
-  height: 6px;
-  border-radius: 999px;
-  vertical-align: middle;
+/* ---- 回忆事件 cards (the list page) ------------------------------------
+   The 回忆事件 list is a grid of CARDS, and each card IS the diary page
+   the entry was written on: the same header bar with the title, the same
+   paper, the same text blocks and photo galleries in the same order, the
+   same decorative strip at the bottom.
+
+   There is deliberately nothing around it — no panel, no category color
+   strip, no frame. The page stands on its own, and the grid's gap is the
+   only thing between two of them.
+
+   The card's colors come from the same CSS custom properties the editor
+   writes inline (--diary-bg, --diary-text, …), so a card and the page it
+   mirrors are painted by one set of rules. */
+.memorial-grid {
+  display: grid;
+  /* The cards are a shelf of diary pages: as many as fit, never so many
+     that a card gets too narrow to read. */
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+/* The card is a plain wrapper: it holds the page and gives the hover a
+   place to live. It carries no background, no border and no padding of
+   its own — anything around the page would be decoration. */
+.memorial-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.memorial-card.clickable { cursor: pointer; transition: transform 200ms ease; }
+.memorial-card.clickable:hover { transform: translateY(-2px); }
+
+/* The miniature diary page. Its layers — header bar, body, bookkeeping
+   line and decorative strip — are the same ones the editor stacks, in
+   the same order, so the card reads as a page rather than as a panel
+   with an image in it. */
+.memorial-card-sheet {
+  --diary-header-bg: #c9b458;
+  --diary-header-text: #3a3222;
+  --diary-bg: #e5d6b0;
+  --diary-bg-foot: #d3bd88;
+  --diary-bg-flat: #e5d6b0;
+  --diary-text: #3a3222;
+  --diary-muted: #9a8f74;
+  --diary-rule: #e2d5b8;
+
+  display: flex;
+  flex-direction: column;
+  /* The card's fixed height. A one-line entry and a ten-paragraph one
+     take up the same room; the body is clipped and faded so the cut
+     reads as "there is more". */
+  height: 320px;
+  /* The paper's own edge — the one border the card keeps. */
+  border: 1px solid var(--diary-rule);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--diary-bg);
+  color: var(--diary-text);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 200ms ease;
+}
+.memorial-card.clickable:hover .memorial-card-sheet { box-shadow: var(--shadow-md); }
+
+/* The title bar. Same colors as the editor's header, at card scale. */
+.memorial-card-header {
+  flex: none;
+  /* The select-mode checkbox is anchored to this bar. */
+  position: relative;
+  background: var(--diary-header-bg);
+  color: var(--diary-header-text);
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  padding: 8px 12px;
+  /* A long title is cut on one line — the card is a thumbnail, and the
+     full title is on the page it opens. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The body of the miniature page: the text blocks and the galleries, in
+   the order they were written.
+
+   This is a THUMBNAIL of the page, not a redrawing of it. The whole
+   document is laid out at the editor's own proportions and then scaled
+   down as one piece, so a photo keeps its shape, the words keep their
+   size relative to the paper, and the card's edge cuts the page exactly
+   where a photograph of a page would cut it. */
+.memorial-card-body {
+  /* `flex: 1 1 auto` with a zero basis: the body takes the room the
+     header bar and the decoration leave, and NO MORE. Without the zero
+     basis the body would grow to its content's height and the card
+     would show a whole long entry instead of clipping it. */
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 12px 14px;
+  background: var(--diary-bg);
+  /* The overflow is hidden: whatever runs past the bottom of the sheet is
+     simply cut off, the way the paper would cut it. */
+  overflow: hidden;
+  /* The fade at the bottom edge is the card's "there is more" cue: the
+     body is clipped, and the last visible line fades into the paper
+     instead of ending in a hard cut. The fade starts over the last
+     third of the body, so the line that is running out is visibly
+     running out — a soft one-fifth was too subtle to read as a cut. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 62%, transparent 100%);
+}
+
+/* The page itself, scaled down to fit the thumbnail.
+
+   It is laid out at the editor's own sizes — the same font, the same
+   photo widths, the same gaps — and then shrunk as one piece. Scaling
+   the whole page (rather than re-styling every block smaller) is what
+   makes the card a miniature: the proportions between the words, the
+   paper and the pictures are the ones the user wrote on. */
+.memorial-card-page {
+  /* The scale factor. The page's natural width is the card's inner
+     width divided by this, so the layout is computed at the editor's
+     proportions and drawn at thumbnail size.
+
+     The editor's page is far wider than a card, so a scale that fits
+     the real width would shrink the words past reading. This is the
+     compromise: the page is laid out narrower than the editor's (so a
+     单图 photo is not the width of a whole screen) and then scaled
+     down, which keeps the words legible while the photos still take
+     the share of the width the user gave them. */
+  --card-scale: 0.82;
+  width: calc(100% / var(--card-scale));
+  transform: scale(var(--card-scale));
+  transform-origin: top left;
+  /* The scaled page is anchored at the top left and grows down and
+     right; the wrapper is what the card actually clips. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  color: var(--diary-text);
+}
+
+/* One text block of the document. The page is scaled as a whole, so the
+   words are set a little larger than the editor's and then scaled down
+   with everything else — that way they land at a readable size on the
+   card while keeping the proportions the user wrote them at. */
+.memorial-card-text {
+  font-size: 17px;
+  line-height: 1.75;
+  color: var(--diary-text);
+  /* A block keeps its own whitespace — the diary's paragraphs are
+     separated by blank lines, and the card shows the same separation. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* The editor's text block carries 6px of padding above and below its
+     text; the card keeps the same breathing room. */
+  padding: 6px 0;
+  margin: 0;
+  /* The block keeps its natural height; it is never stretched to fill
+     the sheet, and it is never clamped — a paragraph runs on and is cut
+     by the sheet's edge, exactly like a photo does. */
   flex: none;
 }
+.memorial-card-text--empty {
+  color: var(--diary-muted);
+  font-style: italic;
+}
+
+/* A gallery of photos inside the card. The row wraps, and every photo
+   takes the share of the width the user gave it — the same width formula
+   the editor uses (photoCssWidth in src/js/diary_layout.js), on a page
+   laid out at the editor's own width. */
+.memorial-card-gallery {
+  /* The editor's gallery block: a framed panel with a little padding,
+     so the pictures sit on a card of their own, as they do on the page. */
+  margin: 8px 0;
+  padding: 6px;
+  border: 1px solid var(--diary-rule);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+  /* The frame's own bottom edge must not read as a hard line across the
+     thumbnail: the gallery is cut by the sheet's edge like everything
+     else, and a visible frame line above the cut looked like a mistake
+     rather than like part of the page. */
+  border-bottom-color: transparent;
+}
+.memorial-card-gallery-items {
+  display: flex;
+  flex-wrap: wrap;
+  /* Must match GALLERY_GAP in src/js/diary_layout.js — the photo widths
+     subtract their share of this gap so a row of photos fits exactly. */
+  gap: 8px;
+  align-items: flex-start;
+}
+.memorial-card-photo {
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 44px;
+  position: relative;
+  /* The box hugs the picture: it has no height of its own, so a photo
+     shorter than its slot shows no empty plate behind it. */
+  line-height: 0;
+}
+.memorial-card-photo img {
+  display: block;
+  width: 100%;
+  /* The photo keeps its OWN aspect ratio, exactly as it does on the
+     editor's page — no forced frame, no re-cropping. Forcing every
+     picture into a 4:3 box is what made the card look like a pile of
+     unrelated pieces: a portrait photo was cut in half while a
+     landscape one was padded, so the page stopped reading as the
+     document the user wrote.
+
+     The picture is simply drawn smaller, the way the whole page is
+     drawn smaller. When the card's edge cuts it, it is cut the way a
+     photo of a page is cut — the top of the picture shows, the rest
+     runs off the bottom of the sheet. */
+  height: auto;
+  max-height: none;
+  object-fit: fill;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* The bookkeeping line at the foot of the page: who it was with, when it
+   happened, how many photos it holds.
+
+   It sits IN the third layer of the sheet — the decorative strip at the
+   bottom — so the card keeps the editor's three layers exactly: header
+   bar, body, decoration. The strip is not empty paint here; it carries
+   the entry's details, and its ink is the sheet's own so it reads on
+   all six papers. */
+.memorial-card-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding: 4px 14px;
+  margin-bottom: -1px;
+  background: var(--diary-bg-foot);
+  font-size: 12px;
+  color: var(--diary-muted);
+}
+.memorial-card-contact {
+  color: var(--diary-text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
+}
+.memorial-card-date { white-space: nowrap; }
+.memorial-card-photos { white-space: nowrap; }
+/* The kind badge (第一次 / 其他) is an outlined chip rather than the
+   accent-coloured pill the rest of the app uses: on the paper it has to
+   read as a mark on the page, not as a button. Its ink is the page's
+   own, so it stays legible on the pale papers too. */
+.memorial-card-foot .tag {
+  background: transparent;
+  color: var(--diary-text);
+  border: 1px solid var(--diary-muted);
+  margin-right: 0;
+}
+
+/* A card in select mode. The checkbox rides on the title bar instead of
+   in a column of its own, so the grid keeps its rhythm and the card
+   still reads as one diary page. */
+.memorial-card--selectable {
+  cursor: default;
+}
+.memorial-card-check {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+/* The checkbox is drawn in the title bar's own ink, so it stays legible
+   on all six papers — a native white box would disappear on the pale
+   ones. */
+.memorial-card-check input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  border: 1.5px solid var(--diary-header-text);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+}
+.memorial-card-check input[type="checkbox"]:checked {
+  background: var(--diary-header-text);
+}
+.memorial-card-check input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--diary-header-bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.memorial-card--selectable .memorial-card-header {
+  padding-left: 32px;
+}
+

@@ -2,17 +2,36 @@
 //
 // Reads from `memorial_events` (independent of the reminder events table).
 // Each row carries its own kind ('first_time' / 'other'), occurrence time,
-// multi-contact list, the diary background style it was written on, and an
-// optional thumbnail of the first uploaded photo.
+// multi-contact list, the diary background style it was written on, the
+// ordered list of its photo ids, and the diary document (`content`) that
+// says where the text and the photos sit.
 //
-// Clicking a row opens the diary editor (src/js/pages/diary_edit.js).
-import { api, escapeHtml, categoryIcon, memorialPhotoUrl, fetchPhotoDataUrl } from '../api.js';
+// ---- The cards ----
+//
+// The list is a grid of CARDS, and each card is a miniature of the diary
+// page the entry was written on: the same header bar with the title, the
+// same paper background, the same text blocks and the same photo
+// galleries in the same order — and the same decorative strip at the
+// bottom.
+//
+// The card is a fixed size (320px, set on .memorial-card-sheet in
+// src/css/styles.css), so an entry that is three paragraphs long and one
+// that is a single sentence take up the same room. Whatever does not fit
+// is cut off at the bottom, and the card fades out over its last lines so
+// the cut reads as "there is more" rather than as a clipped sentence.
+//
+// Clicking a card opens the diary editor (src/js/pages/diary_edit.js).
+import { api, escapeHtml, memorialPhotoUrl, fetchPhotoDataUrl } from '../api.js';
 import { register, navigate } from '../router.js';
 import {
-  bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
+  bulkEnterLinkHtml, bulkToolbarHtml,
   wireBulkEnter, wireBulkToolbar, wireBulkRowChecks,
 } from '../bulk_delete.js';
-import { getDiaryTheme } from '../diary_themes.js';
+import { getDiaryTheme, diaryThemeVars } from '../diary_themes.js';
+import {
+  parseDiaryContent, effectivePhotoWidth, photoCssWidth,
+  galleryLayout, DEFAULT_GALLERY_LAYOUT,
+} from '../diary_layout.js';
 
 // selectMode is per-page state so toggling bulk-delete mode doesn't lose
 // the user's checkbox selections on re-render. `q` mirrors the current
@@ -34,13 +53,10 @@ export async function render(args, params) {
   const opts = {};
   if (params.contact_id) opts.contact_id = params.contact_id;
   const events = await api.memorialEvents.list(opts);
-  // Pre-warm the data-URL cache for every photo shown on the list page (up
-  // to two thumbnails per row) so the first paint doesn't flash empty img
-  // boxes before the IPC round-trip resolves.
-  for (const e of events) {
-    if (e.first_photo_id) fetchPhotoDataUrl(e.first_photo_id);
-    if (e.second_photo_id) fetchPhotoDataUrl(e.second_photo_id);
-  }
+  // Pre-warm the data-URL cache for every photo the cards show, so the
+  // first paint doesn't flash empty img boxes before the IPC round-trip
+  // resolves.
+  for (const e of events) warmPhotos(e);
   pageState.allEvents = events;
   pageState.q = ((params && params.q) || '').trim().toLowerCase();
   // The URL is the single source of truth for the filter state, so it
@@ -122,19 +138,36 @@ function rerenderList() {
       ? `<div class="empty">还没有回忆事件 · 点 + 新建 创建一个</div>`
       : filtered.length === 0
         ? `<div class="empty">没有匹配「${escapeHtml(q)}」的回忆事件 · 已隐藏 ${suppressed} 条</div>`
-        : filtered.map((e) => pageState.selectMode.active
-            ? bulkSelectableRowHtml(rowInner(e), e.id, pageState.selectMode.selected.has(e.id), 'memorial')
-            : renderRow(e)).join('')}
+        : `<div class="memorial-grid">${filtered.map((e) => pageState.selectMode.active
+            ? bulkSelectableCardHtml(e, pageState.selectMode.selected.has(e.id))
+            : renderRow(e)).join('')}</div>`}
   `;
 
   if (!pageState.selectMode.active) {
-    host.querySelectorAll('.card.clickable').forEach((el) => {
+    host.querySelectorAll('.memorial-card.clickable').forEach((el) => {
       el.onclick = () => navigate('/diary/' + encodeURIComponent(el.dataset.id));
     });
   }
   if (pageState.selectMode.active) {
     wireBulkRowChecks(host, pageState.selectMode);
   }
+}
+
+// A card in select mode: the same card, with a checkbox on its title bar.
+//
+// The bulk helper's own row wrapper is a plain panel, which would put a
+// frame around the page again — so the checkbox is added to the card
+// instead of the card to a generic row.
+function bulkSelectableCardHtml(e, checked) {
+  const check = `
+    <label class="memorial-card-check" title="选择这篇回忆">
+      <input type="checkbox" class="bulk-row-check" data-bulk-id="${escapeHtml(e.id)}" ${checked ? 'checked' : ''}/>
+    </label>`;
+  return `
+    <div class="bulk-row memorial-card memorial-card--selectable" data-bulk-id="${escapeHtml(e.id)}">
+      ${cardSheetHtml(e, check)}
+    </div>
+  `;
 }
 
 // Wire the search input exactly once. IME-safe pattern (120ms idle
@@ -194,8 +227,7 @@ function wireSearchInput() {
 // was pre-warmed at render() time so first-paint races resolve cleanly.
 function applyPhotos() {
   for (const e of pageState.allEvents) {
-    for (const id of [e.first_photo_id, e.second_photo_id]) {
-      if (!id) continue;
+    for (const id of photoIdsOf(e)) {
       fetchPhotoDataUrl(id).then((url) => {
         if (!url) return;
         const app = document.getElementById('app');
@@ -206,6 +238,23 @@ function applyPhotos() {
       });
     }
   }
+}
+
+// Every photo id an entry carries, oldest first.
+//
+// The card lays the photos out the way the diary editor wrote them, so it
+// needs every id — the list endpoint returns them all in `photo_ids`.
+// The older single-photo fields are kept as a fallback for a row that
+// predates that column.
+function photoIdsOf(e) {
+  if (Array.isArray(e.photo_ids) && e.photo_ids.length) return e.photo_ids;
+  return [e.first_photo_id, e.second_photo_id].filter(Boolean);
+}
+
+// Start fetching the bytes of every photo a card shows. The images are
+// cached by id, so a photo that appears on several cards is read once.
+function warmPhotos(e) {
+  for (const id of photoIdsOf(e)) fetchPhotoDataUrl(id);
 }
 
 // Bulk-select wiring. Lives outside the rewritten subtree so it can
@@ -293,10 +342,7 @@ async function reloadAndRender(params = {}) {
   const opts = {};
   if (params.contact_id) opts.contact_id = params.contact_id;
   const events = await api.memorialEvents.list(opts);
-  for (const e of events) {
-    if (e.first_photo_id) fetchPhotoDataUrl(e.first_photo_id);
-    if (e.second_photo_id) fetchPhotoDataUrl(e.second_photo_id);
-  }
+  for (const e of events) warmPhotos(e);
   pageState.allEvents = events;
   pageState.q = ((params && params.q) || '').trim().toLowerCase();
   render([], {
@@ -326,63 +372,117 @@ function contactSummary(e) {
   return `${names[0]} 等 ${names.length} 人`;
 }
 
-// Render up to two small thumbnails side-by-side. The list endpoint now
-// returns both `first_photo_id` and `second_photo_id` so we don't need a
-// second round-trip per row. Each <img> carries a `data-photo-id` join key
-// so the post-render swap loop can find and update it once the data URL
-// resolves.
-function thumbsHtml(e) {
-  const ids = [e.first_photo_id, e.second_photo_id].filter(Boolean).slice(0, 2);
-  if (ids.length === 0) return '';
-  const more = e.photo_count > ids.length ? `<span class="thumb-more">+${e.photo_count - ids.length}</span>` : '';
-  const imgs = ids.map((id) => {
-    const url = memorialPhotoUrl(id);
-    return `<img class="thumb" src="${escapeHtml(url)}" data-photo-id="${escapeHtml(id)}" alt="" loading="lazy"/>`;
-  }).join('');
-  return `<span class="thumb-stack">${imgs}${more}</span>`;
-}
-
+// Render one card. The card IS the diary page — the header bar with the
+// title, the paper with the text and the photos in the order the entry
+// was written, and the strip at the bottom. There is no panel around it:
+// the page stands on its own.
+//
+// The card is a fixed size, so the body is clipped and faded at the
+// bottom — a long entry shows its beginning, never its end.
 function renderRow(e) {
   return `
-    <div class="card list-row clickable memorial-row" data-kind="memorial" data-id="${escapeHtml(e.id)}">
-      ${memorialRowInner(e)}
+    <div class="memorial-card clickable" data-id="${escapeHtml(e.id)}">
+      ${cardSheetHtml(e)}
     </div>
   `;
 }
 
-function rowInner(e) {
-  return memorialRowInner(e);
+// The miniature diary page: the header bar with the title, the body with
+// the text and the photos, and the strip at the bottom.
+//
+// The body is a THUMBNAIL of the page, not a redrawing of it: the
+// document is laid out at the editor's own proportions and scaled down
+// as one piece, so the card's edge cuts the page where a photograph of a
+// page would cut it — a photo shows its top, the words below it are
+// simply not there yet.
+//
+// The bottom strip is the sheet's third layer — the one the editor
+// paints as a plain band. Here it carries the entry's details (who it
+// was with, when, how many photos), in the sheet's own ink.
+//
+// `lead` is an optional mark on the title bar — the select-mode
+// checkbox rides there.
+function cardSheetHtml(e, lead) {
+  const theme = getDiaryTheme(e.background);
+  const themeVars = Object.entries(diaryThemeVars(theme))
+    .map(([k, v]) => `${k}:${v}`)
+    .join(';');
+  return `
+    <div class="memorial-card-sheet" style="${themeVars}">
+      <div class="memorial-card-header">
+        ${lead || ''}
+        <span class="memorial-card-title">${escapeHtml(e.title || '(无标题)')}</span>
+      </div>
+      <div class="memorial-card-body">
+        <div class="memorial-card-page">
+          ${cardBlocksHtml(e)}
+        </div>
+      </div>
+      <div class="memorial-card-foot">
+        <span class="memorial-card-contact">${escapeHtml(contactSummary(e))}</span>
+        <span class="memorial-card-date">${escapeHtml(formatDateOnly(e.occurred_at))}</span>
+        <span class="tag">${escapeHtml(kindTagLabel(e.kind))}</span>
+        ${e.photo_count ? `<span class="memorial-card-photos">${e.photo_count} 张照片</span>` : ''}
+      </div>
+    </div>
+  `;
 }
 
-// Layout:
-//   column 1: title (with kind tag)
-//   column 2: contact names (same font size as the title) + relative time
-//             on the same line
-//   column 3: up to two photo thumbnails
+// The body of the card: the entry's document, rendered block by block.
 //
-// The user wanted the title to lead, the contacts to follow, and the photos
-// to anchor the right edge. The avatar-stack was removed here — the title
-// block already carries the category glyph, so a second avatar in front of
-// the contact names just made the row feel busy.
-function memorialRowInner(e) {
-  const names = (e.contact_names || []).filter(Boolean);
-  const contactText = contactSummary(e);
-  // A small swatch of the background style the entry was written on, so
-  // the list reads at a glance like a shelf of diary pages.
-  const theme = getDiaryTheme(e.background);
+// The blocks come from the same parser the editor uses, so the card
+// shows the text and the photos in the order they were written, in the
+// gallery arrangement the user chose.
+//
+// An entry written before the mixed editor existed has no document — it
+// falls back to the plain `notes` text, exactly as the editor does.
+function cardBlocksHtml(e) {
+  const blocks = parseDiaryContent(e.content);
+  if (!blocks.length) {
+    const legacy = (e.notes || '').trim();
+    return legacy
+      ? `<div class="memorial-card-text">${escapeHtml(legacy)}</div>`
+      : `<div class="memorial-card-text memorial-card-text--empty">（还没有正文）</div>`;
+  }
+  return blocks.map(cardBlockHtml).join('');
+}
+
+// One block of the document. A text block is its own paragraph; a gallery
+// is a row of photos laid out the way the gallery was saved.
+function cardBlockHtml(b) {
+  if (b.type === 'text') {
+    const text = (b.text || '').trim();
+    if (!text) return '';
+    return `<div class="memorial-card-text">${escapeHtml(text)}</div>`;
+  }
+  if (b.type === 'gallery') {
+    return cardGalleryHtml(b);
+  }
+  return '';
+}
+
+// A gallery inside the card: the photos sit in a wrapping row, each one
+// taking the share of the width the user gave it, or the layout's default
+// when they left it alone.
+//
+// The gallery is the editor's gallery block — a framed panel with the
+// photos inside it — laid out at the editor's own proportions. The whole
+// page is scaled down afterwards, so the pictures keep their shape and
+// their size relative to the paper.
+function cardGalleryHtml(b) {
+  const layout = galleryLayout(b.layout) || galleryLayout(DEFAULT_GALLERY_LAYOUT);
+  const photos = b.photos.map((p) => {
+    const url = memorialPhotoUrl(p.photo_id);
+    const frac = effectivePhotoWidth(p, b.layout);
+    return `
+      <div class="memorial-card-photo" style="width:${photoCssWidth(frac)};">
+        <img src="${escapeHtml(url)}" data-photo-id="${escapeHtml(p.photo_id)}" alt="" loading="lazy"/>
+      </div>
+    `;
+  }).join('');
   return `
-    <div class="mr-title">
-      <span class="cat-icon" data-tone="memorial">${escapeHtml(categoryIcon('memorial', null))}</span>
-      <span class="lr-title">${escapeHtml(e.title || '(无标题)')}</span>
-      <span class="tag">${escapeHtml(kindTagLabel(e.kind))}</span>
-    </div>
-    <div class="mr-mid">
-      <span class="contact-text">${escapeHtml(contactText)}</span>
-      <span class="contact-time"><span class="chip-dot"></span>${escapeHtml(formatDateOnly(e.occurred_at))}</span>
-      <span class="mr-bg-swatch" title="${escapeHtml(theme.name)}" style="background:${escapeHtml(theme.headerBg)}"></span>
-    </div>
-    <div class="mr-thumbs">
-      ${thumbsHtml(e)}
+    <div class="memorial-card-gallery" data-layout="${escapeHtml(layout.id)}">
+      <div class="memorial-card-gallery-items">${photos}</div>
     </div>
   `;
 }

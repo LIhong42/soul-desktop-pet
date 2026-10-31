@@ -811,9 +811,9 @@ app.whenReady().then(async () => {
     await new Promise(r => setTimeout(r, 80));
     const listHtml = document.getElementById('app').innerHTML;
 
-    // The only .tag on a row is the 第一次/其他 kind badge, which is the
+    // The only .tag on a card is the 第一次/其他 kind badge, which is the
     // memorial event's original type — not the removed tag system.
-    const rowTags = Array.from(document.querySelectorAll('.memorial-row .tag'))
+    const rowTags = Array.from(document.querySelectorAll('.memorial-card .tag'))
       .map(el => el.textContent.trim());
 
     return {
@@ -824,8 +824,8 @@ app.whenReady().then(async () => {
       rowTags,
       tagWordsInEditor: (editorHtml.match(/标签/g) || []).length,
       tagWordsInList: (listHtml.match(/filter-tag-kind/g) || []).length,
-      swatches: document.querySelectorAll('.mr-bg-swatch').length,
-      rows: document.querySelectorAll('.memorial-row').length,
+      sheets: document.querySelectorAll('.memorial-card-sheet').length,
+      cards: document.querySelectorAll('.memorial-card').length,
     };
   `);
   checkTrue('the editor has no tag dialog', !noTagResult.editorHasTagDialog);
@@ -833,10 +833,11 @@ app.whenReady().then(async () => {
   checkTrue('the editor mentions no tag UI at all', !noTagResult.editorHasTagButton);
   checkTrue('the list has no 类型 filter', !noTagResult.listHasTagFilter);
   // The kind badge (第一次/其他) is all that remains — no 生日/纪念日/节日.
-  check('the rows carry only the kind badge, no type tag',
+  check('the cards carry only the kind badge, no type tag',
     noTagResult.rowTags.filter(t => ['生日', '纪念日', '节日', '未分类'].includes(t)), []);
-  check('every list row still shows the background swatch',
-    noTagResult.swatches, noTagResult.rows);
+  // Every card is a miniature diary page: a sheet with a header bar, a
+  // body and a decorative strip.
+  check('every card carries a diary sheet', noTagResult.sheets, noTagResult.cards);
 
   // ---- 10. The controls live in a right-click menu ---------------------
   //
@@ -947,6 +948,191 @@ app.whenReady().then(async () => {
     menuResult.photoActs.includes('gallery-add'));
   check('「删除此段」 removes the block',
     menuResult.blocksAfter, menuResult.blocksBefore - 1);
+
+  // ---- 11. The list cards mirror the diary page ------------------------
+  //
+  // The 回忆事件 list is a grid of cards, and each card is a miniature of
+  // the page the entry was written on: the same header bar with the
+  // title, the same text blocks and photo galleries in the same order,
+  // the same decorative strip at the bottom.
+  console.log('\n== 回忆事件卡片 ==');
+  const cardResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testRows.seed('card-1', {
+      id: 'card-1',
+      kind: 'other',
+      title: '第一次去海边',
+      occurred_at: '2026-05-01 10:30:00',
+      background: 'shadow',
+      notes: '旧格式的正文',
+      contact_names: ['小明', '小红'],
+      photo_count: 3,
+      photo_ids: ['pc1', 'pc2', 'pc3'],
+      content: JSON.stringify([
+        { type: 'text', text: '在防波堤上坐了很久' },
+        { type: 'gallery', layout: 'two', photos: [
+          { photo_id: 'pc1' }, { photo_id: 'pc2' } ] },
+        { type: 'text', text: '到天黑，看远处的灯一盏一盏亮起来。' },
+        { type: 'gallery', layout: 'grid', photos: [
+          { photo_id: 'pc3' } ] },
+      ]),
+    });
+
+    await window.__list.render([], {});
+    await new Promise(r => setTimeout(r, 120));
+
+    const card = document.querySelector('.memorial-card');
+    const sheet = document.querySelector('.memorial-card-sheet');
+    const body = document.querySelector('.memorial-card-body');
+    const page = document.querySelector('.memorial-card-page');
+    const blocks = Array.from(page.children).map(el => el.className);
+
+    return {
+      grid: !!document.querySelector('.memorial-grid'),
+      cardCount: document.querySelectorAll('.memorial-card').length,
+      // The card is the page: no panel, no category strip, nothing
+      // wrapped around the sheet.
+      cardClasses: Array.from(card.classList),
+      cardChildren: Array.from(card.children).map(el => el.className),
+      // The layers of the sheet, in the editor's order.
+      sheetLayers: Array.from(sheet.children).map(el => el.className),
+      title: document.querySelector('.memorial-card-title').textContent.trim(),
+      // The header bar carries the theme's own colors.
+      headerBg: sheet.querySelector('.memorial-card-header')
+        .getBoundingClientRect().height,
+      sheetVar: sheet.style.getPropertyValue('--diary-header-bg'),
+      blocks,
+      texts: Array.from(document.querySelectorAll('.memorial-card-text'))
+        .map(el => el.textContent.trim()),
+      galleryLayouts: Array.from(document.querySelectorAll('.memorial-card-gallery'))
+        .map(el => el.dataset.layout),
+      photoCount: document.querySelectorAll('.memorial-card-photo').length,
+      photoIds: Array.from(document.querySelectorAll('.memorial-card-photo img'))
+        .map(el => el.dataset.photoId),
+      // The photo widths follow the layout: 双图 gives each photo half.
+      widths: Array.from(document.querySelectorAll('.memorial-card-photo'))
+        .map(el => el.style.width),
+      foot: !!document.querySelector('.memorial-card-foot'),
+      // The bookkeeping line lives IN the third layer — the strip at the
+      // bottom — so the sheet keeps the editor's three layers.
+      metaInFoot: document.querySelector('.memorial-card-foot')
+        .textContent.trim(),
+      metaRows: document.querySelectorAll('.memorial-card-meta').length,
+      footBg: getComputedStyle(document.querySelector('.memorial-card-foot'))
+        .backgroundColor,
+      sheetHeight: sheet.getBoundingClientRect().height,
+      // The body clips whatever runs past the bottom of the sheet.
+      bodyOverflow: getComputedStyle(body).overflow,
+      bodyScroll: body.scrollHeight,
+      bodyHeight: body.getBoundingClientRect().height,
+      // The page is scaled down as one piece — that is what makes the
+      // card a thumbnail rather than a redrawing.
+      pageScale: getComputedStyle(page).getPropertyValue('--card-scale').trim(),
+      pageTransform: getComputedStyle(page).transform,
+      // A photo keeps its own aspect ratio: it is never re-cropped into
+      // a uniform frame.
+      photoFit: getComputedStyle(
+        document.querySelector('.memorial-card-photo img')).objectFit,
+    };
+  `);
+  checkTrue('the list is a grid of cards', cardResult.grid);
+  check('one card per entry', cardResult.cardCount, 1);
+  // The card is the diary page and nothing else: the app's own .card
+  // panel (its frame, its shadow, its category color strip) is gone, so
+  // the page stands on its own.
+  checkTrue('the card carries no panel around it',
+    !cardResult.cardClasses.includes('card')
+    && !cardResult.cardClasses.includes('list-row'));
+  check('the page is the card\'s only layer',
+    cardResult.cardChildren, ['memorial-card-sheet']);
+  check('the sheet stacks the header, the body and the strip',
+    cardResult.sheetLayers,
+    ['memorial-card-header', 'memorial-card-body', 'memorial-card-foot']);
+  check('the card shows the entry title', cardResult.title, '第一次去海边');
+  check('the card paints the entry\'s own background style',
+    cardResult.sheetVar, '#77613b');
+  checkTrue('the header bar has a height', cardResult.headerBg > 0);
+  // The document's blocks keep their order: text, gallery, text, gallery.
+  check('the card keeps the document\'s block order',
+    cardResult.blocks,
+    ['memorial-card-text', 'memorial-card-gallery',
+     'memorial-card-text', 'memorial-card-gallery']);
+  check('the card shows the text of every text block',
+    cardResult.texts,
+    ['在防波堤上坐了很久', '到天黑，看远处的灯一盏一盏亮起来。']);
+  check('the card keeps the gallery layout of each gallery',
+    cardResult.galleryLayouts, ['two', 'grid']);
+  check('the card shows every photo of the document',
+    cardResult.photoCount, 3);
+  check('the card shows the photos in the document\'s order',
+    cardResult.photoIds, ['pc1', 'pc2', 'pc3']);
+  // The browser normalizes the calc() the renderer writes, so the value
+  // that comes back is the simplified form of the same width.
+  check('the card lays the photos out by the gallery\'s layout',
+    cardResult.widths[0], 'calc(50% - 4px)');
+  checkTrue('the card has the decorative strip', cardResult.foot);
+  checkTrue('the card has a fixed height',
+    Math.abs(cardResult.sheetHeight - 320) < 2);
+  // The details sit in the strip — the sheet's third layer — so the card
+  // keeps the editor's three layers and the line of text is on the
+  // coloured band, not on the paper above it.
+  check('the details live in the strip, not in a row of their own',
+    cardResult.metaRows, 0);
+  checkTrue('the strip names the contacts and the date',
+    cardResult.metaInFoot.includes('小明 等 2 人')
+    && cardResult.metaInFoot.includes('2026-05-01'));
+  check('the body clips what runs past the sheet',
+    cardResult.bodyOverflow, 'hidden');
+  // The card is a THUMBNAIL: the page is scaled down as one piece, so
+  // the proportions between the words, the paper and the pictures are
+  // the ones the user wrote on.
+  checkTrue('the page is scaled down as one piece',
+    cardResult.pageTransform.startsWith('matrix')
+    && parseFloat(cardResult.pageScale) > 0 && parseFloat(cardResult.pageScale) < 1);
+  // A photo keeps its own shape — it is never re-cropped into a uniform
+  // frame, which is what made the card look like a pile of pieces.
+  check('a photo keeps its own aspect ratio', cardResult.photoFit, 'fill');
+
+  // ---- 12. A long entry is cut off, not shrunk ----------------------
+  //
+  // The card has a fixed height, so an entry that is longer than the
+  // sheet runs past its bottom edge and is cut there — the way a
+  // photograph of a page is cut. The card shows the beginning of the
+  // entry and nothing else.
+  console.log('\n== 长日记的截断 ==');
+  const longResult = await evalIn(win, `
+    window.__testRows.seed('long', {
+      id: 'long', kind: 'other', title: '很长的一篇',
+      occurred_at: '2026-01-01 10:00:00', background: 'light',
+      contact_names: ['小明'], photo_count: 0,
+      content: JSON.stringify([
+        { type: 'text', text: '第一段。'.repeat(30) },
+        { type: 'text', text: '第二段。'.repeat(30) },
+        { type: 'text', text: '第三段。'.repeat(30) },
+      ]),
+    });
+    await window.__list.render([], {});
+    await new Promise(r => setTimeout(r, 120));
+    const body = document.querySelector('.memorial-card-body');
+    const text = document.querySelector('.memorial-card-text');
+    const cs = getComputedStyle(text);
+    return {
+      bodyHeight: body.getBoundingClientRect().height,
+      bodyScroll: body.scrollHeight,
+      // The paragraph is NOT clamped: it keeps its full height, and the
+      // sheet's edge is what cuts it. (The height is read unscaled —
+      // the page is drawn scaled down, so the painted height is
+      // smaller than the layout height.)
+      lineClamp: cs.webkitLineClamp,
+      textOverflow: cs.overflow,
+      display: cs.display,
+    };
+  `);
+  checkTrue('the body is clipped, not grown',
+    longResult.bodyScroll > longResult.bodyHeight);
+  checkTrue('a long paragraph is not clamped, it runs on',
+    longResult.lineClamp === 'none'
+    && longResult.display !== '-webkit-box');
 
   console.log(`\n== ${pass} passed, ${fail} failed ==\n`);
   cleanup(win, fail === 0 ? 0 : 1);
