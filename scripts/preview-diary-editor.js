@@ -23,7 +23,6 @@ const PROBE_HTML = `<!doctype html><html><head><meta charset="utf-8">
 const editor = await import('./js/pages/diary_edit.js');
 await editor.render({}, {});
 document.getElementById('diary-title').value = '第一次去海边';
-document.getElementById('diary-occurred').value = '2026-05-01T10:30';
 
 // A real PNG, so the preview shows an actual picture. The canvas hands
 // back a data URL, so decode it back into bytes — a File built from the

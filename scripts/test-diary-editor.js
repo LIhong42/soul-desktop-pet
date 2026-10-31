@@ -102,6 +102,61 @@ window.__editor = editor;
 window.__list = list;
 window.__rows = window.__testRows;
 window.__router = routerMod;
+
+// The 保存 button opens the metadata dialog (the time, the cast, the
+// first-time flag). The test drives it the way the user does: press 保存,
+// fill the dialog in, press 确认保存.
+window.__meta = {
+  // Any dialog left over from an earlier step would be picked up by the
+  // next querySelector, so a stale one is dismissed first.
+  async open() {
+    document.querySelectorAll('.diary-meta-modal-backdrop').forEach(el => el.remove());
+    document.getElementById('save').click();
+    // The dialog is built synchronously, but the save handler awaits the
+    // contact list before it opens — give it a tick.
+    for (let i = 0; i < 40; i++) {
+      const el = document.querySelector('.diary-meta-modal-backdrop');
+      if (el) return el;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    throw new Error('the metadata dialog did not open');
+  },
+  // Press 保存 twice in a row: the second press must not open a second
+  // dialog on top of the first one.
+  async openTwice() {
+    document.querySelectorAll('.diary-meta-modal-backdrop').forEach(el => el.remove());
+    const save = document.getElementById('save');
+    save.click();
+    save.click();
+    for (let i = 0; i < 40; i++) {
+      const el = document.querySelector('.diary-meta-modal-backdrop');
+      if (el) break;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    // Wait for the second press to have had its chance to open a dialog.
+    await new Promise(r => setTimeout(r, 250));
+    return {
+      dialogs: document.querySelectorAll('.diary-meta-modal-backdrop').length,
+      open: window.__editor.isMetaDialogOpen(),
+    };
+  },
+  async confirm(occurredAt, kind, contactIds) {
+    const el = await window.__meta.open();
+    if (occurredAt) el.querySelector('[data-role="occurred"]').value = occurredAt;
+    if (kind) {
+      const radio = el.querySelector('input[name="diary-meta-kind"][value="' + kind + '"]');
+      if (radio) radio.checked = true;
+    }
+    for (const id of (contactIds || [])) {
+      const pick = el.querySelector('.contact-pick[data-id="' + id + '"]');
+      if (pick) pick.click();
+    }
+    el.querySelector('[data-act="confirm"]').click();
+    await new Promise(r => setTimeout(r, 250));
+    return true;
+  },
+};
+
 window.__ready = true;
 </script></body></html>`;
 
@@ -239,11 +294,13 @@ app.whenReady().then(async () => {
       // The page paints a flat color now — the decoration is a layer of
       // its own, not a band inside one background stack.
       pageBg: getComputedStyle(page).backgroundColor,
-      // The date field belongs to the side panel, not to the writing
-      // surface: the writing page holds the title and the text, and
-      // nothing else.
+      // The metadata (the date, the cast, the first-time flag) is NOT on
+      // the page any more: it is asked for in the 保存 dialog. The writing
+      // surface holds the title and the text, and nothing else.
       dateInSide: !!document.querySelector('.diary-side #diary-occurred'),
       dateOnPage: !!document.querySelector('.diary-page #diary-occurred'),
+      dateAnywhere: !!document.getElementById('diary-occurred'),
+      contactsInSide: !!document.querySelector('.diary-side #diary-contact-picker'),
       sideCards: document.querySelectorAll('.diary-side .diary-side-card').length,
       // The title lives in the header bar, so the user types it right
       // there; the body below holds only the written document.
@@ -283,7 +340,8 @@ app.whenReady().then(async () => {
   checkTrue('picking a style repaints the writing surface', editorResult.changed);
   check('the Shadow style writes its header color', editorResult.header, '#77613b');
   check('exactly one tile is marked selected', editorResult.selectedCount, 1);
-  check('the contact picker lists the contacts', editorResult.contactCards, 2);
+  // The contact picker is not on the page — it lives in the 保存 dialog.
+  check('the page carries no contact picker', editorResult.contactCards, 0);
   checkTrue('the page background paints with the chosen color',
     editorResult.pageBg && editorResult.pageBg !== 'rgba(0, 0, 0, 0)');
   check('the page is three separate layers: header, body, decoration',
@@ -291,9 +349,11 @@ app.whenReady().then(async () => {
   checkTrue('every layer paints its own background color',
     editorResult.layerBgs.every(c => c && c !== 'rgba(0, 0, 0, 0)'));
   check('the picker preview shows the two bands', editorResult.previewBands, 2);
-  checkTrue('the date field sits in the side panel', editorResult.dateInSide);
+  checkTrue('the date field is not in the side panel', !editorResult.dateInSide);
   checkTrue('the Tackbox page shows no date', !editorResult.dateOnPage);
-  check('the side panel has three cards', editorResult.sideCards, 3);
+  checkTrue('the date field is nowhere on the page', !editorResult.dateAnywhere);
+  checkTrue('the contact picker is not in the side panel', !editorResult.contactsInSide);
+  check('the side panel has one card', editorResult.sideCards, 1);
 
   // ---- 3. Text and images interleave ---------------------------------
   console.log('\n== 图文混排 ==');
@@ -329,9 +389,23 @@ app.whenReady().then(async () => {
 
     // Now save and see what the document looks like on the wire.
     document.getElementById('diary-title').value = '第一次去海边';
-    document.getElementById('diary-occurred').value = '2026-05-01T10:30';
-    document.getElementById('save').click();
-    await new Promise(r => setTimeout(r, 200));
+    // The press on 保存 opens the metadata dialog: the time, the cast and
+    // the first-time flag are asked for there, not on the page.
+    const dialog = await window.__meta.open();
+    const dialogState = {
+      opened: !!dialog,
+      hasTime: !!(dialog && dialog.querySelector('[data-role="occurred"]')),
+      hasKind: !!(dialog && dialog.querySelector('input[name="diary-meta-kind"]')),
+      contactCards: dialog ? dialog.querySelectorAll('.contact-pick').length : 0,
+    };
+    dialog.querySelector('[data-role="occurred"]').value = '2026-05-01T10:30';
+    // Mark it as the first time, and pick one of the contacts.
+    const firstRadio = dialog.querySelector('input[name="diary-meta-kind"][value="first_time"]');
+    if (firstRadio) firstRadio.checked = true;
+    const pick = dialog.querySelector('.contact-pick[data-id="c1"]');
+    if (pick) pick.click();
+    dialog.querySelector('[data-act="confirm"]').click();
+    await new Promise(r => setTimeout(r, 250));
 
     const rows = Object.values(window.__testRows.all());
     const row = rows[0];
@@ -347,6 +421,10 @@ app.whenReady().then(async () => {
       notes: row && row.notes,
       title: row && row.title,
       background: row && row.background,
+      dialogState,
+      kind: row && row.kind,
+      occurredAt: row && row.occurred_at,
+      contactIds: row && row.contact_ids,
       navigated: location.hash,
     };
   `);
@@ -375,8 +453,180 @@ app.whenReady().then(async () => {
     '在防波堤上坐\n\n到天黑，看远处的灯一盏一盏亮起来。');
   check('the title is saved', mixResult.title, '第一次去海边');
   check('the chosen background is saved', mixResult.background, 'shadow');
+  // The 保存 dialog asks for the metadata the page no longer carries.
+  checkTrue('the save button opens the metadata dialog', mixResult.dialogState.opened);
+  checkTrue('the dialog asks for the time', mixResult.dialogState.hasTime);
+  checkTrue('the dialog asks whether this was the first time', mixResult.dialogState.hasKind);
+  check('the dialog lists the contacts', mixResult.dialogState.contactCards, 2);
+  check('the time chosen in the dialog is saved', mixResult.occurredAt, '2026-05-01 10:30:00');
+  check('the first-time flag is saved', mixResult.kind, 'first_time');
+  check('the contacts picked in the dialog are saved', mixResult.contactIds, ['c1']);
   checkTrue('the editor navigates away after saving',
     !!mixResult.navigated && mixResult.navigated.length > 1);
+
+  // ---- 3b. The 保存 dialog --------------------------------------------
+  //
+  // The metadata the page no longer carries — the time, the cast and the
+  // first-time flag — is asked for in a dialog. Editing an existing entry
+  // must open the dialog PREFILLED with what the entry already says, and
+  // dismissing the dialog must write nothing.
+  console.log('\n== 保存对话框 ==');
+  const dialogResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testRows.seed('ed-1', {
+      id: 'ed-1',
+      kind: 'first_time',
+      title: '改过的那篇',
+      occurred_at: '2026-04-01 09:15:00',
+      background: 'light',
+      notes: '一段旧正文',
+      contact_ids: ['c2'],
+      content: JSON.stringify([{ type: 'text', text: '一段旧正文' }]),
+      photos: [],
+    });
+
+    // Open the existing entry.
+    await window.__editor.render({ id: 'ed-1' }, {});
+    await new Promise(r => setTimeout(r, 120));
+
+    const dialog = await window.__meta.open();
+    const prefill = {
+      title: document.getElementById('diary-title').value,
+      occurred: dialog.querySelector('[data-role="occurred"]').value,
+      kind: dialog.querySelector('input[name="diary-meta-kind"]:checked')?.value,
+      selected: Array.from(dialog.querySelectorAll('.contact-pick.selected'))
+        .map(el => el.dataset.id),
+      count: dialog.querySelector('[data-role="count"]').textContent.trim(),
+    };
+
+    // Dismiss the dialog — nothing may be written.
+    const before = Object.keys(window.__testRows.all()).length;
+    dialog.querySelector('[data-act="cancel"]').click();
+    await new Promise(r => setTimeout(r, 150));
+    const after = Object.keys(window.__testRows.all()).length;
+    const stillOpen = !!document.querySelector('.diary-meta-modal-backdrop');
+
+    // The time is required: an empty time keeps the dialog open.
+    const dialog2 = await window.__meta.open();
+    dialog2.querySelector('[data-role="occurred"]').value = '';
+    dialog2.querySelector('[data-act="confirm"]').click();
+    await new Promise(r => setTimeout(r, 120));
+    const keptOpen = !!document.querySelector('.diary-meta-modal-backdrop');
+    // Close it for real so the next test starts clean.
+    const dialog3 = document.querySelector('.diary-meta-modal-backdrop');
+    if (dialog3) dialog3.querySelector('[data-act="cancel"]').click();
+    await new Promise(r => setTimeout(r, 120));
+
+    // A second press on 保存 while the dialog is up must not stack a
+    // second dialog on top of the first one.
+    const twice = await window.__meta.openTwice();
+    const dialog4 = document.querySelector('.diary-meta-modal-backdrop');
+    if (dialog4) dialog4.querySelector('[data-act="cancel"]').click();
+    await new Promise(r => setTimeout(r, 120));
+
+    return { prefill, rowsBefore: before, rowsAfter: after, stillOpen,
+             keptOpen, dialogsLeft: document.querySelectorAll('.diary-meta-modal-backdrop').length,
+             twice };
+  `);
+  check('the dialog opens with the entry\'s title on the page',
+    dialogResult.prefill.title, '改过的那篇');
+  check('the dialog is prefilled with the entry\'s time',
+    dialogResult.prefill.occurred, '2026-04-01T09:15');
+  check('the dialog is prefilled with the entry\'s first-time flag',
+    dialogResult.prefill.kind, 'first_time');
+  check('the dialog is prefilled with the entry\'s contacts',
+    dialogResult.prefill.selected, ['c2']);
+  check('the dialog counts the selected contacts',
+    dialogResult.prefill.count, '已选 1 人');
+  check('dismissing the dialog writes nothing',
+    dialogResult.rowsAfter, dialogResult.rowsBefore);
+  checkTrue('dismissing the dialog closes it', !dialogResult.stillOpen);
+  checkTrue('an empty time keeps the dialog open', dialogResult.keptOpen);
+  check('no dialog is left on the page', dialogResult.dialogsLeft, 0);
+  check('a second press on 保存 does not open a second dialog',
+    dialogResult.twice.dialogs, 1);
+  checkTrue('the guard knows the dialog is open', dialogResult.twice.open);
+
+  // ---- 3c. The dialog's typography ------------------------------------
+  //
+  // The app's global `label` rule is a 12px muted caption with a top
+  // margin — wrong for this dialog, where the radios are CHOICES and have
+  // to read as content. The dialog sets its own type scale, and the
+  // removed hint lines must not leave their spacing behind.
+  console.log('\n== 对话框排版 ==');
+  const typeResult = await evalIn(win, `
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 120));
+    // The editor refuses to save an empty entry, so the dialog is only
+    // reachable once there is something to save.
+    document.getElementById('diary-title').value = '排版检查';
+    const dialog = await window.__meta.open();
+
+    const px = (el, prop) => el ? Math.round(parseFloat(getComputedStyle(el)[prop])) : null;
+    const label = dialog.querySelector('.diary-meta-label');
+    const radio = dialog.querySelector('.diary-meta-radio');
+    const radioText = radio && radio.querySelector('span');
+    const name = dialog.querySelector('.contact-pick-name');
+    const count = dialog.querySelector('[data-role="count"]');
+    const input = dialog.querySelector('[data-role="occurred"]');
+
+    // The three labels of the dialog.
+    const labels = Array.from(dialog.querySelectorAll('.diary-meta-label'))
+      .map(el => el.textContent.trim());
+    // The hint lines are gone — they only repeated what the control said.
+    const metas = Array.from(dialog.querySelectorAll('.meta')).map(el => el.textContent.trim());
+
+    // The measurements have to be taken while the dialog is still on the
+    // page: a detached element has no computed style and no geometry.
+    const measured = {
+      labelSize: px(label, 'fontSize'),
+      labelColor: getComputedStyle(label).color,
+      radioSize: px(radioText, 'fontSize'),
+      radioColor: getComputedStyle(radioText).color,
+      // The radio label must sit INLINE with its radio, not on its own line.
+      // The display value is blockified to flex because the label is a flex
+      // item, so the real check is geometric: the radio and its text
+      // share a row.
+      radioDisplay: getComputedStyle(radio).display,
+      radioAlign: getComputedStyle(radio).alignItems,
+      radioSameLine: (() => {
+        const box = radio.getBoundingClientRect();
+        const radioInput = radio.querySelector('input').getBoundingClientRect();
+        const span = radio.querySelector('span').getBoundingClientRect();
+        return Math.abs(radioInput.top - span.top) < radioInput.height / 2
+          && radioInput.right <= span.left + 1;
+      })(),
+      nameSize: px(name, 'fontSize'),
+      countSize: px(count, 'fontSize'),
+      inputSize: px(input, 'fontSize'),
+      // The label and its control are close together — the global rule's
+      // 10px top margin used to push them apart.
+      labelGap: Math.round(
+        input.getBoundingClientRect().top - label.getBoundingClientRect().bottom),
+    };
+
+    // Close it so the next test starts from a clean page.
+    dialog.querySelector('[data-act="cancel"]').click();
+    await new Promise(r => setTimeout(r, 120));
+
+    return Object.assign({ labels, metas }, measured);
+  `);
+  check('the dialog asks three questions', typeResult.labels,
+    ['事件发生时间', '是否第一次', '关联联系人']);
+  if (typeResult && typeResult.__threw) console.log('  (threw)', typeResult.__threw);
+  check('the dialog has no hint lines left', typeResult.metas, []);
+  check('a question is a 13px caption', typeResult.labelSize, 13);
+  check('a radio choice is 14px — content, not a caption', typeResult.radioSize, 14);
+  check('a radio choice is not muted', typeResult.radioColor, 'rgb(42, 42, 42)');
+  check('a radio label sits inline with its radio', typeResult.radioDisplay, 'flex');
+  checkTrue('the radio and its text share one row', typeResult.radioSameLine);
+  check('a radio label is centred on its radio', typeResult.radioAlign, 'center');
+  check('a contact name is 14px', typeResult.nameSize, 14);
+  check('the running count is 12px', typeResult.countSize, 12);
+  check('the time input is 14px', typeResult.inputSize, 14);
+  checkTrue('a question sits right above its control',
+    typeResult.labelGap >= 0 && typeResult.labelGap <= 12,
+    'gap was ' + typeResult.labelGap);
 
   // ---- 4. Multi-image: many photos, a layout, and a dragged size -----
   console.log('\n== 多图与排版 ==');
@@ -429,9 +679,7 @@ app.whenReady().then(async () => {
 
     // Save and look at the stored document.
     document.getElementById('diary-title').value = '多图的一篇';
-    document.getElementById('diary-occurred').value = '2026-05-02T10:30';
-    document.getElementById('save').click();
-    await new Promise(r => setTimeout(r, 250));
+    await window.__meta.confirm('2026-05-02T10:30', 'other', []);
 
     const rows = Object.values(window.__testRows.all());
     const row = rows[rows.length - 1];
@@ -557,9 +805,7 @@ app.whenReady().then(async () => {
     const selectedId = selectedBefore ? selectedBefore.dataset.photoId : null;
 
     document.getElementById('diary-title').value = '换了顺序的一篇';
-    document.getElementById('diary-occurred').value = '2026-05-03T10:30';
-    document.getElementById('save').click();
-    await new Promise(r => setTimeout(r, 250));
+    await window.__meta.confirm('2026-05-03T10:30', 'other', []);
 
     const rows = Object.values(window.__testRows.all());
     const row = rows[rows.length - 1];

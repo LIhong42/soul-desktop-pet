@@ -53,11 +53,23 @@
 // buttons are the same ones as before — only the way they appear changed.
 // The text block's menu also carries the editing commands (剪切 / 复制 /
 // 粘贴 / 全选), because the custom menu replaces the browser's own.
+//
+// ---- Where the metadata lives ----
+//
+// The paper holds the writing and nothing else. The three pieces of
+// metadata that are NOT part of the writing — 事件发生时间 / 关联联系人 /
+// 是否第一次 — used to sit in the side panel, but that made the user reach
+// for the right-hand column to finish an entry that was already written.
+//
+// Now they are asked for in a dialog when the user presses 保存: the press
+// is the moment the entry becomes a record, and a record has a time, a
+// cast and a first-time flag. The dialog lives in
+// src/js/diary_meta_form.js.
 
 import {
-  api, escapeHtml, displayName, toast,
+  api, escapeHtml, toast,
   memorialPhotoUrl, fetchPhotoDataUrl, invalidatePhotoDataUrl,
-  nowDatetimeLocal, wireDateInputs,
+  wireDateInputs,
 } from '../api.js';
 import { register, navigate, getReferrerPath } from '../router.js';
 import { openContextMenu } from '../context_menu.js';
@@ -68,6 +80,8 @@ import {
   DIARY_GALLERY_LAYOUTS, galleryLayout, defaultLayoutFor, photoCssWidth,
   parseDiaryContent,
 } from '../diary_layout.js';
+import { openMemorialMetaDialog } from '../diary_meta_form.js';
+import { normalizeMemorialKind } from '../diary_kinds.js';
 
 const MEMORIAL_LIST_ROUTE = '/events/memorial';
 
@@ -79,6 +93,12 @@ const pageState = {
   eventId: null,
   background: DEFAULT_THEME_ID,
   selectedContactIds: new Set(),
+  // The metadata that the 保存 dialog owns: when it happened, whether it
+  // was the first time, and who was there. It is not on the page — the
+  // dialog asks for it every time the user presses 保存, and the values
+  // it returns become the next round's defaults.
+  occurredAt: '',
+  kind: 'other',
   // The mixed document. `blocks[i].el` points at the live DOM node for
   // that block (the text block's textarea, the gallery's figure).
   blocks: [],
@@ -115,30 +135,6 @@ function themePickerHtml(selectedId) {
           </span>
           <span class="diary-theme-check">✓</span>
         </button>
-      `).join('')}
-    </div>
-  `;
-}
-
-// ---- Contact picker ------------------------------------------------------
-
-function contactPickerHtml(contacts, selected) {
-  if (contacts.length === 0) {
-    return `<div class="meta">还没有联系人可选择</div>`;
-  }
-  return `
-    <div class="contact-picker-toolbar">
-      <button type="button" class="btn secondary btn-tiny" id="diary-contacts-all">全选</button>
-      <button type="button" class="btn secondary btn-tiny" id="diary-contacts-none">清空</button>
-      <span class="meta" id="diary-contacts-count"></span>
-    </div>
-    <div class="contact-picker" id="diary-contact-picker">
-      ${contacts.map((c) => `
-        <div class="contact-pick${selected.has(c.id) ? ' selected' : ''}" data-id="${escapeHtml(c.id)}">
-          <span class="contact-pick-check" aria-hidden="true">✓</span>
-          <span class="contact-pick-name">${escapeHtml(displayName(c))}</span>
-          ${c.relationship ? `<span class="contact-pick-meta">${escapeHtml(c.relationship)}</span>` : ''}
-        </div>
       `).join('')}
     </div>
   `;
@@ -908,10 +904,10 @@ export async function render(args, params) {
   const contacts = await api.contacts.list();
   const theme = getDiaryTheme(ev.background || DEFAULT_THEME_ID);
   pageState.background = theme.id;
-
-  const occurredLocal = ev.occurred_at
-    ? (ev.occurred_at.length >= 16 ? ev.occurred_at.slice(0, 16) : ev.occurred_at)
-    : nowDatetimeLocal();
+  // The metadata the 保存 dialog starts from: what the entry says, or
+  // "now" for a new one.
+  pageState.occurredAt = ev.occurred_at || '';
+  pageState.kind = normalizeMemorialKind(ev.kind);
 
   const themeVars = diaryThemeVars(theme);
 
@@ -956,24 +952,13 @@ export async function render(args, params) {
         <div class="diary-page-foot" aria-hidden="true"></div>
       </div>
 
-      <!-- The side panel: the date, the background style and the contacts.
-           The date lives here rather than on the writing page itself: the
-           page is the writing surface, and the date is a property of the
-           entry, not part of the text the user writes. -->
+      <!-- The side panel holds the paper style only. The time, the cast
+           and the first-time flag are asked for in the 保存 dialog — the
+           press on 保存 is the moment the entry becomes a record. -->
       <aside class="diary-side">
-        <section class="card diary-side-card">
-          <h2>发生时间</h2>
-          <div class="diary-meta-row">
-            <input type="datetime-local" id="diary-occurred" value="${escapeHtml(occurredLocal)}"/>
-          </div>
-        </section>
         <section class="card diary-side-card">
           <h2>背景样式</h2>
           ${themePickerHtml(theme.id)}
-        </section>
-        <section class="card diary-side-card">
-          <h2>关联联系人（可选）</h2>
-          ${contactPickerHtml(contacts, pageState.selectedContactIds)}
         </section>
       </aside>
     </div>
@@ -983,7 +968,6 @@ export async function render(args, params) {
   loadBlocks(ev);
 
   wireThemePicker();
-  wireContactPicker(contacts);
   wirePhotoInput();
   wireDateInputs(app);
 
@@ -1052,43 +1036,6 @@ function wireThemePicker() {
       });
     };
   });
-}
-
-function wireContactPicker(contacts) {
-  const picker = document.getElementById('diary-contact-picker');
-  const countEl = document.getElementById('diary-contacts-count');
-  if (!picker) return;
-
-  function refresh() {
-    picker.querySelectorAll('.contact-pick').forEach((el) => {
-      el.classList.toggle('selected', pageState.selectedContactIds.has(el.dataset.id));
-    });
-    if (countEl) {
-      countEl.textContent = pageState.selectedContactIds.size === 0
-        ? '未选'
-        : `已选 ${pageState.selectedContactIds.size} 人`;
-    }
-  }
-  picker.querySelectorAll('.contact-pick').forEach((el) => {
-    el.onclick = () => {
-      const id = el.dataset.id;
-      if (!id) return;
-      if (pageState.selectedContactIds.has(id)) pageState.selectedContactIds.delete(id);
-      else pageState.selectedContactIds.add(id);
-      refresh();
-    };
-  });
-  const allBtn = document.getElementById('diary-contacts-all');
-  if (allBtn) allBtn.onclick = () => {
-    contacts.forEach((c) => pageState.selectedContactIds.add(c.id));
-    refresh();
-  };
-  const noneBtn = document.getElementById('diary-contacts-none');
-  if (noneBtn) noneBtn.onclick = () => {
-    pageState.selectedContactIds.clear();
-    refresh();
-  };
-  refresh();
 }
 
 // ---- Photos --------------------------------------------------------------
@@ -1193,30 +1140,59 @@ function plainTextFromBlocks() {
 
 // ---- Save / delete -------------------------------------------------------
 
+// True while the 保存 dialog is open. A second press on 保存 while the
+// dialog is up would open a second one on top of it.
+let metaDialogOpen = false;
+
+// Exposed for the test harness: the guard's state is invisible from the
+// page, and a stuck guard would look like a dead 保存 button.
+export function isMetaDialogOpen() { return metaDialogOpen; }
+
 async function onSave() {
+  if (metaDialogOpen) return;
   const title = (document.getElementById('diary-title').value || '').trim();
   const body = plainTextFromBlocks();
-  const occurredRaw = document.getElementById('diary-occurred').value;
 
   if (!title && !body) {
     toast('请至少填写标题或正文');
     return;
   }
-  if (!occurredRaw) {
-    toast('请填写发生时间');
-    return;
+
+  // The press on 保存 opens the metadata dialog: when it happened, whether
+  // it was the first time, and who was there. The dialog starts from the
+  // entry's current values, so pressing 保存 again on the same entry
+  // shows the same answers — the user only has to change what changed.
+  metaDialogOpen = true;
+  let meta = null;
+  try {
+    const contacts = await api.contacts.list();
+    meta = await openMemorialMetaDialog({
+      contacts,
+      occurredAt: pageState.occurredAt,
+      kind: pageState.kind,
+      contactIds: Array.from(pageState.selectedContactIds),
+    });
+  } finally {
+    metaDialogOpen = false;
   }
+  // The user dismissed the dialog — nothing is written.
+  if (!meta) return;
+
+  // Keep the answers as the next round's defaults.
+  pageState.occurredAt = meta.occurredAt;
+  pageState.kind = meta.kind;
+  pageState.selectedContactIds = new Set(meta.contactIds);
 
   const payload = {
-    kind: 'other',
+    kind: meta.kind,
     title: title || '回忆事件',
     // The plain text lives in `notes` (search + album export read it);
     // the interleaved document lives in `content`.
     notes: body || null,
     content: serializeBlocks(),
-    occurred_at: occurredRaw.replace('T', ' ') + ':00',
+    occurred_at: meta.occurredAt,
     background: pageState.background,
-    contact_ids: Array.from(pageState.selectedContactIds),
+    contact_ids: meta.contactIds,
   };
 
   const saveBtn = document.getElementById('save');

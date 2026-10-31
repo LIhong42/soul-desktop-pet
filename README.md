@@ -36,7 +36,8 @@
 
 ### 📷 Memory Events & Album Export
 - "Memory events" record moments on a timeline, keeping every important highlight;
-- **A diary, not a form** — "新建" opens a dedicated diary page where the title, the body and the photos all live on one sheet of paper. Write first, save second. The title is typed straight into the coloured header bar, and the date lives in the side panel, so the sheet itself holds nothing but the title and the text;
+- **A diary, not a form** — "新建" opens a dedicated diary page where the title, the body and the photos all live on one sheet of paper. Write first, save second. The title is typed straight into the coloured header bar, so the sheet itself holds nothing but the title and the text;
+- **The metadata is asked for when you save** — the time, the linked contacts and the "was this the first time?" flag are not on the page. Pressing **保存** opens a small dialog that asks for all three, because that press is the moment the entry becomes a record: a record has a time, a cast and a first-time flag. The dialog starts from what the entry already says, so pressing 保存 again only asks about what changed — and dismissing it writes nothing;
 - **Text and images interleave** — the body isn't one big text box but a sequence of text and image blocks. Put the caret where you want a picture, **right-click** that text block and pick "插入图片"; the picture lands right there and the text splits above and below it. Keep writing under the image. The saved document keeps the page order exactly;
 - **The controls stay off the page** — a block's buttons no longer sit between the writing and the pictures. **Right-click a text block** for 插入图片 / 删除此段; **right-click a gallery** (or one of its pictures) for the layout switch, the photo counter and the text insertions. The page itself holds nothing but the title, the words and the pictures;
 - **Multi-photo galleries** — pick several pictures at once and they land in one gallery. The gallery's right-click menu offers **one / two / three / grid**, so the whole group re-arranges in one click;
@@ -199,6 +200,8 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │     ├─ gesture_guard.js  ← shared pointer-gesture guard (survives sleep / lost pointerup)
 │     ├─ diary_themes.js  ← the six diary paper styles (single source of truth)
 │     ├─ diary_layout.js  ← the diary document's shared vocabulary (gallery layouts + photo widths), used by the editor and the list cards
+│     ├─ diary_kinds.js  ← the 「第一次」 vocabulary (the two kinds and their labels)
+│     ├─ diary_meta_form.js  ← the 保存 dialog (the time, the cast, the first-time flag)
 │     ├─ quick_record.js  ← 快速记录 window renderer
 │     └─ pages/            router pages (today / contacts / events / export …)
 │                        ├─ diary_edit.js  ← the diary editor (/diary/new, /diary/:id)
@@ -258,10 +261,10 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 - In the contact detail page you can keep adding likes, taboos, gifts, and important dates.
 
 ### 3. Write a diary entry
-- **Memory Events → New** → a diary page opens; write the title. The side panel on the right holds the paper style, the date and the linked contacts;
+- **Memory Events → New** → a diary page opens; write the title. The side panel on the right holds the paper style;
 - Type the body directly. To add a picture, put the caret where it should go, **right-click** that text block and pick "插入图片" — the picture lands there and the text splits above and below it; keep writing under the image;
 - You can pick several pictures at once; they form one gallery. **Right-click** the gallery and choose **one / two / three / grid** to change the arrangement, and drag the handle in a picture's bottom-right corner to resize it. To change the order, **drag the picture onto another one** — they swap places;
-- Click **保存** → the mixed text-and-image document is stored in page order, ready for a one-click PDF / MP4 album export.
+- Click **保存** → a dialog asks for **when it happened**, **who was there** and **whether it was the first time**. Fill it in and press **确认保存** — the mixed text-and-image document is stored in page order, ready for a one-click PDF / MP4 album export. Press **取消** and nothing is written.
 
 ### 4. Wait for pet reminders
 - The pet shows an unread reminder count in the corner and pops up automatically when the time comes;

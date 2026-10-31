@@ -32,6 +32,7 @@ import {
   parseDiaryContent, effectivePhotoWidth, photoCssWidth,
   galleryLayout, DEFAULT_GALLERY_LAYOUT,
 } from '../diary_layout.js';
+import { memorialKindLabel } from '../diary_kinds.js';
 
 // selectMode is per-page state so toggling bulk-delete mode doesn't lose
 // the user's checkbox selections on re-render. `q` mirrors the current
@@ -351,8 +352,10 @@ async function reloadAndRender(params = {}) {
   });
 }
 
+// The kind label lives in one place — src/js/diary_kinds.js — so the
+// list card and the contact detail card cannot drift apart.
 function kindTagLabel(kind) {
-  return kind === 'first_time' ? '第一次' : '其他';
+  return memorialKindLabel(kind);
 }
 
 // YYYY-MM-DD (no minutes). `formatRelative` is built for "when does the next

@@ -6,6 +6,7 @@ import {
   bulkEnterLinkHtml, bulkToolbarHtml,
   wireBulkEnter, wireBulkToolbar,
 } from '../bulk_delete.js';
+import { memorialKindLabel } from '../diary_kinds.js';
 
 // Render the avatar block for the detail-page header. Mirrors the rule used
 // in contacts_list.js: prefer the user's uploaded photo (resolved to a data
@@ -547,7 +548,7 @@ async function render(args) {
             <span class="cat-icon" data-tone="memorial">${escapeHtml(categoryIcon('memorial', null))}</span>
           </div>
           <div class="lr-main">
-            <div class="lr-title">${escapeHtml(e.title || '(无标题)')} <span class="tag" style="margin-left:6px">${escapeHtml(e.kind === 'first_time' ? '第一次' : '其他')}</span></div>
+            <div class="lr-title">${escapeHtml(e.title || '(无标题)')} <span class="tag" style="margin-left:6px">${escapeHtml(memorialKindLabel(e.kind))}</span></div>
             <div class="lr-meta">${e.photo_count > 0 ? `${e.photo_count} 张照片` : '回忆事件'}</div>
           </div>
           <div class="lr-side">

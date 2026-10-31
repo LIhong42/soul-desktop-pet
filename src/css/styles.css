@@ -3485,6 +3485,132 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 .diary-side-card h2 { margin: 0 0 10px; font-size: 14px; }
 .diary-side-card .contact-picker { max-height: 220px; overflow-y: auto; }
 
+/* ---- The 保存 dialog ----------------------------------------------------
+   The metadata that is not part of the writing — the time, the cast and
+   the first-time flag — is asked for here, when the user presses 保存. The
+   dialog is wider than the plain .modal (it holds a contact grid) and
+   scrolls its body when the content does not fit.
+
+   The app's global `label` rule is a 12px muted caption with a 10px top
+   margin — right for a dense filter form, wrong here: it made the radio
+   labels look like captions, pushed the controls away from their labels,
+   and left the removed hint lines' spacing behind. So the dialog sets its
+   own type scale instead of inheriting that one:
+
+     .diary-meta-label   13px muted  — what the control IS
+     .diary-meta-radio   14px text   — a CHOICE, so it reads as content
+     .diary-meta-count   12px muted  — the running count
+
+   The field blocks are spaced by a gap on the block itself, not by a
+   margin on the label, so the rhythm survives a label that wraps. */
+.diary-meta-modal-backdrop { z-index: 120; }
+.diary-meta-modal {
+  width: 520px;
+  max-width: 92vw;
+  /* The dialog fills the height the window allows, so the contact grid
+     takes the room that is left over instead of the dialog growing past
+     the bottom of the screen. */
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+.diary-meta-modal .modal-header { padding: 13px 18px; flex: 0 0 auto; }
+.diary-meta-modal .modal-header h3 { font-size: 15px; }
+.diary-meta-modal .modal-body {
+  overflow-y: auto;
+  padding: 18px 18px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  /* The body is the part that gives way: it takes the room between the
+     header and the footer and scrolls inside itself. */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* One question and its control. */
+.diary-meta-field { display: flex; flex-direction: column; gap: 7px; }
+
+/* The question. Replaces the global `label` rule, which would otherwise
+   add a 10px top margin and push the control off its own label. */
+.diary-meta-modal .diary-meta-label {
+  display: block;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+/* The radio choices. These are content, not captions: they sit at the
+   body's own size and in the body's own colour. The global `label`
+   rule is block-level and 12px muted — both wrong here. */
+.diary-meta-radios { display: flex; align-items: center; gap: 20px; }
+.diary-meta-modal .diary-meta-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+.diary-meta-radio input[type="radio"] { margin: 0; cursor: pointer; }
+
+/* The datetime input, sized to the dialog rather than to the app's
+   default control width.
+
+   `datetime-local` is not in the app's global input rule (it only sets
+   the border on text / number / date / time), so it arrives with the
+   browser's default black border — the rule below gives it the app's
+   border and its focus ring, like every other field. */
+.diary-meta-modal input[type="datetime-local"] {
+  width: 100%;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text);
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.diary-meta-modal input[type="datetime-local"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* The contact toolbar and grid. The grid takes the room the window has
+   left over, up to a comfortable maximum — it scrolls past that.
+
+   The maximum is a whole number of rows: a card measures 38.5px and
+   the rows are 6px apart, so four rows are 4 * 38.5 + 3 * 6 = 172px.
+   Cutting the grid at an arbitrary height slices the last row in
+   half, which reads as a rendering bug rather than as "there is more
+   below". */
+.diary-meta-count { font-size: 12px; color: var(--muted); }
+.diary-meta-modal .contact-picker {
+  flex: 1 1 auto;
+  min-height: 96px;
+  max-height: 172px;
+  overflow-y: auto;
+  gap: 6px;
+  padding: 4px;
+}
+.diary-meta-modal .contact-pick { padding: 9px 11px; }
+.diary-meta-modal .contact-pick-name { font-size: 14px; font-weight: 500; }
+.diary-meta-modal .contact-pick-meta { font-size: 12px; }
+
+/* The buttons sit in their own footer, below the scrolling body. */
+.diary-meta-actions {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 14px 18px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.diary-meta-actions .btn { padding: 9px 18px; font-size: 14px; }
+
 /* The six background style tiles. Each tile previews the style: the
    header bar, the page background and the three accent dots. */
 .diary-theme-grid {

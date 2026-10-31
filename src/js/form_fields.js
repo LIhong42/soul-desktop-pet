@@ -27,6 +27,7 @@
 // window only ever creates).
 
 import { escapeHtml, displayName, todayYmd, nowDatetimeLocal } from './api.js';
+import { memorialKindLabel } from './diary_kinds.js';
 
 // ---- Calendar-mode rules ------------------------------------------------
 //
@@ -459,8 +460,8 @@ export function buildMemorialForm(opts = {}) {
   const html = `
     ${field(t, '类型', `
       <select id="${p}-mem-kind">
-        <option value="first_time" ${ev.kind === 'first_time' ? 'selected' : ''}>第一次</option>
-        <option value="other"      ${ev.kind === 'other' || !ev.kind ? 'selected' : ''}>其他</option>
+        <option value="first_time" ${ev.kind === 'first_time' ? 'selected' : ''}>${escapeHtml(memorialKindLabel('first_time'))}</option>
+        <option value="other"      ${ev.kind === 'other' || !ev.kind ? 'selected' : ''}>${escapeHtml(memorialKindLabel('other'))}</option>
       </select>
     `)}
     ${field(t, '标题 *', `<input type="text" id="${p}-title" maxlength="120" value="${escapeHtml(ev.title || '')}" placeholder="例如：第一次去迪士尼" autofocus/>`)}
