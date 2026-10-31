@@ -51,6 +51,8 @@
 - **The cards are thumbnails, not redrawings** — the page is laid out at its own proportions and then scaled down as one piece: a photo keeps its own shape instead of being cropped into a uniform frame, and the words keep the size they have relative to the paper and the pictures. The card's edge cuts the page the way a photograph of a page would — a picture shows its top half, and the words below it have not appeared yet. The list reads as a neat row of pages instead of a ragged list of different heights;
 - The photos on a card are **laid out by the gallery's own arrangement** (单图 / 双图 / 三图 / 网格) — the card and the editor share one width formula (`src/js/diary_layout.js`), so a photo sits exactly where the page put it;
 - **The details ride the third layer** — the contacts, the date, the kind and the photo count sit on the card's coloured bottom strip, so the paper itself stays clean and the annotations belong to the decoration instead of floating on the text;
+- **A filter row sits above the cards** — three dropdowns, **时间** (all time / last 7 days / 30 days / 3 months / a year / this year / last year / earlier), **联系人** and **类型** (是第一次 / 不是第一次). They compose with the search box: the conditions are ANDed, and an entry has to satisfy all four to stay. A counter tells you how many the dropdowns kept, and **重置筛选** puts them all back;
+- **The filter state lives in the URL** — the time range, the contact, the kind and the search text all ride along in the address bar (`#/events/memorial?time=30d&contact=…`), so a filtered view can be shared and survives a reload;
 - One-click export to a **PDF album** or an **MP4 video album**, with multiple templates and a live WYSIWYG preview;
 - **Annual album**: automatically gathers all memories from a given year for a year-in-review.
 
@@ -201,6 +203,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │     ├─ diary_themes.js  ← the six diary paper styles (single source of truth)
 │     ├─ diary_layout.js  ← the diary document's shared vocabulary (gallery layouts + photo widths), used by the editor and the list cards
 │     ├─ diary_kinds.js  ← the 「第一次」 vocabulary (the two kinds and their labels)
+│     ├─ diary_filters.js  ← the 回忆事件 list's filter vocabulary (time ranges / contacts / kinds) and its predicates
 │     ├─ diary_meta_form.js  ← the 保存 dialog (the time, the cast, the first-time flag)
 │     ├─ quick_record.js  ← 快速记录 window renderer
 │     └─ pages/            router pages (today / contacts / events / export …)
@@ -265,6 +268,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 - Type the body directly. To add a picture, put the caret where it should go, **right-click** that text block and pick "插入图片" — the picture lands there and the text splits above and below it; keep writing under the image;
 - You can pick several pictures at once; they form one gallery. **Right-click** the gallery and choose **one / two / three / grid** to change the arrangement, and drag the handle in a picture's bottom-right corner to resize it. To change the order, **drag the picture onto another one** — they swap places;
 - Click **保存** → a dialog asks for **when it happened**, **who was there** and **whether it was the first time**. Fill it in and press **确认保存** — the mixed text-and-image document is stored in page order, ready for a one-click PDF / MP4 album export. Press **取消** and nothing is written.
+- Back on the **Memory Events** list, the row above the card wall filters by **时间 / 联系人 / 类型**, and works together with the search box. **重置筛选** puts everything back.
 
 ### 4. Wait for pet reminders
 - The pet shows an unread reminder count in the corner and pops up automatically when the time comes;

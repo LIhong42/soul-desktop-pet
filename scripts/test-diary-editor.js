@@ -1380,6 +1380,161 @@ app.whenReady().then(async () => {
     longResult.lineClamp === 'none'
     && longResult.display !== '-webkit-box');
 
+  // ---- 13. The filter bar ------------------------------------------------
+  //
+  // The list is filtered by three independent axes — 时间 / 联系人 / 类型
+  // — which compose with the free-text search box. All four are applied
+  // client-side over the cached rows, so a change is instant.
+  console.log('\n== 回忆事件筛选 ==');
+  const filterResult = await evalIn(win, `
+    window.__testRows.clear();
+    // Three entries, one per axis, so each filter has something to
+    // single out. The dates are relative to today so the 时间 buckets
+    // pick them apart.
+    const today = new Date();
+    const ymd = (d) => d.getFullYear() + '-'
+      + String(d.getMonth() + 1).padStart(2, '0') + '-'
+      + String(d.getDate()).padStart(2, '0');
+    const daysAgo = (n) => {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      d.setDate(d.getDate() - n);
+      return ymd(d) + ' 10:00:00';
+    };
+    const longAgo = (today.getFullYear() - 3) + '-03-15 10:00:00';
+
+    window.__testRows.seed('f-recent', {
+      id: 'f-recent', kind: 'first_time', title: '最近的一次',
+      occurred_at: daysAgo(2), background: 'light',
+      contact_ids: ['c1'], contact_names: ['小明'], photo_count: 0,
+      notes: '',
+    });
+    window.__testRows.seed('f-old', {
+      id: 'f-old', kind: 'other', title: '很久以前',
+      occurred_at: longAgo, background: 'light',
+      contact_ids: ['c2'], contact_names: ['小红'], photo_count: 0,
+      notes: '',
+    });
+    window.__testRows.seed('f-middle', {
+      id: 'f-middle', kind: 'other', title: '中间的一次',
+      occurred_at: daysAgo(60), background: 'light',
+      contact_ids: ['c1'], contact_names: ['小明'], photo_count: 0,
+      notes: '',
+    });
+
+    await window.__list.render([], {});
+    await new Promise(r => setTimeout(r, 150));
+
+    const titles = () => Array.from(document.querySelectorAll('.memorial-card-title'))
+      .map(el => el.textContent.trim());
+
+    // The bar is there, with its three dropdowns.
+    const bar = {
+      hasBar: !!document.querySelector('.memorial-filters'),
+      selects: Array.from(document.querySelectorAll('.memorial-filters select'))
+        .map(el => el.id),
+      labels: Array.from(document.querySelectorAll('.memorial-filter-label'))
+        .map(el => el.textContent.trim()),
+      timeOptions: Array.from(
+        document.querySelector('#memorial-filter-time').options).map(o => o.value),
+      contactOptions: Array.from(
+        document.querySelector('#memorial-filter-contact').options).map(o => o.value),
+      kindOptions: Array.from(
+        document.querySelector('#memorial-filter-kind').options).map(o => o.value),
+      resetHidden: document.getElementById('memorial-filter-reset').style.display,
+      all: titles(),
+    };
+
+    // 时间: 最近 30 天 keeps only the recent entry.
+    const timeSel = document.getElementById('memorial-filter-time');
+    timeSel.value = '30d';
+    timeSel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 60));
+    bar.byTime = titles();
+    bar.timeMeta = document.getElementById('memorial-filter-meta').textContent.trim();
+    bar.resetShown = document.getElementById('memorial-filter-reset').style.display;
+
+    // 联系人: 小明 keeps the two entries that name them.
+    const contactSel = document.getElementById('memorial-filter-contact');
+    contactSel.value = 'c1';
+    contactSel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 60));
+    bar.byTimeAndContact = titles();
+
+    // 类型: 是第一次 keeps only the first-time entry.
+    const kindSel = document.getElementById('memorial-filter-kind');
+    kindSel.value = 'first_time';
+    kindSel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 60));
+    bar.byAll = titles();
+
+    // The URL carries the whole filter state, so the view can be shared.
+    bar.hash = location.hash;
+
+    // 重置筛选 puts every dropdown back to 不限.
+    document.getElementById('memorial-filter-reset').click();
+    await new Promise(r => setTimeout(r, 60));
+    bar.afterReset = titles();
+    bar.afterResetValues = {
+      time: document.getElementById('memorial-filter-time').value,
+      contact: document.getElementById('memorial-filter-contact').value,
+      kind: document.getElementById('memorial-filter-kind').value,
+    };
+    bar.afterResetHash = location.hash;
+
+    // A filter that matches nothing says so, and says how many it hid.
+    // The only first-time entry belongs to 小明, so "是第一次" + "小红"
+    // is a combination no entry can satisfy.
+    kindSel.value = 'first_time';
+    kindSel.dispatchEvent(new Event('change', { bubbles: true }));
+    contactSel.value = 'c2';
+    contactSel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 60));
+    bar.emptyText = document.querySelector('#memorial-list .empty')
+      ? document.querySelector('#memorial-list .empty').textContent.trim() : '';
+    bar.emptyCount = document.querySelectorAll('.memorial-card').length;
+
+    return bar;
+  `);
+
+  checkTrue('the filter bar is on the page', filterResult.hasBar);
+  check('the bar carries three dropdowns', filterResult.selects,
+    ['memorial-filter-time', 'memorial-filter-contact', 'memorial-filter-kind']);
+  check('the dropdowns are labelled', filterResult.labels,
+    ['时间', '联系人', '类型']);
+  check('the 时间 dropdown offers the buckets', filterResult.timeOptions,
+    ['', '7d', '30d', '90d', '365d', 'this_year', 'last_year', 'older']);
+  check('the 联系人 dropdown lists the contacts', filterResult.contactOptions,
+    ['', 'c1', 'c2']);
+  check('the 类型 dropdown offers both kinds', filterResult.kindOptions,
+    ['', 'first_time', 'other']);
+  check('the reset button is hidden while nothing is filtered',
+    filterResult.resetHidden, 'none');
+  check('all three entries are listed to begin with', filterResult.all.length, 3);
+
+  check('时间: 最近 30 天 keeps only the recent entry',
+    filterResult.byTime, ['最近的一次']);
+  check('the filter bar counts what it kept',
+    filterResult.timeMeta, '1 / 3 条');
+  checkTrue('the reset button appears once a filter is on',
+    filterResult.resetShown !== 'none');
+  check('时间 ∩ 联系人 keeps the two 小明 entries',
+    filterResult.byTimeAndContact.length, 1);
+  checkTrue('时间 ∩ 联系人 ∩ 类型 leaves only the first-time entry',
+    filterResult.byAll.length === 1
+    && filterResult.byAll[0] === '最近的一次');
+  checkTrue('the URL carries the filter state',
+    /time=30d/.test(filterResult.hash)
+    && /contact=c1/.test(filterResult.hash)
+    && /kind=first_time/.test(filterResult.hash));
+  check('重置筛选 restores every dropdown', filterResult.afterResetValues,
+    { time: '', contact: '', kind: '' });
+  check('重置筛选 restores the full list', filterResult.afterReset.length, 3);
+  checkTrue('重置筛选 clears the URL parameters',
+    !/time=|contact=|kind=/.test(filterResult.afterResetHash));
+  checkTrue('an empty result says so',
+    /没有符合筛选条件/.test(filterResult.emptyText));
+  check('an empty result shows no cards', filterResult.emptyCount, 0);
+
   console.log(`\n== ${pass} passed, ${fail} failed ==\n`);
   cleanup(win, fail === 0 ? 0 : 1);
 }).catch((e) => {

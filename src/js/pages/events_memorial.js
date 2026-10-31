@@ -33,15 +33,25 @@ import {
   galleryLayout, DEFAULT_GALLERY_LAYOUT,
 } from '../diary_layout.js';
 import { memorialKindLabel } from '../diary_kinds.js';
+import {
+  TIME_RANGES, kindOptions, contactOptions,
+  emptyFilter, matchesFilter,
+} from '../diary_filters.js';
 
 // selectMode is per-page state so toggling bulk-delete mode doesn't lose
 // the user's checkbox selections on re-render. `q` mirrors the current
 // search so the list subtree can be re-filtered without an IPC round-trip;
 // `allEvents` caches the loaded data for the same reason.
+//
+// `filter` holds the three dropdown selections (时间 / 联系人 / 类型). They
+// are applied client-side on top of the cached rows, so changing one is
+// instant and composes with the search box without a round-trip.
 const pageState = {
   selectMode: { active: false, selected: new Set() },
   q: '',
+  filter: emptyFilter(),
   allEvents: [],
+  contacts: [],
   basePath: '/events/memorial',
 };
 
@@ -54,12 +64,32 @@ export async function render(args, params) {
   const opts = {};
   if (params.contact_id) opts.contact_id = params.contact_id;
   const events = await api.memorialEvents.list(opts);
+  // The contact dropdown lists every contact the user has, plus any
+  // contact that only appears in an entry — so a filter value the URL
+  // carries can always be shown, even for a contact with no entry yet.
+  // A failure here must not break the page: the dropdown simply falls
+  // back to the contacts found in the entries themselves.
+  let contacts = [];
+  try {
+    contacts = await api.contacts.list();
+  } catch (_) {
+    contacts = [];
+  }
   // Pre-warm the data-URL cache for every photo the cards show, so the
   // first paint doesn't flash empty img boxes before the IPC round-trip
   // resolves.
   for (const e of events) warmPhotos(e);
   pageState.allEvents = events;
+  pageState.contacts = contacts;
   pageState.q = ((params && params.q) || '').trim().toLowerCase();
+  // The filter state comes from the URL too, so a filtered view can be
+  // shared or reloaded. Unknown values are dropped by the dropdown
+  // builders, so a stale link can never render a broken option.
+  pageState.filter = {
+    time: (params && params.time) || '',
+    contact: (params && params.contact) || '',
+    kind: (params && params.kind) || '',
+  };
   // The URL is the single source of truth for the filter state, so it
   // carries the contact filter alongside the search query.
   const baseParams = new URLSearchParams();
@@ -86,6 +116,10 @@ export async function render(args, params) {
               style="${initialQ ? '' : 'display:none;'}">清除</button>
       <span class="meta page-search-meta" style="${initialQ ? '' : 'display:none;'}"></span>
     </div>
+    <div class="memorial-filters" id="memorial-filters">
+      ${filterBarHtml()}
+      <span class="meta memorial-filter-meta" id="memorial-filter-meta"></span>
+    </div>
     <div id="memorial-list"></div>
   `;
 
@@ -95,6 +129,7 @@ export async function render(args, params) {
   if (input) input.value = initialQ;
 
   wireSearchInput();
+  wireFilters();
   rerenderList();
   applyPhotos();
 
@@ -114,8 +149,13 @@ export async function render(args, params) {
 function rerenderList() {
   const events = pageState.allEvents;
   const q = pageState.q;
-  const filtered = q ? events.filter((e) => matchesMemorialQuery(e, q)) : events;
+  const filter = pageState.filter;
+  // The three dropdown axes and the free-text search compose: an entry
+  // has to pass every one of them.
+  const filtered = events.filter((e) =>
+    (!q || matchesMemorialQuery(e, q)) && matchesFilter(e, filter));
   const suppressed = events.length - filtered.length;
+  const filterActive = !!(filter.time || filter.contact || filter.kind);
 
   const clearBtn = document.getElementById('memorial-clear');
   if (clearBtn) clearBtn.style.display = q ? '' : 'none';
@@ -124,11 +164,22 @@ function rerenderList() {
     metaEl.style.display = q ? '' : 'none';
     metaEl.textContent = q ? `${filtered.length} / ${events.length} 条匹配` : '';
   }
+  // The filter bar carries its own counter: it shows how many entries
+  // survive the dropdowns alone (search excluded), so the user can see
+  // what the dropdowns are doing without undoing their search.
+  const filterMeta = document.getElementById('memorial-filter-meta');
+  if (filterMeta) {
+    const byFilter = events.filter((e) => matchesFilter(e, filter)).length;
+    filterMeta.textContent = filterActive ? `${byFilter} / ${events.length} 条` : '';
+  }
   const exportBtn = document.getElementById('open-export');
   if (exportBtn) exportBtn.style.display = events.length > 0 ? '' : 'none';
 
   const host = document.getElementById('memorial-list');
   if (!host) return;
+  const emptyMsg = filterActive
+    ? `没有符合筛选条件的回忆事件 · 已隐藏 ${suppressed} 条`
+    : (q ? `没有匹配「${escapeHtml(q)}」的回忆事件 · 已隐藏 ${suppressed} 条` : '');
   host.innerHTML = `
     ${pageState.selectMode.active ? bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
@@ -138,7 +189,7 @@ function rerenderList() {
     ${events.length === 0
       ? `<div class="empty">还没有回忆事件 · 点 + 新建 创建一个</div>`
       : filtered.length === 0
-        ? `<div class="empty">没有匹配「${escapeHtml(q)}」的回忆事件 · 已隐藏 ${suppressed} 条</div>`
+        ? `<div class="empty">${emptyMsg}</div>`
         : `<div class="memorial-grid">${filtered.map((e) => pageState.selectMode.active
             ? bulkSelectableCardHtml(e, pageState.selectMode.selected.has(e.id))
             : renderRow(e)).join('')}</div>`}
@@ -189,12 +240,10 @@ function wireSearchInput() {
       settleTimer = null;
       const next = input.value.trim().toLowerCase();
       pageState.q = next;
-      const targetHash = next
-        ? pageState.basePath + (pageState.basePath.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(next)
-        : pageState.basePath;
-      if (location.hash !== '#' + targetHash) {
-        try { history.replaceState(null, '', '#' + targetHash); } catch (_) {}
-      }
+      // The URL carries the search text AND the three dropdown values, so
+      // both use the same sync helper — otherwise one would wipe the
+      // other's parameters.
+      syncFilterUrl();
       rerenderList();
     };
     input.addEventListener('input', () => {
@@ -211,13 +260,123 @@ function wireSearchInput() {
     clearBtn.onclick = () => {
       if (input.value) input.value = '';
       pageState.q = '';
-      const targetHash = pageState.basePath;
-      if (location.hash !== '#' + targetHash) {
-        try { history.replaceState(null, '', '#' + targetHash); } catch (_) {}
-      }
+      syncFilterUrl();
       rerenderList();
       input.focus();
     };
+  }
+}
+
+// The filter bar: three dropdowns — 时间 / 联系人 / 类型 — plus a
+// 「重置筛选」button that appears only while a filter is active.
+//
+// The dropdowns live OUTSIDE the rewritten list subtree, so re-filtering
+// never replaces the <select> the user is interacting with — the same
+// reason the search input is kept outside it.
+function filterBarHtml() {
+  const f = pageState.filter;
+  const contacts = contactOptions(pageState.allEvents, pageState.contacts);
+  const timeOpts = TIME_RANGES.map((r) =>
+    `<option value="${escapeHtml(r.value)}" ${r.value === f.time ? 'selected' : ''}>${escapeHtml(r.label)}</option>`).join('');
+  const contactOpts = [
+    `<option value="" ${!f.contact ? 'selected' : ''}>全部联系人</option>`,
+    ...contacts.map((c) =>
+      `<option value="${escapeHtml(c.value)}" ${c.value === f.contact ? 'selected' : ''}>${escapeHtml(c.label)}</option>`),
+  ].join('');
+  const kindOpts = kindOptions().map((k) =>
+    `<option value="${escapeHtml(k.value)}" ${k.value === f.kind ? 'selected' : ''}>${escapeHtml(k.label)}</option>`).join('');
+  const active = !!(f.time || f.contact || f.kind);
+  return `
+    <label class="memorial-filter">
+      <span class="memorial-filter-label">时间</span>
+      <select id="memorial-filter-time" class="memorial-filter-select">${timeOpts}</select>
+    </label>
+    <label class="memorial-filter">
+      <span class="memorial-filter-label">联系人</span>
+      <select id="memorial-filter-contact" class="memorial-filter-select">${contactOpts}</select>
+    </label>
+    <label class="memorial-filter">
+      <span class="memorial-filter-label">类型</span>
+      <select id="memorial-filter-kind" class="memorial-filter-select">${kindOpts}</select>
+    </label>
+    <button class="btn secondary memorial-filter-reset" id="memorial-filter-reset" type="button"
+            style="${active ? '' : 'display:none;'}">重置筛选</button>
+  `;
+}
+
+// Wire the three dropdowns. Each change updates pageState.filter, syncs
+// the URL (so the view can be shared / reloaded), and repaints the list.
+//
+// The URL sync mirrors the search box: history.replaceState, never a
+// history entry per keystroke, never a router re-render.
+function wireFilters() {
+  const bind = (id, key) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.wired) return;
+    el.dataset.wired = '1';
+    el.onchange = () => {
+      pageState.filter[key] = el.value;
+      syncFilterUrl();
+      rerenderList();
+      // The reset button shows/hides with the filter state, so it has to
+      // be refreshed after the change — it lives outside the list subtree
+      // and is therefore not repainted by rerenderList().
+      updateResetButton();
+    };
+  };
+  bind('memorial-filter-time', 'time');
+  bind('memorial-filter-contact', 'contact');
+  bind('memorial-filter-kind', 'kind');
+
+  const resetBtn = document.getElementById('memorial-filter-reset');
+  if (resetBtn && !resetBtn.dataset.wired) {
+    resetBtn.dataset.wired = '1';
+    resetBtn.onclick = () => {
+      pageState.filter = emptyFilter();
+      // Put every dropdown back to its "不限" option.
+      for (const [id, key] of [
+        ['memorial-filter-time', 'time'],
+        ['memorial-filter-contact', 'contact'],
+        ['memorial-filter-kind', 'kind'],
+      ]) {
+        const el = document.getElementById(id);
+        if (el) el.value = pageState.filter[key];
+      }
+      syncFilterUrl();
+      rerenderList();
+      updateResetButton();
+    };
+  }
+}
+
+// Show the 重置筛选 button only while a filter is active.
+function updateResetButton() {
+  const btn = document.getElementById('memorial-filter-reset');
+  if (!btn) return;
+  const f = pageState.filter;
+  btn.style.display = (f.time || f.contact || f.kind) ? '' : 'none';
+}
+
+// Push the current filter + search into the URL without adding a history
+// entry. The query string carries the search text and the three filter
+// values; an empty value is left out so the URL stays readable.
+//
+// The path comes from pageState.basePath so a contact-scoped view
+// ("/events/memorial?contact_id=…") keeps its scoping.
+function syncFilterUrl() {
+  const base = new URLSearchParams(pageState.basePath.split('?')[1] || '');
+  const basePath = pageState.basePath.split('?')[0];
+  const params = new URLSearchParams();
+  if (base.get('contact_id')) params.set('contact_id', base.get('contact_id'));
+  if (pageState.q) params.set('q', pageState.q);
+  const f = pageState.filter;
+  if (f.time) params.set('time', f.time);
+  if (f.contact) params.set('contact', f.contact);
+  if (f.kind) params.set('kind', f.kind);
+  const qs = params.toString();
+  const targetHash = basePath + (qs ? '?' + qs : '');
+  if (location.hash !== '#' + targetHash) {
+    try { history.replaceState(null, '', '#' + targetHash); } catch (_) {}
   }
 }
 
@@ -269,6 +428,9 @@ function wireBulk() {
       await reloadAndRender({
         q: pageState.q,
         contact_id: base.get('contact_id') || undefined,
+        time: pageState.filter.time || undefined,
+        contact: pageState.filter.contact || undefined,
+        kind: pageState.filter.kind || undefined,
       });
       return result;
     },
@@ -319,8 +481,11 @@ function wireBulk() {
         cb.checked = pageState.selectMode.selected.has(id);
       });
       const count = pageState.selectMode.selected.size;
+      // The toolbar's total must count what the list actually shows —
+      // search AND the three dropdown filters.
       const total = pageState.allEvents.filter((e) =>
-        pageState.q ? matchesMemorialQuery(e, pageState.q) : true
+        (!pageState.q || matchesMemorialQuery(e, pageState.q)) &&
+        matchesFilter(e, pageState.filter)
       ).length;
       t.outerHTML = bulkToolbarHtml({
         count,
@@ -339,6 +504,11 @@ function wireBulk() {
   });
 }
 
+// Reload the list after a mutation (bulk delete) and re-render the page.
+//
+// The search text AND the three dropdown filters survive the reload —
+// deleting the rows a user just picked should not silently reset the view
+// they were looking at.
 async function reloadAndRender(params = {}) {
   const opts = {};
   if (params.contact_id) opts.contact_id = params.contact_id;
@@ -349,6 +519,9 @@ async function reloadAndRender(params = {}) {
   render([], {
     contact_id: params.contact_id,
     q: pageState.q,
+    time: params.time,
+    contact: params.contact,
+    kind: params.kind,
   });
 }
 

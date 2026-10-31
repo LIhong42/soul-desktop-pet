@@ -3705,6 +3705,55 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   align-items: start;
 }
 
+/* The filter bar on the 回忆事件 page: three dropdowns (时间 / 联系人 /
+   类型) and a 重置筛选 button, sitting between the search box and the
+   card grid.
+
+   The row sits BELOW the search box rather than beside it: the search
+   input takes the full width of its row (it is the thing the user types
+   into, and it must never be squeezed), while the dropdowns are narrow
+   and work well in a row of their own. On a narrow window they wrap onto
+   a second line. */
+.memorial-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  flex-wrap: wrap;
+}
+/* Each dropdown is a labelled pair: the label sits to the left of the
+   <select>, so the row reads as three named filters rather than as three
+   anonymous dropdowns. */
+.memorial-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.memorial-filter-label {
+  color: #8a8580;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+/* The dropdown sizes itself to its longest option — the global `select`
+   rule sets width:100%, which would stretch it to fill the row. */
+.memorial-filter-select {
+  width: auto;
+  min-width: 108px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.memorial-filter-reset {
+  flex: 0 0 auto;
+}
+/* The counter beside the dropdowns: how many entries survive the
+   dropdowns alone (the search box is counted separately). */
+.memorial-filter-meta {
+  color: #8a8580;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
 /* The card is a plain wrapper: it holds the page and gives the hover a
    place to live. It carries no background, no border and no padding of
    its own — anything around the page would be decoration. */
