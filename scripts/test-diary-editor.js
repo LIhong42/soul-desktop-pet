@@ -1260,12 +1260,31 @@ app.whenReady().then(async () => {
         .map(el => el.style.width),
       foot: !!document.querySelector('.memorial-card-foot'),
       // The bookkeeping line lives IN the third layer — the strip at the
-      // bottom — so the sheet keeps the editor's three layers.
+      // bottom — so the sheet keeps the editor's three layers. The strip
+      // itself carries the date ALONE; the rest of the facts wait for
+      // the pointer and live in the ghost.
       metaInFoot: document.querySelector('.memorial-card-foot')
         .textContent.trim(),
+      ghost: !!document.querySelector('.memorial-card-ghost'),
+      ghostText: document.querySelector('.memorial-card-ghost')
+        ? document.querySelector('.memorial-card-ghost').textContent.trim()
+        : '',
+      ghostOpacity: document.querySelector('.memorial-card-ghost')
+        ? getComputedStyle(document.querySelector('.memorial-card-ghost')).opacity
+        : '',
       metaRows: document.querySelectorAll('.memorial-card-meta').length,
       footBg: getComputedStyle(document.querySelector('.memorial-card-foot'))
         .backgroundColor,
+      // The date is set in the title bar's own type, so the strip reads
+      // as a second line of the title rather than as a footnote.
+      footFontSize: getComputedStyle(
+        document.querySelector('.memorial-card-foot')).fontSize,
+      footFontWeight: getComputedStyle(
+        document.querySelector('.memorial-card-foot')).fontWeight,
+      titleFontSize: getComputedStyle(
+        document.querySelector('.memorial-card-header')).fontSize,
+      titleFontWeight: getComputedStyle(
+        document.querySelector('.memorial-card-header')).fontWeight,
       sheetHeight: sheet.getBoundingClientRect().height,
       // The body clips whatever runs past the bottom of the sheet.
       bodyOverflow: getComputedStyle(body).overflow,
@@ -1293,7 +1312,8 @@ app.whenReady().then(async () => {
     cardResult.cardChildren, ['memorial-card-sheet']);
   check('the sheet stacks the header, the body and the strip',
     cardResult.sheetLayers,
-    ['memorial-card-header', 'memorial-card-body', 'memorial-card-foot']);
+    ['memorial-card-header', 'memorial-card-body', 'memorial-card-foot',
+     'memorial-card-ghost']);
   check('the card shows the entry title', cardResult.title, '第一次去海边');
   check('the card paints the entry\'s own background style',
     cardResult.sheetVar, '#77613b');
@@ -1324,9 +1344,22 @@ app.whenReady().then(async () => {
   // coloured band, not on the paper above it.
   check('the details live in the strip, not in a row of their own',
     cardResult.metaRows, 0);
-  checkTrue('the strip names the contacts and the date',
-    cardResult.metaInFoot.includes('小明 等 2 人')
-    && cardResult.metaInFoot.includes('2026-05-01'));
+  // The strip carries the date ALONE. It is the one fact a reader scans
+  // a card for, so it is the one fact that stays on the page at rest.
+  check('the strip shows the date and nothing else',
+    cardResult.metaInFoot, '2026-05-01');
+  // The date is set in the title bar's own type, so the strip reads as a
+  // second line of the title rather than as a footnote in a smaller voice.
+  check('the date is set like the title',
+    [cardResult.footFontSize, cardResult.footFontWeight],
+    [cardResult.titleFontSize, cardResult.titleFontWeight]);
+  // The rest of the facts wait for the pointer and ride in the ghost.
+  check('the card has a hovering ghost', cardResult.ghost, true);
+  checkTrue('the ghost names the contacts and the kind',
+    cardResult.ghostText.includes('小明 等 2 人')
+    && cardResult.ghostText.includes('其他'));
+  check('the ghost is invisible until the pointer arrives',
+    cardResult.ghostOpacity, '0');
   check('the body clips what runs past the sheet',
     cardResult.bodyOverflow, 'hidden');
   // The card is a THUMBNAIL: the page is scaled down as one piece, so

@@ -42,7 +42,7 @@ async function render(args) {
   app.innerHTML = `
     <div class="row between">
       <h1>${isNew ? '新建联系人' : '编辑联系人'}</h1>
-      <a class="inline-link" href="${isNew ? '#/contacts' : '#/contacts/' + c.id}">取消</a>
+      <a class="pill-link" href="${isNew ? '#/contacts' : '#/contacts/' + c.id}">取消</a>
     </div>
 
     <div class="card">

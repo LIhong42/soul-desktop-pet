@@ -97,7 +97,7 @@ async function renderEdit(args, params) {
   app.innerHTML = `
     <div class="row between">
       <h1>${isNew ? '新建' : '编辑'}${categoryTitle(category)}</h1>
-      <a class="inline-link" href="${listHref}">← 返回列表</a>
+      <a class="back-link" href="${listHref}"><span class="icon-arrow-left"></span>返回列表</a>
     </div>
     <div class="card">
       ${form.html}

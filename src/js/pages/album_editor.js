@@ -1010,7 +1010,7 @@ function renderShell() {
   state.container.innerHTML = `
     <div class="album-editor" data-theme="${escapeHtml(state.layout.themeId)}">
       <div class="album-toolbar">
-        <button class="btn secondary" id="album-back-btn" type="button">← 返回筛选</button>
+        <button class="btn secondary" id="album-back-btn" type="button"><span class="icon-arrow-left"></span>返回筛选</button>
         <div class="album-toolbar-spacer"></div>
         <button class="btn secondary" id="album-undo-btn" type="button" disabled title="撤销 (Ctrl+Z)">↶</button>
         <button class="btn secondary" id="album-redo-btn" type="button" disabled title="重做 (Ctrl+Y)">↷</button>

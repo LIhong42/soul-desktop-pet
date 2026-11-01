@@ -63,10 +63,10 @@ async function render(args) {
     ? ref
     : `/contacts/${contact.id}`;
   const backHash = '#' + backPath;
-  const backLabel = /^\/contacts\/[^/]+\/(likes|taboos|gifts|important-dates)/.test(backPath) ? '← 返回联系人详情'
-                  : /^\/contacts\/[^/]+$/.test(backPath) ? '← 返回联系人详情'
-                  : backPath === '/important-dates' ? '← 返回提醒日期'
-                  : '← 返回上一页';
+  const backLabel = /^\/contacts\/[^/]+\/(likes|taboos|gifts|important-dates)/.test(backPath) ? '返回联系人详情'
+                  : /^\/contacts\/[^/]+$/.test(backPath) ? '返回联系人详情'
+                  : backPath === '/important-dates' ? '返回提醒日期'
+                  : '返回上一页';
   // Warm the avatar data URL cache so the contact photo paints on the same
   // tick as the rest of the page.
   if (contact.custom_avatar_path) fetchAvatarDataUrl(contact.id);
@@ -75,7 +75,7 @@ async function render(args) {
   app.innerHTML = `
     <div class="row between">
       <h1>重要日期详情</h1>
-      <a class="inline-link" id="back-link" href="${escapeHtml(backHash)}">${escapeHtml(backLabel)}</a>
+      <a class="back-link" id="back-link" href="${escapeHtml(backHash)}"><span class="icon-arrow-left"></span>${escapeHtml(backLabel)}</a>
     </div>
 
     <div class="card">

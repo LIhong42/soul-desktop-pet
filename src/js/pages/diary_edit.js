@@ -913,7 +913,7 @@ export async function render(args, params) {
 
   app.innerHTML = `
     <div class="row between diary-topbar">
-      <a class="inline-link" href="#${escapeHtml(pageState.returnTo)}">← 返回列表</a>
+      <a class="back-link" href="#${escapeHtml(pageState.returnTo)}"><span class="icon-arrow-left"></span>返回列表</a>
       <div class="row" style="gap:8px;">
         ${!isNew ? '<button class="btn danger" id="del">删除</button>' : ''}
         <button class="btn" id="save">保存</button>

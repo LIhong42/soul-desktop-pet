@@ -86,7 +86,7 @@ async function render(args) {
       <div class="row between">
         <h1>${escapeHtml(meta.title)} · ${escapeHtml(displayName(c))}</h1>
         <div>
-          <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}">← 返回详情</a>
+          <a class="back-link" href="#/contacts/${escapeHtml(c.id)}"><span class="icon-arrow-left"></span>返回详情</a>
         </div>
       </div>
       <div class="card">

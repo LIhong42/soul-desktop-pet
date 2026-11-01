@@ -573,8 +573,10 @@ function renderRow(e) {
 // simply not there yet.
 //
 // The bottom strip is the sheet's third layer — the one the editor
-// paints as a plain band. Here it carries the entry's details (who it
-// was with, when, how many photos), in the sheet's own ink.
+// paints as a plain band. Here it carries the entry's date alone, set in
+// the title bar's own type so the strip reads as part of the title. The
+// other details (who it was with, what kind of memory, how many photos)
+// ride along in the hovering ghost — see cardGhostHtml.
 //
 // `lead` is an optional mark on the title bar — the select-mode
 // checkbox rides there.
@@ -595,11 +597,36 @@ function cardSheetHtml(e, lead) {
         </div>
       </div>
       <div class="memorial-card-foot">
-        <span class="memorial-card-contact">${escapeHtml(contactSummary(e))}</span>
         <span class="memorial-card-date">${escapeHtml(formatDateOnly(e.occurred_at))}</span>
-        <span class="tag">${escapeHtml(kindTagLabel(e.kind))}</span>
-        ${e.photo_count ? `<span class="memorial-card-photos">${e.photo_count} 张照片</span>` : ''}
       </div>
+      ${cardGhostHtml(e)}
+    </div>
+  `;
+}
+
+// The card's hovering ghost: the entry's bookkeeping — who it was with,
+// what kind of memory it is, how many photos it holds — lifted off the
+// foot strip and floating over the card.
+//
+// The foot strip itself shows the date alone, set like the title bar, so
+// the card reads as "a page with its date on it". The rest of the facts
+// are secondary, and a page of thumbnails should not carry them at rest:
+// they appear only when the reader is looking at THAT card, as a
+// translucent layer over the paper (the 虚影), and vanish when the
+// pointer leaves.
+//
+// The layer sits just above the foot strip, over the bottom of the
+// body — that is where the facts used to live, so the ghost lands where
+// the eye expects them, and the date underneath stays clear.
+function cardGhostHtml(e) {
+  const photos = e.photo_count
+    ? `<span class="memorial-card-photos">${e.photo_count} 张照片</span>`
+    : '';
+  return `
+    <div class="memorial-card-ghost" aria-hidden="true">
+      <span class="memorial-card-contact">${escapeHtml(contactSummary(e))}</span>
+      <span class="tag">${escapeHtml(kindTagLabel(e.kind))}</span>
+      ${photos}
     </div>
   `;
 }

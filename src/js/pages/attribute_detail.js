@@ -62,17 +62,17 @@ async function render(args) {
   const backHash = '#' + backPath;
   // Label follows the entry page shape: a per-contact sub-page says
   // "返回联系人详情"; a global list page says "返回喜好 / 忌讳 / 礼物".
-  const backLabel = /^\/contacts\/[^/]+\/(likes|taboos|gifts)$/.test(backPath) ? '← 返回联系人详情'
-                  : backPath === '/taboos' ? '← 返回忌讳'
-                  : backPath === '/gifts'  ? '← 返回礼物'
-                  : /^(\/contacts\/[^/]+)/.test(backPath) ? '← 返回联系人详情'
-                  : '← 返回喜好';
+  const backLabel = /^\/contacts\/[^/]+\/(likes|taboos|gifts)$/.test(backPath) ? '返回联系人详情'
+                  : backPath === '/taboos' ? '返回忌讳'
+                  : backPath === '/gifts'  ? '返回礼物'
+                  : /^(\/contacts\/[^/]+)/.test(backPath) ? '返回联系人详情'
+                  : '返回喜好';
   const avatarUrl = c.custom_avatar_path ? getCachedAvatarDataUrl(c.id) : '';
 
   app.innerHTML = `
     <div class="row between">
       <h1>${escapeHtml(titleText)}详情</h1>
-      <a class="inline-link" id="back-link" href="${escapeHtml(backHash)}">${escapeHtml(backLabel)}</a>
+      <a class="back-link" id="back-link" href="${escapeHtml(backHash)}"><span class="icon-arrow-left"></span>${escapeHtml(backLabel)}</a>
     </div>
 
     <div class="card">

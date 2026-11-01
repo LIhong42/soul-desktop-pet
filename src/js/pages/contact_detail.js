@@ -494,7 +494,7 @@ async function render(args) {
           : ''}</h1>
         <div class="contact-header-actions">
           <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/edit">编辑基本信息</a>
-          <a class="inline-link" href="#/contacts">← 返回</a>
+          <a class="inline-link" href="#/contacts"><span class="icon-arrow-left"></span>返回</a>
         </div>
       </div>
     </div>

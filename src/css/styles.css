@@ -15,6 +15,9 @@
   --shadow-md: 0 4px 8px rgba(40, 30, 20, 0.06), 0 8px 24px rgba(40, 30, 20, 0.06);
   --shadow: var(--shadow-sm);
   --radius: 10px;
+  /* The 「返回」 chevron, kept as a mask so it can be painted with the
+     link's own color (currentColor) instead of shipping an SVG per page. */
+  --icon-arrow-left: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 5l-7 7 7 7'/%3E%3C/svg%3E");
   /* Single source for the font stack so we can tweak it without hunting
      through every selector that hard-codes it. */
   --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
@@ -474,6 +477,73 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 
 .inline-link { color: var(--accent); text-decoration: none; cursor: pointer; }
 .inline-link:hover { text-decoration: underline; }
+
+/* ---- The 「返回」 / 「取消」 control ---------------------------------------
+   A back link is a control, not a sentence: it sits in the same row as the
+   保存 / 删除 buttons, so it gets the app's pill shape and the same
+   muted → accent color move as the nav pills in the top bar. A plain
+   accent-colored text link read as a stray hyperlink next to the real
+   buttons; the pill makes the row read as "one toolbar" again.
+
+   .pill-link is the same pill without the chevron — for the 「取消」 link
+   in the contact editor, which plays the same role but is not a "back".
+
+   The arrow is a CSS-drawn chevron (a mask over a data-URI SVG) instead of
+   a text "←", so it follows the link's color and nudges left on hover. */
+.back-link,
+.pill-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease,
+              box-shadow 180ms ease, transform 120ms ease;
+}
+/* The chevron takes the left side of the pill, so its padding is tighter. */
+.back-link { padding-left: 11px; }
+.back-link:hover,
+.pill-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-sm);
+}
+.back-link:active,
+.pill-link:active { transform: translateY(1px); }
+.back-link:focus-visible,
+.pill-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The chevron itself. Painted from a mask, so it takes the color of
+   whatever carries it — the link's own, in this case. The vertical-align
+   nudge lines the glyph up with the text next to it; inside the flex
+   .back-link the alignment comes from align-items instead, so the nudge
+   is ignored there. */
+.icon-arrow-left {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  background-color: currentColor;
+  -webkit-mask-image: var(--icon-arrow-left);
+  mask-image: var(--icon-arrow-left);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  transition: transform 180ms ease;
+}
+.back-link:hover .icon-arrow-left { transform: translateX(-2px); }
+/* Inside a text button the glyph needs a little air before the label. */
+.btn .icon-arrow-left { margin-right: 4px; }
 
 .kbd {
   font-family: monospace;
@@ -3780,6 +3850,10 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   --diary-muted: #9a8f74;
   --diary-rule: #e2d5b8;
 
+  /* The sheet is the containing block for the hovering ghost, so the
+     ghost is positioned against the paper's own edges rather than the
+     card wrapper's. */
+  position: relative;
   display: flex;
   flex-direction: column;
   /* The card's fixed height. A one-line entry and a ten-paragraph one
@@ -3957,26 +4031,99 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   background: rgba(0, 0, 0, 0.06);
 }
 
-/* The bookkeeping line at the foot of the page: who it was with, when it
-   happened, how many photos it holds.
+/* The foot of the page: the entry's date, and nothing else.
 
    It sits IN the third layer of the sheet — the decorative strip at the
    bottom — so the card keeps the editor's three layers exactly: header
-   bar, body, decoration. The strip is not empty paint here; it carries
-   the entry's details, and its ink is the sheet's own so it reads on
-   all six papers. */
+   bar, body, decoration.
+
+   The strip carries ONE thing, the date, and it is set in the title
+   bar's own type (same weight, same size, same tracking) so the strip
+   reads as a second line of the title rather than as a footnote in a
+   smaller voice. The date is the one fact a reader scans a card for, so
+   it is the one fact that stays on the page at rest. Everything else
+   (who it was with, what kind of memory, how many photos) waits for the
+   pointer — see .memorial-card-ghost below. */
 .memorial-card-foot {
   flex: none;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  min-height: 26px;
-  padding: 4px 14px;
+  min-height: 30px;
+  padding: 5px 14px;
   margin-bottom: -1px;
   background: var(--diary-bg-foot);
-  font-size: 12px;
-  color: var(--diary-muted);
+  color: var(--diary-text);
+  /* The title bar's type. `inherit` would pull the foot's own rule, so
+     the three properties are restated here rather than shared through a
+     variable — the header is a separate layer, and it is allowed to
+     drift if the title's type ever changes. */
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
 }
+.memorial-card-date { white-space: nowrap; }
+
+/* ---- The hovering ghost ----------------------------------------------
+   The card's secondary facts, floating over it while the pointer rests
+   on the card.
+
+   It is a translucent layer (the 虚影) rather than a strip of its own:
+   the facts are lifted OFF the paper and shown as a shadow of themselves,
+   so the card keeps its three layers at rest and gains a fourth only
+   while it is being read.
+
+   The layer sits just ABOVE the foot strip — over the bottom of the
+   body — so the eye finds the facts where they used to live, and the
+   date underneath stays clear.
+
+   Its own paint is the paper's colour at part strength, so the text of
+   the entry shows THROUGH it. That is what makes the layer read as a
+   shadow of the page rather than as a panel laid on top of it. */
+.memorial-card-ghost {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 30px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  /* The paper's own colour, part strength. The theme paints this as a
+     hex, so the veil is a second, translucent layer of it rather than
+     an alpha on the hex (which would need the colour parsed). */
+  background: var(--diary-bg-foot);
+  color: var(--diary-text);
+  font-size: 12px;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+/* The veil itself: the strip's colour, at part strength, over the
+   paper. It is what the facts are written on, and it is why the entry's
+   own text can be read faintly through the ghost. */
+.memorial-card-ghost::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--diary-bg-foot);
+  opacity: 0.82;
+  pointer-events: none;
+}
+/* The facts sit ON the veil, so they are painted in their own right
+   rather than being flattened by the parent's opacity. */
+.memorial-card-ghost > * { position: relative; }
+.memorial-card.clickable:hover .memorial-card-ghost,
+.memorial-card:focus-within .memorial-card-ghost {
+  opacity: 1;
+  transform: translateY(0);
+}
+/* In select mode the cards are being picked, not read, so the ghost
+   stays away — the facts would only be in the way of the checkbox. */
+.memorial-card--selectable .memorial-card-ghost { display: none; }
 .memorial-card-contact {
   color: var(--diary-text);
   font-weight: 600;
@@ -3985,13 +4132,12 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   text-overflow: ellipsis;
   max-width: 55%;
 }
-.memorial-card-date { white-space: nowrap; }
 .memorial-card-photos { white-space: nowrap; }
 /* The kind badge (第一次 / 其他) is an outlined chip rather than the
    accent-coloured pill the rest of the app uses: on the paper it has to
    read as a mark on the page, not as a button. Its ink is the page's
    own, so it stays legible on the pale papers too. */
-.memorial-card-foot .tag {
+.memorial-card-ghost .tag {
   background: transparent;
   color: var(--diary-text);
   border: 1px solid var(--diary-muted);
