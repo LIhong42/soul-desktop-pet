@@ -177,6 +177,77 @@ function clampToMonth(year, month, day) {
   return new Date(year, m - 1, d);
 }
 
+// ---------------------------------------------------------------------------
+// Next occurrence of an important date (the 今日页 carousel's day counts)
+// ---------------------------------------------------------------------------
+//
+// An important date is anchored to a month + day that recurs every year.
+// This answers two questions the carousel card asks:
+//
+//   daysUntilNext — whole days from `today` to the next occurrence of
+//     (month, day). 0 when it is today.
+//   yearsSince     — how many full years have elapsed since the date's
+//     ORIGIN year, as of today.
+//
+// `yearsSince` is the "至今" number — "how long this has been". It is
+// measured at the LAST occurrence (the most recent one on or before
+// today), not the next one. The difference matters: a birthday recorded
+// with year 1990 reads 36 for the whole year after Nov 5th, and only
+// becomes 37 on the next Nov 5th. Measuring at the NEXT occurrence would
+// make it flip to 37 the day AFTER the birthday, which is exactly the
+// "the number jumped overnight" bug the age is supposed to avoid.
+//
+// The two numbers therefore move in opposite directions at different
+// moments, and both are correct: the age ticks up ON the date, and the
+// countdown ticks up the day AFTER it.
+//
+// A row with no origin year (year IS NULL) has no age to report, so
+// `yearsSince` comes back null and the caller omits the clause.
+//
+// `today` must be a midnight-normalized date (see `clampToMonth`'s
+// callers) so the day difference is a whole number of days.
+function nextImportantDateOccurrence(row, today) {
+  const m = row.month;
+  const d = row.day;
+  // This year's occurrence, clamped to a real calendar day (Feb 29 → Feb 28
+  // in common years).
+  let target = clampToMonth(today.getFullYear(), m, d);
+  // Already past today → the next one is next year. A date whose month/day
+  // IS today stays on this year, which is what makes "days_until_next = 0"
+  // mean "就是今天".
+  if (target.getTime() < today.getTime()) {
+    target = clampToMonth(today.getFullYear() + 1, m, d);
+  }
+  const daysUntilNext = Math.round((target.getTime() - today.getTime()) / DAY_MS);
+
+  let yearsSince = null;
+  if (row.year) {
+    // The age as of today, measured at the most RECENT anniversary — the
+    // last time this date actually happened, on or before today.
+    //
+    // `thisYear` is this year's occurrence of (month, day). It IS the
+    // most recent anniversary when it has already passed (or is today);
+    // when it is still ahead, the most recent one was LAST year's.
+    //
+    // So: today ON the anniversary → this year's (the age ticks up
+    // today). Today BEFORE it → last year's (the age hasn't ticked yet).
+    // Today AFTER it → this year's (it already ticked).
+    const thisYear = clampToMonth(today.getFullYear(), m, d);
+    const lastOccurrence = (thisYear.getTime() > today.getTime())
+      ? clampToMonth(today.getFullYear() - 1, m, d)
+      : thisYear;
+    // The number of whole years between the origin and that anniversary.
+    // Clamped at 0 so a row whose year is in the future (data entry typo,
+    // or a birthday recorded before it happened) reads 0 rather than -1.
+    yearsSince = Math.max(0, lastOccurrence.getFullYear() - (row.year | 0));
+  }
+  return {
+    nextDate: target,
+    daysUntilNext,
+    yearsSince,
+  };
+}
+
 // Normalize an advance_days value: null/absent → the 7-day default,
 // negative → 0, and anything absurd is clamped to a year.
 function normalizeAdvanceDays(v) {
@@ -263,5 +334,6 @@ module.exports = {
   computeNextFireEvent,
   nextOccurrenceFromAnchor,
   importantDateOccurrence,
+  nextImportantDateOccurrence,
   normalizeAdvanceDays,
 };

@@ -315,6 +315,21 @@ function save() {
   if (!db || !dbPath) return;
   const data = db.export();
   fs.writeFileSync(dbPath, Buffer.from(data));
+  // sql.js's `export()` closes and reopens the underlying SQLite
+  // connection, and the reopened connection does NOT inherit the
+  // `PRAGMA foreign_keys = ON` from the schema — that pragma only takes
+  // effect when it is executed, and the schema's copy ran once, at
+  // CREATE time.
+  //
+  // So after the first auto-save, foreign-key enforcement silently
+  // switches OFF and every `ON DELETE CASCADE` stops firing: deleting a
+  // contact would leave its events and important dates behind as
+  // orphaned rows. Re-asserting the pragma after each export keeps the
+  // cascades working for the life of the connection.
+  //
+  // This must run outside any transaction — SQLite ignores the pragma
+  // while a transaction is open — and `export()` leaves none open.
+  try { db.run('PRAGMA foreign_keys = ON'); } catch {}
   dirty = false;
 }
 
@@ -811,6 +826,12 @@ function deletePetData(petId) {
   //   auto_log:           — auto-behaviour log (auto_behaviors.js)
   //   today_event:        — "an event happened today" flag (bond_engine.js)
   //   today_memorial:     — "a memorial happened today" flag (bond_engine.js)
+  //   days_together:      — 陪伴天数 counter (cozy_engine.js)
+  //
+  // `days_together` has a trailing `:day` sibling key
+  // (`days_together:<petId>:day`) that records which calendar day was
+  // last counted, so the exact-remainder match above doesn't cover it.
+  // It's handled by its own exact-match pass below.
   for (const prefix of [
     'pet_actions_config:',
     'pet_action_texts:',
@@ -830,6 +851,20 @@ function deletePetData(petId) {
       }
     } catch (e) {
       console.error('deletePetData settings cleanup failed:', e);
+    }
+  }
+
+  // The 陪伴天数 counter and its "last counted day" companion. Both keys
+  // embed the petId, so they're matched exactly rather than by prefix.
+  for (const key of [`days_together:${petId}`, `days_together:${petId}:day`]) {
+    try {
+      const row = one('SELECT value FROM settings WHERE key = ?', [key]);
+      if (row) {
+        run('DELETE FROM settings WHERE key = ?', [key]);
+        summary.settings++;
+      }
+    } catch (e) {
+      console.error('deletePetData days_together cleanup failed:', e);
     }
   }
 

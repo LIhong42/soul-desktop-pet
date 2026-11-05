@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const AdmZip = require('adm-zip');
 const db = require('./db');
-const { fmtDateTime, computeNextFireEvent, DEFAULT_ADVANCE_DAYS, importantDateOccurrence } = require('./time_util');
+const { fmtDateTime, computeNextFireEvent, DEFAULT_ADVANCE_DAYS, importantDateOccurrence, nextImportantDateOccurrence } = require('./time_util');
 const { validateLunar } = require('./lunar');
 const { listFestivals, festivalLabel } = require('./festivals');
 const {
@@ -214,6 +214,7 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
         cozy: cozy.value,
         cozy_today_peak: cozy.today_peak,
         cozy_today_interactions: cozy.today_interactions,
+        days_together: cozy.days_together,
         lonely_hours: Math.round((cozy.lonely_hours | 0) * 10) / 10,
       };
       if (petWin()) petWin().webContents.send('pet:status-changed', payload);
@@ -619,6 +620,61 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
     db.run('DELETE FROM important_dates WHERE id = ?', [id]);
     db.deleteSearch('important_date', id);
     return true;
+  });
+
+  // Every important date, across all contacts, with the day counts the
+  // 今日页's 纪念日 carousel shows.
+  //
+  // The per-contact `important_dates:list` handler above can't serve this:
+  // it needs one contact_id, and the carousel spans the whole address book.
+  // So this joins contacts in and computes the two numbers the card shows —
+  //
+  //   days_until_next — whole days from today to the next occurrence of
+  //     (month, day). 0 means it is today.
+  //   years_since     — how many full years have passed since the date's
+  //     ORIGIN year. This is the "纪念日至今" number: a birthday recorded
+  //     with year=1990 that is 36 years old today reads 36, and the same
+  //     date next year reads 37. A row with no year has no origin, so this
+  //     is null and the card omits the "至今 N 年" clause.
+  //
+  // The next occurrence is computed against the *calendar day*, not the
+  // wall-clock time: a date whose month/day is today counts 0 days even
+  // though its remind_time (09:00) may already have passed.
+  //
+  // Rows with remind_enabled = 0 are included — the user asked the
+  // carousel to show the dates they added, and silencing a reminder is
+  // about nagging, not about hiding the date itself.
+  ipcMain.handle('important_dates:list_all', () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const rows = db.all(
+      `SELECT d.*, c.name AS contact_name
+         FROM important_dates d
+         LEFT JOIN contacts c ON c.id = d.contact_id
+        ORDER BY d.month, d.day`
+    );
+    return rows.map((row) => {
+      const occ = nextImportantDateOccurrence(row, today);
+      return {
+        id: row.id,
+        contact_id: row.contact_id,
+        contact_name: row.contact_name || null,
+        label: row.label,
+        kind: row.kind,
+        month: row.month,
+        day: row.day,
+        year: row.year || null,
+        remind_enabled: !!row.remind_enabled,
+        // Null when the row has no origin year — the card then shows only
+        // the countdown, without a "至今 N 年" clause.
+        years_since: row.year ? occ.yearsSince : null,
+        days_until_next: occ.daysUntilNext,
+        // The date of the NEXT occurrence, as YYYY-MM-DD — the card shows
+        // it so the user can tell *which* upcoming date is being counted
+        // down to (this year's, or next year's for a date already past).
+        next_date: occ.nextDate,
+      };
+    });
   });
 
   // ---- Events ----
@@ -3302,15 +3358,43 @@ function normFreeText(s) {
   ipcMain.handle('bond:get_full_state', (_e, petId) => {
     // Composite snapshot used by the 今日 page so the renderer doesn't need
     // to round-trip four IPC calls. All four engines are pure functions over
-    // the DB row, so this is safe to call at any cadence. The reminder count
-    // is passed through because "reminder" is the top-priority mood — with a
-    // hardcoded 0 the pet could never report that it was nagging, which is
-    // exactly the state the user most wants to see on the page.
+    // the DB row, so this is safe to call at any cadence.
     const id = petId || db.getSetting('pet_id');
     const bond = petInteractions.getBondSnapshot(db, id);
     const cozy = petInteractions.getCozySnapshot(db, id);
     const mood = petInteractions.computeMood(db, petMoodMod.computeMood, queue.activeCount(), id);
-    return Object.assign({}, bond, cozy, { mood: mood.mood });
+    //
+    // The two snapshots are NOT merged blind. Both carry a `value` key —
+    // bond's is the 亲密度 score, cozy's is the 舒适度 — and a plain
+    // Object.assign would let cozy's `value` overwrite bond's, so the
+    // page would render the SAME number for 亲密度 and 舒适度 on its first
+    // paint. It only showed up later: the `pet:status-changed` push uses
+    // explicit `bond_value` / `cozy` keys, so the first interaction
+    // repainted the panel with the correct 亲密度 and the number appeared
+    // to jump out of nowhere.
+    //
+    // So the snapshot is flattened EXPLICITLY, field by field, with the
+    // same names the status push uses. One shape, one meaning per field,
+    // and no ambiguous `value` left lying around for the next reader to
+    // misread as the 亲密度.
+    return {
+      pet_id: id,
+      // Bond fields.
+      bond_value: bond.value,
+      bond_tier: bond.tier,
+      tier_label: bond.tier_label,
+      tier_floor: bond.tier_floor,
+      week_score: bond.weekly_score,
+      next_tier: bond.next_tier,
+      streak_weeks: bond.streak_weeks,
+      // Cozy fields.
+      cozy: cozy.value,
+      cozy_today_peak: cozy.today_peak,
+      cozy_today_interactions: cozy.today_interactions,
+      days_together: cozy.days_together,
+      lonely_hours: cozy.lonely_hours,
+      mood: mood.mood,
+    };
   });
 
   // Cozy interactions — single shared handler so we can gate all six

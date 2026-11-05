@@ -2586,8 +2586,8 @@ if (M.on) {
   });
 
   // Mood broadcast — apply the data-mood attribute so CSS picks the
-  // right filter. Also flash a soft bubble for happy_clingy / proud /
-  // festive moods where pet_mood provided a line of text.
+  // right filter. Also flash a soft bubble for the moods where pet_mood
+  // provided a line of text (happy_clingy, missing_you, sad, depressed).
   M.on('pet:mood-changed', (payload) => {
     if (!payload) return;
     if (payload.mood) sprite.dataset.mood = payload.mood;
@@ -2616,16 +2616,12 @@ if (M.on) {
     showContextBubble(payload);
   });
 
-  // Cozy / bond-tier broadcasts — also route the cozy value to the data
-  // attribute so future CSS hooks (e.g. hunger bar) can read it.
-  M.on('pet:cozy-changed', (payload) => {
-    if (!payload) return;
-    if (typeof payload.value === 'number') sprite.dataset.cozy = String(Math.round(payload.value));
-  });
-  M.on('pet:bond-tier-changed', (payload) => {
-    if (!payload) return;
-    if (typeof payload.tier === 'number') sprite.dataset.bondTier = String(payload.tier);
-  });
+  // NOTE: there used to be `pet:cozy-changed` / `pet:bond-tier-changed`
+  // listeners here, routing the cozy value and the bond tier onto the
+  // sprite's data attributes. Nothing ever emitted those channels, so
+  // they were dead code — the real mood / status now arrives on
+  // `pet:status-changed` (see above) and drives the same information.
+  // They were removed rather than left as a trap for the next reader.
 
   // One-shot particles — append a transient <span> to the .pet-particles
   // layer. The CSS animation removes the element automatically after

@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('mp', {
   // important dates
   importantDates: {
     list: (contactId) => ipcRenderer.invoke('important_dates:list', contactId),
+    // Every important date across all contacts, with the day counts the
+    // 今日页's 纪念日 carousel renders (days_until_next / years_since).
+    listAll: () => ipcRenderer.invoke('important_dates:list_all'),
     create: (contactId, input) => ipcRenderer.invoke('important_dates:create', contactId, input),
     update: (id, input) => ipcRenderer.invoke('important_dates:update', id, input),
     delete: (id) => ipcRenderer.invoke('important_dates:delete', id),
@@ -276,8 +279,6 @@ contextBridge.exposeInMainWorld('mp', {
       'app:update-state',
       'pet:mood-changed',
       'pet:status-changed',
-      'pet:cozy-changed',
-      'pet:bond-tier-changed',
     ];
     if (!allowed.includes(channel)) return () => {};
     const listener = (_e, payload) => cb(payload);

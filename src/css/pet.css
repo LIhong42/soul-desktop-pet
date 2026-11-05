@@ -188,20 +188,24 @@ html, body {
 }
 
 /* ---- Bond / Cozy / Mood CSS filters ----
-   pet_mood.js emits one of: reminder | depressed | sad | concerned | lonely
-   | festive | proud | happy_clingy | missing_you | content. The mood key
-   lands on the .pet-sprite as data-mood and drives filter / animation.
+   pet_mood.js emits one of: depressed | sad | missing_you | content |
+   happy_clingy. The mood is a pure function of 舒适度 (cozy), so the
+   ladder is a clean brightness ramp: dimmer light = lower cozy.
+   The mood key lands on the .pet-sprite as data-mood and drives the
+   filter / animation.
    Filters are intentionally subtle — pet resources are small and a
    heavy filter washes them out completely. */
 .pet-sprite[data-mood="content"]      .pet-frame { filter: drop-shadow(0 4px 8px rgba(0,0,0,0.18)); }
-.pet-sprite[data-mood="concerned"]    .pet-frame { filter: hue-rotate(-8deg) brightness(0.95) drop-shadow(0 4px 8px rgba(0,0,0,0.2)); }
+.pet-sprite[data-mood="missing_you"]  .pet-frame { filter: saturate(0.85) brightness(0.95) drop-shadow(0 4px 8px rgba(0,0,0,0.2)); }
 .pet-sprite[data-mood="sad"]          .pet-frame { filter: saturate(0.6) brightness(0.92) drop-shadow(0 4px 8px rgba(0,0,0,0.22)); }
 .pet-sprite[data-mood="depressed"]    .pet-frame { filter: saturate(0.3) brightness(0.78) drop-shadow(0 4px 8px rgba(0,0,0,0.28)); }
-.pet-sprite[data-mood="lonely"]       .pet-sprite { animation: droop 3.6s ease-in-out infinite; }
-.pet-sprite[data-mood="festive"]      .pet-frame { filter: hue-rotate(15deg) saturate(1.2) drop-shadow(0 0 6px rgba(255,210,90,0.5)); }
-.pet-sprite[data-mood="proud"]        .pet-frame { filter: saturate(1.3) drop-shadow(0 0 4px rgba(255,255,255,0.3)); }
 .pet-sprite[data-mood="happy_clingy"] .pet-frame { filter: hue-rotate(25deg) saturate(1.15) drop-shadow(0 0 8px rgba(255,140,180,0.45)); }
-.pet-sprite[data-mood="missing_you"]  .pet-frame { filter: saturate(0.85) brightness(0.95) drop-shadow(0 4px 8px rgba(0,0,0,0.2)); }
+
+/* The droop animation belongs to the low end of the ladder: the pet
+   visibly droops only when it is genuinely down. */
+.pet-sprite[data-mood="depressed"] .pet-sprite,
+.pet-sprite[data-mood="depressed"]    { animation: droop 3.6s ease-in-out infinite; }
+.pet-sprite[data-mood="sad"]          { animation: droop 3.6s ease-in-out infinite; }
 
 @keyframes droop {
   0%, 100% { transform: translateY(0) scale(1); }
@@ -209,8 +213,8 @@ html, body {
 }
 
 /* ---- Bond bubble (decorative, distinct from reminder-bubble) ----
-   Used for happy_clingy / proud / festive / clingy moods where pet_mood
-   produces a soft line ("周末好~", "今天的你超棒", etc.). */
+   Used for happy_clingy / missing_you moods where pet_mood produces a
+   soft line ("来贴贴~", "有点想你了", etc.). */
 .bond-bubble {
   position: absolute;
   /* Sprite TOP edge — the same anchor the other two bubbles use, so a

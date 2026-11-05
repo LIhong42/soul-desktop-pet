@@ -65,6 +65,52 @@ const DECAY_LOW_FLOOR = 5;
 
 // ---- DB-coupled helpers ----
 
+// 陪伴天数 — the number of distinct calendar days on which the user
+// interacted with the pet.
+//
+// This is a MONOTONIC counter: it only ever goes up. A day is counted
+// once, the first time the user interacts with the pet on that calendar
+// day, and it is never decremented — missing a day does not "un-count"
+// the days the user already spent with the pet.
+//
+// It is deliberately NOT the same thing as `bond_strength.streak_weeks`
+// (the consecutive-days streak), which resets to zero the moment the
+// user misses a day. The streak answers "how long have I kept this up?";
+// this answers "how many days have we spent together, in total?".
+//
+// Storage: a `settings` row keyed `days_together:<petId>`. The `settings`
+// table is the right home for a scalar counter — it is a single value per
+// pet, it never needs to be queried by date, and it survives the pet-row
+// cleanup that a `cozy_state` wipe would do.
+const daysTogetherKey = (petId) => `days_together:${petId}`;
+
+// Read the 陪伴天数 counter. Returns 0 when the pet has never been
+// interacted with.
+function getDaysTogether(db, petId) {
+  if (!petId) return 0;
+  const v = parseInt(db.getSetting(daysTogetherKey(petId)) || '0', 10);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+// Count today as a day spent together, if it hasn't been counted yet.
+//
+// Idempotent within a calendar day: the last-counted date is stored
+// alongside the counter, so a second interaction on the same day is a
+// no-op and the counter advances exactly once per day.
+//
+// Returns the current counter value either way, so callers can read the
+// number back without a second query.
+function bumpDaysTogether(db, petId, nowMs) {
+  if (!petId) return 0;
+  const today = todayDateStr(new Date(nowMs || Date.now()));
+  const lastDay = db.getSetting(`${daysTogetherKey(petId)}:day`) || '';
+  if (lastDay === today) return getDaysTogether(db, petId);
+  const next = getDaysTogether(db, petId) + 1;
+  db.setSetting(daysTogetherKey(petId), String(next));
+  db.setSetting(`${daysTogetherKey(petId)}:day`, today);
+  return next;
+}
+
 function readCozy(db, petId) {
   if (!petId) return null;
   return db.one('SELECT * FROM cozy_state WHERE pet_id = ?', [petId]);
@@ -196,11 +242,16 @@ function applyInteraction(db, petId, action, opts, nowStr, nowMs) {
     [after, now, now, after, JSON.stringify(interactions), nowStr(), petId]
   );
   logPlay(db, petId, action, cfg.delta, 0, now);
+  // Count today as a day spent together. This only runs on an ACCEPTED
+  // interaction — a cooldown-dropped click was not a real interaction, so
+  // it must not credit the user with a day they never actually had.
+  const daysTogether = bumpDaysTogether(db, petId, now);
   return {
     accepted: true,
     silent: false,
     newValue: after,
     delta: cfg.delta,
+    days_together: daysTogether,
     particle: actionParticle(action),
     oneShotMs: actionOneShotMs(action),
     variant: actionVariant(action),
@@ -256,11 +307,13 @@ function actionVariant(action) {
 
 function getSnapshot(db, petId) {
   const row = readCozy(db, petId);
+  const daysTogether = getDaysTogether(db, petId);
   if (!row) {
     return {
       pet_id: petId, value: 40, last_play_at: 0,
       today_peak: 40, today_interactions: {},
       lonely_hours: 0,
+      days_together: daysTogether,
     };
   }
   const lonelyMs = row.last_play_at ? (Date.now() - row.last_play_at) : 0;
@@ -275,12 +328,14 @@ function getSnapshot(db, petId) {
     today_peak: row.today_peak | 0,
     today_interactions: interactions,
     lonely_hours: lonelyHours,
+    days_together: daysTogether,
   };
 }
 
 module.exports = {
   COZY_DELTAS, DECAY_LOW_FLOOR, DECAY_PER_HOUR,
   decayPerHour,
+  getDaysTogether, bumpDaysTogether,
   ensureCozy, rollDayIfNeeded, applyDecayTick,
   applyInteraction,
   getSnapshot,

@@ -117,8 +117,6 @@ contextBridge.exposeInMainWorld('mp', {
       // emitted only when the mood key actually flips, so the renderer
       // can apply the new CSS filter on every event without diffing.
       'pet:mood-changed',
-      'pet:cozy-changed',
-      'pet:bond-tier-changed',
       // One-shot particles (heart / sparkle / food / etc.) requested by
       // either the right-click menu or a cozy interaction. Renderer
       // spawns a transient <div> on the .pet-particles layer.

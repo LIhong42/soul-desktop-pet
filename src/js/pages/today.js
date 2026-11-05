@@ -26,7 +26,7 @@ export async function render() {
   // in this list, whether the pet has nagged me about it yet or not.
   // Soft-completed items are included too, so the user can scroll back to
   // see what they finished and click through to confirm.
-  const [todayView, state, bond, cozy, pets, portrait] = await Promise.all([
+  const [todayView, state, bond, cozy, pets, portrait, importantDates] = await Promise.all([
     api.reminders.listTodayView(),
     api.pet.getState(),
     api.bond.getFullState(),
@@ -36,6 +36,10 @@ export async function render() {
     // Null when the pet has no usable `default` variant — the panel then
     // falls back to the mood emoji.
     api.pet.getPortrait().catch(() => null),
+    // Every important date the user added, for the 纪念日 carousel. A
+    // failure here must not take the whole page down — the rest of the
+    // dashboard is still worth showing, so the carousel degrades to empty.
+    api.importantDates.listAll().catch(() => []),
   ]);
 
   const today = new Date();
@@ -74,7 +78,14 @@ export async function render() {
         <div class="today-section-head">
           <h2>桌宠状态</h2>
         </div>
-        <div id="pet-status">${renderPetStatus(normalizeFromSnapshots(bond, cozy), state, petName, portrait)}</div>
+        <div id="pet-status">${renderPetStatus(normalizeFromSnapshots(bond, cozy), petName, portrait)}</div>
+      </div>
+
+      <div class="today-section">
+        <div class="today-section-head">
+          <h2>纪念日</h2>
+        </div>
+        ${renderAnniversaryCarousel(importantDates)}
       </div>
 
       <div class="today-section">
@@ -175,10 +186,344 @@ export async function render() {
     }
   });
 
-  // Remember the latest reminder count so `applyStatus` can render the
-  // mood note ("还有 N 件事等你处理") without re-querying pet state on
-  // every push. `pet:state-changed` keeps it fresh while the user works.
-  lastPetState = state;
+  // The 纪念日 carousel is the one auto-rotating thing on the page, so it
+  // gets its own wiring. `startAnniversaryRotation` is a no-op when there
+  // is nothing to rotate (no dates, or a single card), which is also the
+  // case where a rotation timer would be pure noise.
+  startAnniversaryRotation(app);
+}
+
+// ---- 纪念日 carousel ------------------------------------------------------
+//
+// A horizontally scrolling strip of cards, one per important date the user
+// added. The cards rotate on their own — the strip advances by one card
+// every few seconds and then wraps back to the start.
+//
+// Why a carousel rather than a list: the whole point of this block is a
+// glanceable "what's coming up" read. A list would push the rest of the
+// dashboard down and the user would have to scroll past every date to find
+// the reminders. A strip shows one date at a time, rotates through them,
+// and keeps the page's vertical rhythm.
+//
+// Each card is ONE line, carrying four facts:
+//   1. whose date it is (contact + label) — "妈妈 的生日"
+//   2. the type — "生日" / "纪念日" / "忌日"
+//   3. how long it has been — "至今 38 年" (only when the row has an
+//      origin year; a row without one has no age to report)
+//   4. how long until the next one — "还有 12 天"
+//
+// The facts are separated by a middot so the line reads as one sentence
+// rather than four competing labels.
+
+// The type of an important date, in the user's words. Mirrors the `kind`
+// values stored in the `important_dates` table (see the edit form in
+// important_date_detail.js).
+const DATE_KIND_LABEL = {
+  birthday: '生日',
+  anniversary: '纪念日',
+  deceased_date: '忌日',
+  custom: '纪念日',
+};
+
+// A glyph per type, so a birthday and a 忌日 are told apart at a glance
+// without reading the label. Matches the tone the 事件 page uses for the
+// same idea (see categoryIcon() in api.js).
+const DATE_KIND_ICON = {
+  birthday: '🎂',
+  anniversary: '💝',
+  deceased_date: '🕯️',
+  custom: '📅',
+};
+
+// The type → CSS accent key, used to tint the card's left strip. Shares
+// the app's category palette (--cat-*) so a 生日 strip looks the same here
+// as it does on the 事件 page.
+const DATE_KIND_TONE = {
+  birthday: 'birthday',
+  anniversary: 'anniversary',
+  deceased_date: 'memorial',
+  custom: 'general',
+};
+
+// The kind label for a row. An unknown kind falls back to the generic
+// 纪念日 rather than printing a raw enum value at the user.
+function dateKindLabel(kind) {
+  return DATE_KIND_LABEL[kind] || DATE_KIND_LABEL.custom;
+}
+
+// The countdown phrase. "就是今天" and "就在明天" read better than a
+// bare number for the two cases the user cares about most; everything
+// else is "还有 N 天".
+function daysLeftPhrase(days) {
+  if (days == null) return '';
+  if (days === 0) return '就是今天';
+  if (days === 1) return '就在明天';
+  return `还有 ${days} 天`;
+}
+
+// The "how long since" phrase. Years are the unit that matters for a
+// birthday or an anniversary, so that's what we count — a date with no
+// origin year gets no clause at all.
+//
+// A year of 0 means the date's origin year IS the current year, so
+// "至今 0 年" would be technically true and completely useless. The
+// clause is dropped instead: for a first-year date the countdown alone
+// says everything worth saying.
+function yearsSincePhrase(years) {
+  if (years == null || years <= 0) return '';
+  return `至今 ${years} 年`;
+}
+
+// Render the carousel. Returns the empty state when the user has no
+// important dates yet, so the section never renders as a bare heading.
+function renderAnniversaryCarousel(dates) {
+  const rows = (dates || []).filter(Boolean);
+  if (rows.length === 0) {
+    return `
+      <div class="today-empty">
+        <span class="today-empty-icon">📅</span>
+        <div>
+          <div>还没有添加纪念日。</div>
+          <div class="today-empty-note">在联系人详情里添加生日或纪念日，这里会轮流展示。</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // One card per date. The cards are ordered by the backend (month, day),
+  // so the strip reads as a calendar year rather than in insertion order.
+  const cards = rows.map((row) => {
+    const label = (row.label || '').trim() || dateKindLabel(row.kind);
+    const who = (row.contact_name || '').trim();
+    const kindLabel = dateKindLabel(row.kind);
+    const tone = DATE_KIND_TONE[row.kind] || 'general';
+    const icon = DATE_KIND_ICON[row.kind] || DATE_KIND_ICON.custom;
+    // The three clauses of the line. The middle one is dropped when the
+    // row has no origin year — "至今" with no number would be nonsense.
+    const since = yearsSincePhrase(row.years_since);
+    const until = daysLeftPhrase(row.days_until_next);
+    // "谁的纪念日" — the contact's name, when there is one. An important
+    // date always belongs to a contact in this schema, but the contact
+    // may have been deleted since (the FK cascades the date away, so this
+    // is defensive only) — the line still reads without it.
+    const whoText = who ? `${who} 的` : '';
+    const name = `${whoText}${label}`;
+    // The date this card counts down to, as a tooltip. The card itself
+    // stays one line; the exact date is the detail you want on hover.
+    const nextDate = row.next_date || '';
+    // The tail of the line is split in two: the type label (生日 / 纪念日)
+    // stays in the soft ink, while the age and the countdown take the
+    // accent — the countdown is the number the card exists to show, and
+    // it should be the thing the eye lands on.
+    //
+    // The two spans are written with NO whitespace between them. The card
+    // is a flex row, and whitespace between inline elements becomes an
+    // anonymous flex item — the template's own indentation would show up
+    // as extra gaps between the clauses, making the line look loosely
+    // spaced and inconsistent from card to card. The separator spaces
+    // are therefore written into the text itself.
+    const kindText = kindLabel ? kindLabel + ' · ' : '';
+    const statText = [since, until].filter(Boolean).join(' · ');
+    return `
+      <div class="card today-anniv-card" data-id="${escapeHtml(row.id || '')}" data-tone="${escapeHtml(tone)}" title="${escapeHtml(nextDate)}"><span class="today-anniv-icon">${escapeHtml(icon)}</span><span class="today-anniv-name">${escapeHtml(name)}</span><span class="today-anniv-kind">${escapeHtml(kindText)}</span><span class="today-anniv-stat">${escapeHtml(statText)}</span></div>
+    `;
+  }).join('');
+
+  return `
+    <div class="today-anniv" id="today-anniv">
+      <div class="today-anniv-track" id="today-anniv-track">${cards}</div>
+    </div>
+    ${rows.length > 1 ? `
+      <div class="today-anniv-dots" id="today-anniv-dots">
+        ${rows.map((_, i) => `<button class="today-anniv-dot${i === 0 ? ' active' : ''}" data-index="${i}" aria-label="第 ${i + 1} 个纪念日"></button>`).join('')}
+      </div>
+    ` : ''}
+  `;
+}
+
+// Auto-rotation. The strip advances by one card every `ROTATE_MS` and
+// wraps around.
+//
+// The rotation is paused whenever the user is interacting with the strip:
+// hovering it, focusing inside it, or scrolling it by hand. A carousel
+// that yanks the content away while the user is reading it is the single
+// most annoying thing a carousel can do — the timer restarts only after
+// the user has been idle for a moment, so they always get a full beat to
+// read whatever they were looking at.
+//
+// A single timer is kept at module scope rather than per-render, so
+// navigating away from 今日 and back doesn't leave an orphaned interval
+// running against a detached DOM node.
+const ROTATE_MS = 5000;
+
+let annivTimer = null;
+let annivIndex = 0;
+
+// The pause flag. Set by the hover/focus/scroll listeners and cleared by
+// the idle timer, so the rotation resumes on its own a moment after the
+// user lets go.
+let annivPaused = false;
+let annivResumeTimer = null;
+
+function startAnniversaryRotation(app) {
+  stopAnniversaryRotation();
+  const root = app.querySelector('#today-anniv');
+  const track = app.querySelector('#today-anniv-track');
+  if (!root || !track) return;
+  const cards = Array.from(track.querySelectorAll('.today-anniv-card'));
+  // Nothing to rotate — a single card is already fully visible, and
+  // rotating it would be a no-op that still burns a timer.
+  if (cards.length < 2) return;
+
+  const dots = Array.from(app.querySelectorAll('#today-anniv-dots .today-anniv-dot'));
+
+  // True while the strip is being driven by the user rather than by the
+  // rotation. It is set from the INPUT events — a wheel, a touch, a drag
+  // on the scrollbar — and not from the `scroll` event, because the
+  // rotation's own scrolling produces `scroll` events too, and there is
+  // no way to tell those apart from the user's by looking at the
+  // positions alone: the two can start from the same place and end up
+  // crossing each other.
+  //
+  // The input events are unambiguous — a programmatic scroll never
+  // produces a wheel or a touch.
+  let userScrolling = false;
+
+  // The index of the card currently at the left edge. Read off the
+  // scroll position rather than tracked separately, so a manual scroll
+  // by the user re-syncs it and the rotation continues from where they
+  // left it instead of jumping back to a stale position.
+  //
+  // The same `scroll-padding-left` offset that `goTo` applies is added
+  // back here, so the two agree on where a card sits.
+  const currentIndex = () => {
+    const left = track.scrollLeft;
+    const padding = parseFloat(getComputedStyle(track).scrollPaddingLeft) || 0;
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < cards.length; i++) {
+      const dist = Math.abs(cards[i].offsetLeft - track.offsetLeft - padding - left);
+      if (dist < bestDist) { bestDist = dist; best = i; }
+    }
+    return best;
+  };
+
+  // Move to a given card. `behavior: 'smooth'` animates the scroll so the
+  // strip glides rather than jumps.
+  const goTo = (i, smooth = true) => {
+    const idx = ((i % cards.length) + cards.length) % cards.length;
+    annivIndex = idx;
+    const card = cards[idx];
+    // `scrollLeft` is set from the card's offset within the track rather
+    // than from a computed card width, so a card of any width (long
+    // contact names, long labels) still lands flush at the left edge.
+    //
+    // The track's `scroll-padding-left` is subtracted, because that is
+    // where the browser really snaps the card to: with the padding in
+    // place the card sits that far off the edge, and a target that
+    // ignored it would be a few pixels short every time.
+    const padding = parseFloat(getComputedStyle(track).scrollPaddingLeft) || 0;
+    const target = card.offsetLeft - track.offsetLeft - padding;
+    if (typeof track.scrollTo === 'function') {
+      // `behavior: 'auto'` means "whatever the CSS `scroll-behavior` says",
+      // and the track says `smooth` — so 'auto' would animate too. Only
+      // `instant` really jumps, and the first card has to appear without
+      // a glide when the page is first rendered.
+      track.scrollTo({ left: target, behavior: smooth ? 'smooth' : 'instant' });
+    } else {
+      track.scrollLeft = target;
+    }
+    dots.forEach((d, di) => d.classList.toggle('active', di === idx));
+  };
+
+  // Pause while the user is engaged with the strip.
+  const pause = () => {
+    annivPaused = true;
+    if (annivResumeTimer) { clearTimeout(annivResumeTimer); annivResumeTimer = null; }
+  };
+  // Resume a beat after the user stops interacting, so a hovered strip
+  // doesn't start moving the instant the pointer leaves it.
+  const resume = () => {
+    if (annivResumeTimer) clearTimeout(annivResumeTimer);
+    annivResumeTimer = setTimeout(() => {
+      annivPaused = false;
+      annivResumeTimer = null;
+      // The user has let go, so the strip is ours again.
+      userScrolling = false;
+    }, 1200);
+  };
+
+  root.addEventListener('mouseenter', pause);
+  root.addEventListener('mouseleave', resume);
+  root.addEventListener('focusin', pause);
+  root.addEventListener('focusout', resume);
+
+  // The user taking hold of the strip: a wheel, a touch, a drag on the
+  // scrollbar, or a click on a card. None of these ever come from the
+  // rotation, so they are a reliable signal that the strip is being
+  // driven by hand.
+  const userTookOver = () => {
+    userScrolling = true;
+    pause();
+    resume();
+  };
+  track.addEventListener('wheel', userTookOver, { passive: true });
+  track.addEventListener('touchstart', userTookOver, { passive: true });
+  track.addEventListener('pointerdown', userTookOver, { passive: true });
+
+  // Re-sync the index with whatever is at the left edge. This runs for
+  // the rotation's own scrolling too, but that is harmless: the
+  // rotation has already set the index to where it is heading, and the
+  // card that is actually at the edge is the same one.
+  track.addEventListener('scroll', () => {
+    const idx = currentIndex();
+    if (idx === annivIndex) return;
+    annivIndex = idx;
+    dots.forEach((d, di) => d.classList.toggle('active', di === idx));
+    // A scroll the user started has to hold the rotation still until
+    // they let go. The rotation's own scroll must not, or the carousel
+    // would stop for a moment after every single tick.
+    if (userScrolling) {
+      pause();
+      resume();
+    }
+  }, { passive: true });
+
+  // Clicking a dot jumps straight to that card.
+  dots.forEach((dot) => {
+    dot.onclick = () => {
+      const i = parseInt(dot.dataset.index, 10);
+      if (Number.isFinite(i)) goTo(i);
+    };
+  });
+
+  // Clicking a card opens the important date's detail page, so the user
+  // can edit or delete it from the dashboard.
+  cards.forEach((card) => {
+    card.onclick = () => {
+      const id = card.dataset.id;
+      if (id) navigate('/important-dates/' + id);
+    };
+  });
+
+  annivTimer = setInterval(() => {
+    if (annivPaused) return;
+    goTo(annivIndex + 1);
+  }, ROTATE_MS);
+
+  // Start on the first card without animating — the strip is already at
+  // scroll position 0 on a fresh render.
+  goTo(0, false);
+}
+
+// Tear the carousel's timers down. Called at the start of every render
+// (a re-render replaces the DOM, so the old listeners and interval must
+// not survive) and when the page is left.
+function stopAnniversaryRotation() {
+  if (annivTimer) { clearInterval(annivTimer); annivTimer = null; }
+  if (annivResumeTimer) { clearTimeout(annivResumeTimer); annivResumeTimer = null; }
+  annivPaused = false;
+  annivIndex = 0;
 }
 
 // Live status subscription. Registered once at module load rather than per
@@ -187,27 +532,8 @@ export async function render() {
 // router). `applyStatus` no-ops when `#pet-status` is absent, so pushes
 // that land while the user is on another page are simply dropped — the
 // next `render()` refetches fresh numbers anyway.
-let lastPetState = null;
 api.on('pet:status-changed', (payload) => {
-  applyStatus(payload, lastPetState);
-});
-
-// Keep the reminder count fresh for the mood note, and repaint while the
-// 今日 page happens to be the one on screen.
-api.on('pet:state-changed', (payload) => {
-  lastPetState = payload;
-  if (document.getElementById('pet-status')) {
-    const moodEl = document.querySelector('#pet-status .today-mood-card[data-mood]');
-    const note = moodEl && moodEl.querySelector('[data-bind="mood-note"]');
-    const mood = moodEl && moodEl.dataset.mood;
-    if (note && mood) note.textContent = moodNote(mood, payload);
-    // 今日互动 counts the same day's interactions, so it moves with the
-    // pet's state too.
-    const actions = document.querySelector('#pet-status [data-bind="today-actions"]');
-    if (actions && payload && typeof payload.count === 'number') {
-      actions.textContent = String(payload.count);
-    }
-  }
+  applyStatus(payload);
 });
 
 // The user swapped the active pet (设置 → 桌宠). The mood panel's portrait
@@ -258,29 +584,69 @@ function normalizeStatus(src) {
     tier: s.bond_tier != null ? (s.bond_tier | 0) : ((s.tier | 0) || 1),
     tierLabel: s.tier_label || '陌生',
     tierFloor: s.tier_floor | 0 || 0,
-    bondValue: s.bond_value != null ? (s.bond_value | 0) : (s.value | 0) || 0,
+    // NOTE: a bare `value` key is deliberately NOT consulted here.
+    // Both the bond and the cozy snapshot carry one, and they mean
+    // different things — bond's is 亲密度, cozy's is 舒适度. A fallback
+    // to `s.value` is how 亲密度 once rendered the 舒适度 number and
+    // then "jumped" to the real value on the first interaction repaint.
+    // Every payload reaching this function must use the explicit
+    // `bond_value` / `cozy` names.
+    bondValue: s.bond_value != null ? (s.bond_value | 0) : 0,
     nextTier: s.next_tier || null,
     weekScore: s.week_score | 0 || 0,
-    streak: s.streak_weeks | 0 || 0,
-    cozy: s.cozy != null ? (s.cozy | 0) : (s.value != null && s.weekly_max == null ? (s.value | 0) : (c.value | 0)),
+    // 陪伴天数 — the number of distinct days on which the user interacted
+    // with the pet. Monotonic: it only ever goes up.
+    daysTogether: s.days_together != null ? (s.days_together | 0) : 0,
+    cozy: s.cozy != null ? (s.cozy | 0) : 0,
+    // 今日互动 — the number of cozy interactions the user made TODAY.
+    // This used to read `state.count`, which is the count of *unhandled
+    // reminders* — a completely different thing that happened to be the
+    // only number the old status payload exposed. The real per-action
+    // tally lives in `cozy_state.today_interactions` and is pushed as
+    // `cozy_today_interactions`.
+    todayInteractions: sumInteractions(s.cozy_today_interactions),
     lonelyHours: Math.floor((s.lonely_hours || 0)),
   };
 }
 
+// `cozy_today_interactions` is a JSON object like {pet:6, feed:1}. The
+// 今日互动 tile wants the TOTAL number of interactions, so sum the
+// per-action counts. A malformed payload reads as 0 rather than throwing —
+// a broken counter must not take the whole 桌宠状态 panel down with it.
+function sumInteractions(raw) {
+  if (!raw || typeof raw !== 'object') return 0;
+  let total = 0;
+  for (const v of Object.values(raw)) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) total += Math.floor(n);
+  }
+  return total;
+}
+
 // `normalizeStatus` needs the cozy-only fields, which `getFullState`
 // flattens onto the same object as bond — so pass that half separately.
+//
+// `bond` here is the FLATTENED `getFullState` payload, so the 亲密度
+// arrives as `bond_value` (there is deliberately no bare `value` key —
+// it used to mean both numbers at once). `cozy` is the separate
+// `getCozySnapshot` payload, where the 舒适度 is still called `value`
+// because that snapshot holds exactly one number.
 function normalizeFromSnapshots(bond, cozy) {
   return normalizeStatus({
     mood: bond && bond.mood,
     pet_id: bond && bond.pet_id,
-    bond_tier: bond && bond.tier,
+    bond_tier: bond && bond.bond_tier,
     tier_label: bond && bond.tier_label,
     tier_floor: bond && bond.tier_floor,
-    bond_value: bond && bond.value,
+    bond_value: bond && bond.bond_value,
     next_tier: bond && bond.next_tier,
-    week_score: bond && bond.weekly_score,
-    streak_weeks: bond && bond.streak_weeks,
+    week_score: bond && bond.week_score,
+    // 陪伴天数 lives on the COZY snapshot, not the bond one. Reading it
+    // off `bond` left the tile at 0 on the first paint and only correct
+    // after the first `pet:status-changed` push repainted it.
+    days_together: cozy && cozy.days_together,
     cozy: cozy && cozy.value,
+    cozy_today_interactions: cozy && cozy.today_interactions,
     lonely_hours: cozy && cozy.lonely_hours,
   });
 }
@@ -294,16 +660,21 @@ function bondPct(s) {
   return Math.max(0, Math.min(100, Math.round((s.bondValue - s.tierFloor) / span * 100)));
 }
 
-function renderPetStatus(st, state, petName, portrait) {
+function renderPetStatus(st, petName, portrait) {
   const mood = st.mood;
   const pct = bondPct(st);
   const next = st.nextTier;
   const weekly = st.weekScore;
   const lonelyHours = st.lonelyHours;
   const moodMeta = MOOD_META[mood] || { label: '平静', icon: '🙂' };
-  // The three 陪伴状态 reads the reference shows as icon-chip columns:
-  // today's interactions, the cozy score, and the streak.
-  const todayActions = (state && typeof state.count === 'number') ? state.count : 0;
+  // The three 陪伴状态 columns: today's interactions, the cozy score, and
+  // the number of days the user has spent with the pet.
+  //
+  // `todayInteractions` comes from the cozy engine's per-action tally
+  // (`cozy_state.today_interactions`), NOT from the reminder queue's
+  // active count — the two used to be conflated here, which made the
+  // tile report pending reminders under an "interactions" label.
+  const todayActions = st.todayInteractions;
   // The portrait shows the pet the user actually has installed, rather
   // than a generic emoji standing in for it. When there is no portrait
   // (a pet with no usable `default` variant), the mood emoji stands in —
@@ -320,7 +691,7 @@ function renderPetStatus(st, state, petName, portrait) {
           <div class="today-mood-portrait" data-bind="mood-icon">${portraitInner}</div>
           <div class="today-mood-text">
             <div class="today-mood-word" data-bind="mood-label">${escapeHtml(moodMeta.label)}</div>
-            <div class="today-mood-note" data-bind="mood-note">${escapeHtml(moodNote(mood, state))}</div>
+            <div class="today-mood-note" data-bind="mood-note">${escapeHtml(moodNote(mood))}</div>
           </div>
         </div>
       </div>
@@ -370,8 +741,8 @@ function renderPetStatus(st, state, petName, portrait) {
           <div class="today-companion-cell">
             <div class="today-companion-text">
               <div class="today-companion-stack">
-                <div class="today-companion-value"><span data-bind="streak">${st.streak}</span><small>天</small></div>
-                <div class="today-companion-label">连续陪伴</div>
+                <div class="today-companion-value"><span data-bind="days-together">${st.daysTogether}</span><small>天</small></div>
+                <div class="today-companion-label">陪伴天数</div>
               </div>
             </div>
           </div>
@@ -394,7 +765,7 @@ function clampPct(v) {
 // payload. Patches text nodes and bar widths in place instead of
 // re-rendering the block, so the CSS width transition animates and the
 // reminder list below (which may be scrolled or mid-hover) is untouched.
-function applyStatus(raw, state) {
+function applyStatus(raw) {
   const host = document.getElementById('pet-status');
   if (!host) return;
   const s = normalizeStatus(raw);
@@ -416,7 +787,7 @@ function applyStatus(raw, state) {
       icon.textContent = meta ? meta.icon : '🙂';
     }
     if (label) label.textContent = meta ? meta.label : '平静';
-    if (note) note.textContent = moodNote(s.mood, state);
+    if (note) note.textContent = moodNote(s.mood);
   }
 
   const badge = q('tier-badge');
@@ -448,12 +819,10 @@ function applyStatus(raw, state) {
   const cozyPct = clampPct(s.cozy);
   if (cozyValue) cozyValue.textContent = String(cozyPct);
   if (cozyFill) cozyFill.style.width = cozyPct + '%';
-  const streak = q('streak');
-  if (streak) streak.textContent = String(s.streak);
+  const daysTogether = q('days-together');
+  if (daysTogether) daysTogether.textContent = String(s.daysTogether);
   const todayActions = q('today-actions');
-  if (todayActions && state && typeof state.count === 'number') {
-    todayActions.textContent = String(state.count);
-  }
+  if (todayActions) todayActions.textContent = String(s.todayInteractions);
   const lonely = q('lonely');
   if (lonely) {
     lonely.textContent = s.lonelyHours > 0
@@ -473,33 +842,30 @@ const TIER_LABELS = {
 // Mirrors pet_mood.js's `computeMood` result keys. The main process owns
 // the decision tree; this map only translates the resolved mood id into
 // something a human can read.
+//
+// The mood is now a pure function of 舒适度 (cozy) — five moods, one per
+// band of the cozy ladder. The `reminder` mood is gone: nagging about a
+// reminder is a separate, already-visible thing (the reminder list right
+// below), and folding it into the mood made the mood unreadable as
+// "how does the pet feel".
 const MOOD_META = {
-  reminder:     { label: '在催你',   icon: '⏰' },
   depressed:    { label: '有点低落', icon: '🥀' },
   sad:          { label: '难过',     icon: '😢' },
-  concerned:    { label: '有点担心', icon: '🤔' },
-  lonely:       { label: '想你了',   icon: '🥺' },
-  festive:      { label: '很开心',   icon: '🎉' },
-  proud:        { label: '骄傲',     icon: '✨' },
-  happy_clingy: { label: '黏人',     icon: '🥰' },
   missing_you:  { label: '想你陪',   icon: '🥱' },
   content:      { label: '平静',     icon: '🙂' },
+  happy_clingy: { label: '黏人',     icon: '🥰' },
 };
 
 // One line of plain-language context under the mood. The pet's own bubble
 // text isn't persisted, so this re-derives the short version from the same
 // inputs the mood tree used.
-function moodNote(mood, state) {
-  if (mood === 'reminder' && state) return `还有 ${state.count} 件事等你处理`;
+function moodNote(mood) {
   switch (mood) {
     case 'depressed':    return '好久没人陪它了，去摸摸它吧';
     case 'sad':          return '舒适度见底了，喂点东西就好';
-    case 'concerned':    return '今天互动有点少，它注意到了';
-    case 'lonely':       return '超过一天没一起玩了';
-    case 'festive':      return '周末 + 高羁绊，今天值得庆祝';
-    case 'proud':        return '今天你为它做了些什么';
-    case 'happy_clingy': return '状态很好，想一直跟着你';
     case 'missing_you':  return '有点想你了，还想再靠近一点';
+    case 'content':      return '一切正常，作息规律';
+    case 'happy_clingy': return '状态很好，想一直跟着你';
     default:             return '一切正常，作息规律';
   }
 }

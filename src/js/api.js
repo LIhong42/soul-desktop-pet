@@ -25,6 +25,9 @@ export const api = {
   },
   importantDates: {
     list: (contactId) => M.importantDates.list(contactId),
+    // Every important date across all contacts, decorated with the day
+    // counts (days_until_next / years_since) the 今日页 carousel shows.
+    listAll: () => M.importantDates.listAll?.() || Promise.resolve([]),
     create: (contactId, input) => M.importantDates.create(contactId, input),
     update: (id, input) => M.importantDates.update(id, input),
     delete: (id) => M.importantDates.delete(id),

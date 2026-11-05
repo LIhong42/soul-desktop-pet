@@ -382,26 +382,24 @@
    without repainting the artwork.
 
    `filter` is applied to the WHOLE portrait element, so the emoji
-   fallback dims along with the picture and the two look the same. */
-.today-mood-card[data-mood="depressed"] .today-mood-portrait,
+   fallback dims along with the picture and the two look the same.
+
+   The mood is a pure function of 舒适度 now, so the ladder is a clean
+   5-step brightness ramp: the dimmer the light, the lower the cozy. */
+.today-mood-card[data-mood="depressed"] .today-mood-portrait {
+  filter: brightness(0.6) saturate(0.8);
+}
+
 .today-mood-card[data-mood="sad"] .today-mood-portrait {
-  filter: brightness(0.62) saturate(0.85);
+  filter: brightness(0.68) saturate(0.84);
 }
 
-.today-mood-card[data-mood="concerned"] .today-mood-portrait,
-.today-mood-card[data-mood="missing_you"] .today-mood-portrait,
-.today-mood-card[data-mood="lonely"] .today-mood-portrait {
-  filter: brightness(0.76) saturate(0.9);
+.today-mood-card[data-mood="missing_you"] .today-mood-portrait {
+  filter: brightness(0.82) saturate(0.92);
 }
 
-.today-mood-card[data-mood="happy_clingy"] .today-mood-portrait,
-.today-mood-card[data-mood="proud"] .today-mood-portrait,
-.today-mood-card[data-mood="festive"] .today-mood-portrait {
+.today-mood-card[data-mood="happy_clingy"] .today-mood-portrait {
   filter: brightness(1.08) saturate(1.05);
-}
-
-.today-mood-card[data-mood="reminder"] .today-mood-portrait {
-  filter: brightness(0.95);
 }
 /* The neutral mood is the baseline: the picture at its own colours, at
    its own brightness. It gets an explicit rule so the ladder reads
@@ -409,20 +407,52 @@
 .today-mood-card[data-mood="content"] .today-mood-portrait {
   filter: brightness(1) saturate(1);
 }
-/* The mood WORD keeps its colour accents — the label is the one place
-   where a hue reads instantly without repainting anything. */
-.today-mood-card[data-mood="depressed"] .today-mood-word,
-.today-mood-card[data-mood="sad"] .today-mood-word { color: #d97878; }
+/* The mood WORD is where the mood is expressed now.
+   The mood is a pure function of 舒适度 (cozy), and it no longer binds to
+   a sprite variant — so the picture is always the same pet in its own
+   colours. What tells the user which mood it is, then, is the WORD's
+   colour: a warm orange for the upbeat end, the page ink for the neutral
+   middle, and a descending run of dusty roses for the downbeat end.
 
-.today-mood-card[data-mood="concerned"] .today-mood-word,
-.today-mood-card[data-mood="missing_you"] .today-mood-word,
-.today-mood-card[data-mood="lonely"] .today-mood-word { color: #c98b93; }
+   Every one of the five moods gets its OWN colour — two moods sharing a
+   colour would make them indistinguishable, which defeats the point of
+   colouring them at all. The ladder reads as a single warm-to-cool sweep:
+     happy_clingy → 黏人      warm orange   (cozy ≥ 70)
+     content      → 平静      page ink      (cozy ≥ 40)
+     missing_you  → 想你陪    soft apricot  (cozy ≥ 20)
+     sad          → 难过      dusty rose    (cozy ≥ 10)
+     depressed    → 有点低落  deep plum     (cozy < 10)
 
-.today-mood-card[data-mood="happy_clingy"] .today-mood-word,
-.today-mood-card[data-mood="proud"] .today-mood-word,
-.today-mood-card[data-mood="festive"] .today-mood-word { color: #e08a5c; }
+   Both the word and the note under it take the accent, so the whole text
+   block reads as one mood rather than a coloured headline over grey
+   small-print. The note uses the same hue as the word, so a new mood
+   only has to declare its accent once. */
+.today-mood-card[data-mood="depressed"] .today-mood-word { color: #a4596b; }
 
-.today-mood-card[data-mood="reminder"] .today-mood-word { color: #e0705f; }
+.today-mood-card[data-mood="sad"] .today-mood-word { color: #c96a72; }
+
+.today-mood-card[data-mood="missing_you"] .today-mood-word { color: #d18a72; }
+
+.today-mood-card[data-mood="content"] .today-mood-word { color: var(--today-ink); }
+
+.today-mood-card[data-mood="happy_clingy"] .today-mood-word { color: #e08a5c; }
+
+/* The note inherits the mood's hue. `--mood-accent` is set by the mood
+   rules below and consumed here, so a new mood only has to declare its
+   accent once. */
+.today-mood-card[data-mood="depressed"] { --mood-accent: #a4596b; }
+.today-mood-card[data-mood="sad"] { --mood-accent: #c96a72; }
+.today-mood-card[data-mood="missing_you"] { --mood-accent: #d18a72; }
+.today-mood-card[data-mood="content"] { --mood-accent: var(--today-ink-soft); }
+.today-mood-card[data-mood="happy_clingy"] { --mood-accent: #e08a5c; }
+
+.today-mood-note {
+  /* The note takes the mood's accent, so the whole text block reads as
+     one mood rather than a coloured headline over grey small-print.
+     `--mood-accent` is set per mood on the card; the fallback covers a
+     mood with no accent declared. */
+  color: var(--mood-accent, var(--today-ink-soft));
+}
 /* The text column sits against the character's MIDDLE, not the top of her
    box — the mood word lines up with the character's face rather than
    floating beside her hat. */
@@ -438,7 +468,6 @@
   line-height: 1.25;
 }
 .today-mood-note {
-  color: var(--today-ink-soft);
   font-size: 13px;
   line-height: 1.6;
   margin-top: 6px;
@@ -734,6 +763,177 @@
   border-color: transparent;
 }
 .today-reminders .time-chip .chip-dot { display: none; }
+
+/* ---- 纪念日 carousel ----------------------------------------------------
+   A single-row strip of date cards that scrolls horizontally and rotates
+   on its own.
+
+   The strip is `overflow-x: auto` with the scrollbar hidden — the user
+   swipes it, but the page never shows a scrollbar for it. `scroll-snap`
+   makes each card land flush against the left edge when the rotation
+   stops it there, which is what keeps the "one card at a time" read
+   crisp instead of leaving two half-cards visible.
+
+   `scroll-behavior: smooth` is set on the track so the programmatic
+   scroll (the rotation) glides. The user's own swipe is unaffected —
+   Chromium applies smooth scrolling to scripted scrolls, not to touch
+   or wheel gestures. */
+.today-anniv {
+  overflow: hidden;
+  /* The strip is a rounded window onto the track; the cards inside carry
+     their own radius, so the window clips them cleanly. */
+  border-radius: var(--today-radius);
+}
+.today-anniv-track {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  scroll-snap-type: x mandatory;
+  /* Room for the card's lift shadow, so a hovered card isn't clipped by
+     the strip's own bounds. */
+  padding: 4px 4px 10px;
+  margin: -4px -4px -10px;
+  /* The snap position of a card is its offset from the track's left edge
+     less this padding — the card sits that far off the edge rather than
+     flush against it. The padding keeps the card's shadow from being
+     clipped by the strip. */
+  scroll-padding-left: 4px;
+  scroll-padding-right: 4px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+/* The trailing spacer. It is a flex item like any other, so it has to
+   opt out of shrinking and carry no content of its own.
+
+   It is one viewport wide — as wide as the strip itself. The scroll area
+   is otherwise exactly as long as the cards, which puts the last card's
+   snap position past the end of the scroll range: the last card could
+   only ever be seen half off the edge, and the rotation's final step
+   landed somewhere the user could never read. A spacer as wide as the
+   visible strip gives the scroll range the room it needs to bring the
+   last card flush to the left, and it re-sizes with the window on its
+   own, with nothing to measure from JS. */
+.today-anniv-track::after {
+  content: "";
+  flex: 0 0 100%;
+  width: 100%;
+}
+.today-anniv-track::-webkit-scrollbar { display: none; }
+
+/* The card itself. One line, three clauses, separated by middots.
+
+   `flex: none` is essential: a flex item defaults to shrinking, and a
+   shrinking card would wrap its text into two lines and break the
+   one-line read the strip is built around. `white-space: nowrap` is the
+   belt-and-braces version of the same rule — it keeps the line intact
+   even if the card is squeezed. */
+.today-page .card.today-anniv-card {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  margin-bottom: 0;
+  padding: 14px 18px;
+  /* The card carries small text over the artwork, so it uses the denser
+     sheet the reminder list uses rather than the airy status-card one. */
+  background: var(--today-paper-list);
+  -webkit-backdrop-filter: blur(26px) saturate(125%);
+  backdrop-filter: blur(26px) saturate(125%);
+  cursor: pointer;
+  scroll-snap-align: start;
+}
+/* The card is clickable, so it gets the same lift as the other clickable
+   cards on the page — but a translate would shift it out of its snap
+   position, so the lift is carried by the shadow and the border instead. */
+.today-page .card.today-anniv-card:hover {
+  transform: none;
+  border-color: var(--today-line-strong);
+  box-shadow: var(--today-shadow-lift);
+}
+.today-page .card.today-anniv-card:active {
+  box-shadow: var(--today-shadow);
+}
+
+/* The type glyph. It sits in a small tinted rounded square, matching the
+   category chips elsewhere on the page. */
+.today-anniv-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  background: rgba(196, 160, 132, 0.18);
+}
+
+/* The contact + label — the card's primary read, so it carries the
+   strongest weight. */
+.today-anniv-name {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--today-ink);
+}
+
+/* The type label (生日 / 纪念日 / 忌日) and its trailing separator. It is
+   context, not a figure, so it stays in the soft ink. */
+.today-anniv-kind {
+  font-size: 13px;
+  color: var(--today-ink-soft);
+}
+
+/* The age and the countdown. The countdown is the one number the card
+   exists to show, so the pair takes the peach accent and a heavier
+   weight — it reads as the "live" half of the line, against the name's
+   static weight and the type's quiet grey.
+
+   `tabular-nums` keeps the digits from shifting width as the countdown
+   ticks, so the card's text doesn't jitter between renders. */
+.today-anniv-stat {
+  font-size: 13px;
+  color: #d9825f;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The type accent. The card's left strip carries the same category
+   palette the 事件 page uses, so a 生日 card reads the same wherever it
+   appears. */
+.today-page .card.today-anniv-card[data-tone="birthday"]::before    { background: var(--cat-birthday); }
+.today-page .card.today-anniv-card[data-tone="anniversary"]::before { background: var(--cat-anniversary); }
+.today-page .card.today-anniv-card[data-tone="memorial"]::before    { background: var(--cat-memorial); }
+.today-page .card.today-anniv-card[data-tone="general"]::before     { background: var(--cat-general); }
+
+/* The dots under the strip. They mirror the rotation position and are
+   clickable — a direct jump to a card the auto-rotation is about to
+   reach anyway. */
+.today-anniv-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.today-anniv-dot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(196, 160, 132, 0.35);
+  cursor: pointer;
+  transition: background 200ms ease, transform 200ms ease;
+}
+.today-anniv-dot:hover {
+  background: rgba(196, 160, 132, 0.6);
+}
+.today-anniv-dot.active {
+  background: var(--today-peach);
+  transform: scale(1.25);
+}
 
 /* ---- Empty state --------------------------------------------------------
    The reference shows the empty reminder list as a calm green-check line

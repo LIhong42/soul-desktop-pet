@@ -133,6 +133,12 @@ app.whenReady().then(async () => {
     // cleanup, so the test asserts they stay gone.
     companionIcon: !!document.querySelector('.today-companion-icon'),
     sectionHeads: document.querySelectorAll('.today-section-head').length,
+    // The section TITLES, not just their count. The page grew a 纪念日
+    // section (the rotating anniversary carousel), so asserting a bare
+    // count would only ever tell us the number changed — naming the
+    // sections is what actually pins the page's structure.
+    sectionTitles: Array.from(document.querySelectorAll('.today-section-head h2'))
+      .map((h) => h.textContent.trim()),
     weekday: (document.querySelector('.today-hero-weekday') || {}).textContent || '',
     heroDate: (document.querySelector('.today-hero-date') || {}).textContent || '',
     // The page's icon budget. Only the pet's mood portrait and the
@@ -171,8 +177,12 @@ app.whenReady().then(async () => {
   check('the 陪伴状态 panel has three columns', markup.companionStats === 3,
     `got ${markup.companionStats}`);
   check('the 陪伴状态 columns have no icon chips', !markup.companionIcon);
-  check('both section headings are rendered', markup.sectionHeads === 2,
+  check('every section heading is rendered', markup.sectionHeads === 3,
     `got ${markup.sectionHeads}`);
+  check('the sections are 桌宠状态 / 纪念日 / 当前提醒',
+    JSON.stringify(markup.sectionTitles) ===
+      JSON.stringify(['桌宠状态', '纪念日', '当前提醒']),
+    JSON.stringify(markup.sectionTitles));
   // The page must actually be LAID OUT. Every size assertion below reads a
   // bounding box, and a hidden element (the PIN gate sets `display: none`
   // on #app) has a box of 0×0 — which would make all of them pass
@@ -442,7 +452,7 @@ app.whenReady().then(async () => {
       bondNote: !!q('bond-note'),
       cozyValue: !!q('cozy-value'),
       cozyFill: !!q('cozy-fill'),
-      streak: !!q('streak'),
+      daysTogether: !!q('days-together'),
       lonely: !!q('lonely'),
       todayActions: !!q('today-actions'),
       moodCard: !!host.querySelector('.today-mood-card[data-mood]'),
@@ -452,7 +462,7 @@ app.whenReady().then(async () => {
   check('the mood card carries data-mood', hooks.moodCard);
   for (const key of ['moodIcon', 'moodLabel', 'moodNote', 'tierBadge', 'tierLabel',
                      'bondValue', 'bondFill', 'bondNote', 'cozyValue', 'cozyFill',
-                     'streak', 'lonely', 'todayActions']) {
+                     'daysTogether', 'lonely', 'todayActions']) {
     check(`the ${key} hook is present`, hooks[key]);
   }
 
@@ -460,29 +470,21 @@ app.whenReady().then(async () => {
   // Test 5 — a status push actually repaints the page
   // -------------------------------------------------------------------------
   console.log('\n[5] a status push repaints the page in place');
-  const before = await winMain.webContents.executeJavaScript(`(() => {
-    const q = (n) => document.querySelector('#pet-status [data-bind="' + n + '"]');
-    return {
-      bondValue: q('bond-value').textContent.trim(),
-      moodLabel: q('mood-label').textContent.trim(),
-      streak: q('streak').textContent.trim(),
-    };
-  })()`);
-
   // Push a status the page has never rendered, so any change proves the
   // repaint path ran rather than the values merely matching. The push
   // comes from the MAIN process on the same channel the pet controller
   // uses, so it exercises the real preload → api.on → applyStatus path.
   winMain.webContents.send('pet:status-changed', {
-    mood: 'festive',
+    mood: 'happy_clingy',
     bond_tier: 3,
     tier_label: '朋友',
     tier_floor: 50,
     bond_value: 123,
     next_tier: { tier: 4, threshold: 200 },
     week_score: 60,
-    streak_weeks: 7,
     cozy: 88,
+    cozy_today_interactions: { pet: 4, feed: 2 },
+    days_together: 42,
     lonely_hours: 3,
   });
   await new Promise((r) => setTimeout(r, 400));
@@ -492,17 +494,106 @@ app.whenReady().then(async () => {
     return {
       bondValue: q('bond-value').textContent.trim(),
       moodLabel: q('mood-label').textContent.trim(),
-      streak: q('streak').textContent.trim(),
+      daysTogether: q('days-together').textContent.trim(),
+      todayActions: q('today-actions').textContent.trim(),
       cozyValue: q('cozy-value').textContent.trim(),
       lonely: q('lonely').textContent.trim(),
     };
   })()`);
 
   check('the 亲密度 number was repainted', after.bondValue === '123', after.bondValue);
-  check('the mood label was repainted', after.moodLabel === '很开心', after.moodLabel);
-  check('the streak was repainted', after.streak === '7', after.streak);
+  check('the mood label was repainted', after.moodLabel === '黏人', after.moodLabel);
+  check('the 陪伴天数 was repainted', after.daysTogether === '42', after.daysTogether);
+  // 今日互动 sums the per-action cozy tally: {pet:4, feed:2} = 6.
+  check('the 今日互动 counts the cozy interactions, not the reminders',
+    after.todayActions === '6', after.todayActions);
   check('the 舒适度 was repainted', after.cozyValue === '88', after.cozyValue);
   check('the loneliness note was repainted', after.lonely.includes('3'), after.lonely);
+
+  // -------------------------------------------------------------------------
+  // Test 5b — the FIRST paint is already correct
+  // -------------------------------------------------------------------------
+  //
+  // The bug this guards: `bond:get_full_state` used to blind-merge the
+  // bond and cozy snapshots. Both carry a `value` key, so cozy's (the
+  // 舒适度) overwrote bond's (the 亲密度) and the page painted the SAME
+  // number in both tiles. The `pet:status-changed` push uses explicit
+  // `bond_value` / `cozy` keys, so the very first interaction repainted
+  // the panel with the correct 亲密度 and the number appeared to JUMP out
+  // of nowhere.
+  //
+  // A second, quieter variant of the same class of bug: 陪伴天数 lives on
+  // the cozy snapshot, and the page used to read it off the bond snapshot.
+  // The tile then sat at 0 until the first push repainted it.
+  //
+  // So: seed a pet whose 亲密度 and 舒适度 are deliberately DIFFERENT,
+  // reload the page from scratch, and read the numbers WITHOUT any push
+  // in between. The first paint must already be right.
+  console.log('\n[5b] the first paint shows the right numbers');
+  const activePetId = db.getSetting('pet_id') || (petRegistry.list()[0] && petRegistry.list()[0].id);
+  db.setSetting('pet_id', activePetId);
+  const firstPaint = await (async () => {
+    // Seed distinct values so a swapped read cannot pass by coincidence.
+    // 亲密度 = 311, 舒适度 = 42.
+    db.run(
+      `INSERT OR REPLACE INTO bond_strength(pet_id, value, tier, streak_weeks, last_week_settled, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [activePetId, 311, 2, 0, '2026-11-04', new Date().toISOString()]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO cozy_state(pet_id, value, last_play_at, last_decay_at,
+                                          today_day, today_peak, today_interactions, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [activePetId, 42, Date.now(), Date.now(), '2026-11-05', 42,
+       JSON.stringify({ pet: 3, feed: 1 }), new Date().toISOString()]
+    );
+    db.setSetting('days_together:' + activePetId, '17');
+    db.setSetting('days_together:' + activePetId + ':day', '2026-11-05');
+
+    // Reload the renderer so the page re-runs its INITIAL render — the
+    // one that calls `getFullState()` + `getCozySnapshot()` — with no
+    // status push in between.
+    await winMain.webContents.executeJavaScript(`location.hash = '#/reminders'; true`);
+    await new Promise((r) => setTimeout(r, 300));
+    await winMain.webContents.executeJavaScript(`location.hash = '#/today'; true`);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    return winMain.webContents.executeJavaScript(`(() => {
+      const q = (n) => document.querySelector('#pet-status [data-bind="' + n + '"]');
+      return {
+        bondValue: q('bond-value').textContent.trim(),
+        cozyValue: q('cozy-value').textContent.trim(),
+        daysTogether: q('days-together').textContent.trim(),
+        todayActions: q('today-actions').textContent.trim(),
+      };
+    })()`);
+  })();
+
+  check('the first paint shows the 亲密度, not the 舒适度',
+    firstPaint.bondValue === '311', `got "${firstPaint.bondValue}"`);
+  check('the first paint shows the 舒适度',
+    firstPaint.cozyValue === '42', `got "${firstPaint.cozyValue}"`);
+  check('the first paint does not show the same number twice',
+    firstPaint.bondValue !== firstPaint.cozyValue,
+    `both read "${firstPaint.bondValue}"`);
+  check('the first paint shows the 陪伴天数',
+    firstPaint.daysTogether === '17', `got "${firstPaint.daysTogether}"`);
+  check('the first paint shows the 今日互动 tally',
+    firstPaint.todayActions === '4', `got "${firstPaint.todayActions}"`);
+
+  // The payload itself must not carry a bare `value` key. A caller that
+  // reads `.value` off this snapshot cannot know whether it means 亲密度
+  // or 舒适度 — that ambiguity is what caused the original bug, so the
+  // field is removed rather than merely overridden.
+  const fullState = await winMain.webContents.executeJavaScript(
+    `window.mp.bond.getFullState().then(s => ({ hasValue: 'value' in s, bond: s.bond_value, cozy: s.cozy }))`
+  );
+  check('the full-state snapshot has no ambiguous bare "value" key',
+    fullState.hasValue === false, `value is present: ${JSON.stringify(fullState)}`);
+  check('the full-state snapshot reports the 亲密度 as bond_value',
+    fullState.bond === 311, `got ${fullState.bond}`);
+  check('the full-state snapshot reports the 舒适度 as cozy',
+    fullState.cozy === 42, `got ${fullState.cozy}`);
 
   // -------------------------------------------------------------------------
   // Test 6 — switching the active pet swaps the portrait
@@ -556,15 +647,35 @@ app.whenReady().then(async () => {
     const el = document.querySelector('#pet-status .today-mood-portrait');
     const card = document.querySelector('#pet-status .today-mood-card');
     if (!el || !card) return null;
+    // Measure on a DETACHED clone, not on the live card.
+    //
+    // Two things make the live card unusable for this measurement:
+    //   1. The app's 1-second scheduler tick repaints the mood card and
+    //      rewrites data-mood, so a read that yields to the event loop can
+    //      come back with a DIFFERENT mood's filter than the one asked
+    //      for. That is what made this test flake.
+    //   2. getComputedStyle does not always flush a pending style recalc
+    //      synchronously — reading right after an attribute change can
+    //      return the PREVIOUS mood's computed filter.
+    //
+    // A clone in a detached container is under nobody's control: the
+    // app's ticks cannot touch it, and each read gets its own awaited
+    // frame so the recalc definitely lands.
+    const host = document.createElement('div');
+    const probeCard = card.cloneNode(true);
+    const probePortrait = probeCard.querySelector('.today-mood-portrait');
+    if (!probePortrait) return null;
+    host.appendChild(probeCard);
+    document.body.appendChild(host);
     const read = async (mood) => {
-      card.setAttribute('data-mood', mood);
-      // Force a style recalc so the new filter is reflected immediately.
+      probeCard.setAttribute('data-mood', mood);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      return getComputedStyle(el).filter || '';
+      return getComputedStyle(probePortrait).filter || '';
     };
-    const happy = await read('festive');
+    const happy = await read('happy_clingy');
     const sad = await read('sad');
     const neutral = await read('content');
+    host.remove();
     return { happy, sad, neutral };
   })()`);
 
@@ -591,6 +702,80 @@ app.whenReady().then(async () => {
     check('the portrait filter carries no hue tint',
       !/hue-rotate|sepia/.test(moodFilter.happy + moodFilter.sad),
       `${moodFilter.happy} | ${moodFilter.sad}`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 8 — every mood has its own word colour
+  // -------------------------------------------------------------------------
+  console.log('\n[8] each mood paints the word in its own colour');
+  // The mood no longer binds to a sprite variant, so the WORD's colour is
+  // what tells the user which mood it is. Every mood must resolve to a
+  // distinct colour — two moods sharing one would make them
+  // indistinguishable.
+  const moodColors = await winMain.webContents.executeJavaScript(`(async () => {
+    const card = document.querySelector('#pet-status .today-mood-card');
+    const word = document.querySelector('#pet-status [data-bind="mood-label"]');
+    if (!card || !word) return null;
+    // Measured on a detached clone — see Test 7 for why the live card is
+    // not a safe thing to mutate and read: the app's scheduler tick can
+    // rewrite data-mood in the middle of the measurement.
+    const host = document.createElement('div');
+    const probeCard = card.cloneNode(true);
+    const probeWord = probeCard.querySelector('[data-bind="mood-label"]');
+    if (!probeWord) return null;
+    host.appendChild(probeCard);
+    document.body.appendChild(host);
+    const read = async (mood) => {
+      probeCard.setAttribute('data-mood', mood);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return getComputedStyle(probeWord).color || '';
+    };
+    const out = {};
+    for (const m of ['depressed', 'sad', 'missing_you', 'content', 'happy_clingy']) {
+      out[m] = await read(m);
+    }
+    host.remove();
+    return out;
+  })()`);
+  check('the mood word colour can be read', !!moodColors);
+  if (moodColors) {
+    const values = Object.values(moodColors);
+    check('every mood has a colour', values.every((v) => !!v), JSON.stringify(moodColors));
+    check('the five moods use five distinct colours',
+      new Set(values).size === values.length, JSON.stringify(moodColors));
+  }
+
+  // The note under the mood word carries the SAME accent, so the whole
+  // text block reads as one mood rather than a coloured headline over
+  // grey small-print.
+  const noteColors = await winMain.webContents.executeJavaScript(`(async () => {
+    const card = document.querySelector('#pet-status .today-mood-card');
+    const note = document.querySelector('#pet-status [data-bind="mood-note"]');
+    if (!card || !note) return null;
+    // Detached clone again — same reason as the word above.
+    const host = document.createElement('div');
+    const probeCard = card.cloneNode(true);
+    const probeNote = probeCard.querySelector('[data-bind="mood-note"]');
+    if (!probeNote) return null;
+    host.appendChild(probeCard);
+    document.body.appendChild(host);
+    const read = async (mood) => {
+      probeCard.setAttribute('data-mood', mood);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return getComputedStyle(probeNote).color || '';
+    };
+    const out = {};
+    for (const m of ['depressed', 'sad', 'missing_you', 'happy_clingy']) {
+      out[m] = await read(m);
+    }
+    host.remove();
+    return out;
+  })()`);
+  check('the mood note colour can be read', !!noteColors);
+  if (noteColors && moodColors) {
+    check('the note takes the mood accent, matching the word',
+      Object.keys(noteColors).every((m) => noteColors[m] === moodColors[m]),
+      JSON.stringify({ note: noteColors, word: moodColors }));
   }
 
   // -------------------------------------------------------------------------

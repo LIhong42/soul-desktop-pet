@@ -322,6 +322,7 @@ function statusFields(bondSnap, cozySnap) {
     cozy: cozySnap.value,
     cozy_today_peak: cozySnap.today_peak,
     cozy_today_interactions: cozySnap.today_interactions,
+    days_together: cozySnap.days_together,
     lonely_hours: Math.round((cozySnap.lonely_hours | 0) * 10) / 10,
   };
 }
@@ -336,6 +337,11 @@ function statusSignature(bondSnap, cozySnap, mood) {
     bondSnap.weekly_score,
     bondSnap.streak_weeks,
     cozySnap.value,
+    cozySnap.days_together,
+    // The per-action interaction tally. It's an object, so it can't be
+    // stringified into the signature directly — the total is what the
+    // 今日互动 tile shows, and that's what should gate the broadcast.
+    JSON.stringify(cozySnap.today_interactions || {}),
     Math.floor(cozySnap.lonely_hours | 0),
   ].join('|');
 }

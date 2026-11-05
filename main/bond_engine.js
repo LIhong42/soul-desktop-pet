@@ -52,7 +52,7 @@ const WEEKLY_MAX = DIMENSION_FORMULA.reduce(
 
 // Returns the Monday-of-this-week date string in local time, YYYY-MM-DD.
 // Kept for reading historical weekly_ritual rows written before the switch
-// to daily settlement, and for the 连续陪伴周数 readout.
+// to daily settlement.
 function weekStart(d) {
   const now = d instanceof Date ? d : new Date();
   const dow = now.getDay();            // 0 (Sun) .. 6 (Sat)
@@ -159,9 +159,13 @@ function incrementWeekDimension(db, petId, dim, by, nowStr) {
       WHERE pet_id = ? AND week_start = ?`,
     [by, nowStr(), petId, period]
   );
-  // Mark "today we saw an event of certain types" flags so PetMood can
-  // decide to show a "proud" bubble. The scheduler resets these at each
-  // period rollover (see maybeRunSettlement).
+  // Mark "today we saw an event of certain types" flags. The scheduler
+  // resets these at each period rollover (see maybeRunSettlement).
+  //
+  // NOTE: the mood tree no longer reads these flags — the mood is a pure
+  // function of cozy. They are still written because the "today's
+  // activity" flags are generally useful state, and the reset below has
+  // to keep them in step with the day rollover regardless.
   if (dim === 'event_created') {
     const cur = parseInt(db.getSetting(`today_event:${petId}`) || '0', 10) + by;
     db.setSetting(`today_event:${petId}`, String(cur));
@@ -395,7 +399,8 @@ function getWeeklyBreakdown(db, petId) {
     } catch { return []; }
   })();
   return {
-    week_start: week,
+    // The period key is a calendar day (see periodStart), not a Monday.
+    week_start: period,
     score: computeWeeklyScore(row),
     per_dimension: DIMENSION_FORMULA.map(([k, cap, weight]) => ({
       key: k,
