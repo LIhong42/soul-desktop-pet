@@ -52,6 +52,10 @@ app.whenReady().then(async () => {
       list: () => [],
       getManifest: () => null,
       resolveFrames: () => ({ frames: [], variantHint: '', loop: true }),
+      // The mood portrait on the 今日 page reads the pet's own picture;
+      // this stub has no pet, so it reports none and the page falls back
+      // to the mood emoji.
+      getPortrait: () => null,
       isImported: () => false,
       getRootDir: () => '',
       rescan: () => {},

@@ -1615,6 +1615,13 @@ function normFreeText(s) {
       } else {
         db.setSetting('pet_id', id);
       }
+      // Tell the MAIN window too, not just the pet window: the 今日 page
+      // shows a portrait of the active pet, and without this it would keep
+      // showing the old pet's picture until the user navigated away and
+      // back.
+      if (winMain && !winMain.isDestroyed()) {
+        winMain.webContents.send('pet:pet-changed', { petId: id });
+      }
       return true;
     });
     ipcMain.handle('pet:resolve_frames', (_e, petId, variant, direction) => {
@@ -1623,6 +1630,23 @@ function normFreeText(s) {
       } catch (err) {
         console.error('[ipc] pet:resolve_frames failed:', err.message);
         throw err;
+      }
+    });
+    // A still portrait of the pet currently in use — the first frame of its
+    // `default` variant, as a file:// URL. The 今日 page shows this in the
+    // mood panel instead of a generic emoji.
+    //
+    // Returns null when the pet has no usable `default` variant, so the
+    // caller can fall back to the mood emoji rather than showing a broken
+    // image.
+    ipcMain.handle('pet:get_portrait', () => {
+      try {
+        const id = db.getSetting('pet_id') || (petRegistry.list()[0] && petRegistry.list()[0].id);
+        if (!id) return null;
+        return petRegistry.getPortrait(id);
+      } catch (err) {
+        console.error('[ipc] pet:get_portrait failed:', err.message);
+        return null;
       }
     });
     // Renderer asks for the current pet's render size so it can set the

@@ -26,12 +26,16 @@ export async function render() {
   // in this list, whether the pet has nagged me about it yet or not.
   // Soft-completed items are included too, so the user can scroll back to
   // see what they finished and click through to confirm.
-  const [todayView, state, bond, cozy, pets] = await Promise.all([
+  const [todayView, state, bond, cozy, pets, portrait] = await Promise.all([
     api.reminders.listTodayView(),
     api.pet.getState(),
     api.bond.getFullState(),
     api.bond.getCozySnapshot(),
     api.pet.list().catch(() => []),
+    // A still picture of the pet in use, for the mood panel's portrait.
+    // Null when the pet has no usable `default` variant — the panel then
+    // falls back to the mood emoji.
+    api.pet.getPortrait().catch(() => null),
   ]);
 
   const today = new Date();
@@ -61,7 +65,6 @@ export async function render() {
     <div class="today-page">
       <div class="today-hero">
         <h1 class="today-hero-title">
-          <span class="today-hero-emoji">🗓️</span>
           <span class="today-hero-date">今日 · ${today.getFullYear()}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}</span>
           <span class="today-hero-weekday">${weekday}</span>
         </h1>
@@ -69,14 +72,14 @@ export async function render() {
 
       <div class="today-section">
         <div class="today-section-head">
-          <h2><span class="today-section-emoji">🐾</span>桌宠状态</h2>
+          <h2>桌宠状态</h2>
         </div>
-        <div id="pet-status">${renderPetStatus(normalizeFromSnapshots(bond, cozy), state, petName)}</div>
+        <div id="pet-status">${renderPetStatus(normalizeFromSnapshots(bond, cozy), state, petName, portrait)}</div>
       </div>
 
       <div class="today-section">
         <div class="today-section-head">
-          <h2><span class="today-section-emoji">🔔</span>当前提醒</h2>
+          <h2>当前提醒</h2>
         </div>
         ${(() => {
           if (todayView.length === 0) {
@@ -136,7 +139,7 @@ export async function render() {
                 <span class="cat-icon" data-tone="${escapeHtml(tone)}">${escapeHtml(glyph)}</span>
               </div>
               <div class="lr-main">
-                <div class="lr-title">${escapeHtml(titleText)}${r.tag_kind && tagKindLabel(r.tag_kind) ? ` <span class="tag" style="margin-left:6px">${escapeHtml(tagKindLabel(r.tag_kind))}</span>` : ''}</div>
+                <div class="lr-title">${escapeHtml(titleText)}</div>
               </div>
               <div class="lr-side">
                 <div class="time-chip ${completed ? '' : 'urgent'}"><span class="chip-dot"></span>${chipLabel}</div>
@@ -207,6 +210,28 @@ api.on('pet:state-changed', (payload) => {
   }
 });
 
+// The user swapped the active pet (设置 → 桌宠). The mood panel's portrait
+// shows THAT pet's picture, so it has to be swapped too — otherwise the
+// page keeps showing the old pet until the user navigates away and back.
+api.on('pet:pet-changed', () => {
+  const portrait = document.querySelector('#pet-status .today-mood-portrait');
+  if (!portrait) return;
+  api.pet.getPortrait().then((url) => {
+    // The page may have been navigated away while the request was in
+    // flight — the element would no longer be the one we asked about.
+    if (!portrait.isConnected) return;
+    if (url) {
+      portrait.innerHTML = `<img class="today-mood-image" src="${escapeHtml(url)}" alt="桌宠" />`;
+    } else {
+      // No portrait available for the new pet — fall back to the mood
+      // glyph the portrait was rendered with before.
+      const mood = (portrait.closest('.today-mood-card') || {}).dataset?.mood;
+      const meta = MOOD_META[mood] || { icon: '🙂' };
+      portrait.textContent = meta.icon;
+    }
+  }).catch(() => {});
+});
+
 // ---- 桌宠状态 block -----------------------------------------------------
 //
 // Three stat cards: mood, 羁绊 progression, and 陪伴 gauges. The block is
@@ -269,7 +294,7 @@ function bondPct(s) {
   return Math.max(0, Math.min(100, Math.round((s.bondValue - s.tierFloor) / span * 100)));
 }
 
-function renderPetStatus(st, state, petName) {
+function renderPetStatus(st, state, petName, portrait) {
   const mood = st.mood;
   const pct = bondPct(st);
   const next = st.nextTier;
@@ -279,13 +304,20 @@ function renderPetStatus(st, state, petName) {
   // The three 陪伴状态 reads the reference shows as icon-chip columns:
   // today's interactions, the cozy score, and the streak.
   const todayActions = (state && typeof state.count === 'number') ? state.count : 0;
+  // The portrait shows the pet the user actually has installed, rather
+  // than a generic emoji standing in for it. When there is no portrait
+  // (a pet with no usable `default` variant), the mood emoji stands in —
+  // the panel always shows *something*, and the mood still reads.
+  const portraitInner = portrait
+    ? `<img class="today-mood-image" src="${escapeHtml(portrait)}" alt="${escapeHtml(petName || '桌宠')}" />`
+    : escapeHtml(moodMeta.icon);
 
   return `
     <div class="today-status-grid">
       <div class="card today-mood-card" data-mood="${escapeHtml(mood)}">
-        <div class="today-panel-title"><span class="today-panel-emoji">💗</span>当前心情</div>
+        <div class="today-panel-title">当前心情</div>
         <div class="today-mood-row">
-          <div class="today-mood-portrait" data-bind="mood-icon">${escapeHtml(moodMeta.icon)}</div>
+          <div class="today-mood-portrait" data-bind="mood-icon">${portraitInner}</div>
           <div class="today-mood-text">
             <div class="today-mood-word" data-bind="mood-label">${escapeHtml(moodMeta.label)}</div>
             <div class="today-mood-note" data-bind="mood-note">${escapeHtml(moodNote(mood, state))}</div>
@@ -295,7 +327,7 @@ function renderPetStatus(st, state, petName) {
 
       <div class="card today-bond-card">
         <div class="today-bond-head">
-          <div class="today-panel-title" style="margin-bottom:0"><span class="today-panel-emoji">🌱</span>关系成长</div>
+          <div class="today-panel-title" style="margin-bottom:0">关系成长</div>
           <div class="today-tier-pill"><span data-bind="tier-badge">T${st.tier}</span> · <span data-bind="tier-label">${escapeHtml(st.tierLabel)}</span></div>
         </div>
         <div class="today-bond-body">
@@ -314,35 +346,37 @@ function renderPetStatus(st, state, petName) {
       </div>
 
       <div class="card today-wide">
-        <div class="today-panel-title"><span class="today-panel-emoji">📊</span>陪伴状态</div>
+        <div class="today-panel-title">陪伴状态</div>
         <div class="today-companion-stats">
           <div class="today-companion-cell">
-            <div class="today-companion-icon" data-tone="cal">🗓️</div>
             <div class="today-companion-text">
-              <div class="today-companion-value" data-bind="today-actions">${todayActions}</div>
-              <div class="today-companion-label">今日互动</div>
+              <div class="today-companion-stack">
+                <div class="today-companion-value" data-bind="today-actions">${todayActions}</div>
+                <div class="today-companion-label">今日互动</div>
+              </div>
             </div>
           </div>
           <div class="today-companion-cell">
-            <div class="today-companion-icon" data-tone="cozy">😊</div>
             <div class="today-companion-text">
-              <div class="today-companion-value" data-bind="cozy-value">${clampPct(st.cozy)}</div>
-              <div class="today-companion-label">舒适度</div>
+              <div class="today-companion-stack">
+                <div class="today-companion-value" data-bind="cozy-value">${clampPct(st.cozy)}</div>
+                <div class="today-companion-label">舒适度</div>
+              </div>
               <div class="today-meter today-companion-bar">
                 <div class="today-meter-fill" data-tone="cozy" data-bind="cozy-fill" style="width:${clampPct(st.cozy)}%"></div>
               </div>
             </div>
           </div>
           <div class="today-companion-cell">
-            <div class="today-companion-icon" data-tone="streak">⭐</div>
             <div class="today-companion-text">
-              <div class="today-companion-value"><span data-bind="streak">${st.streak}</span><small>天</small></div>
-              <div class="today-companion-label">连续陪伴</div>
+              <div class="today-companion-stack">
+                <div class="today-companion-value"><span data-bind="streak">${st.streak}</span><small>天</small></div>
+                <div class="today-companion-label">连续陪伴</div>
+              </div>
             </div>
           </div>
         </div>
         <div class="today-companion-meta">
-          <span class="today-heart">♥</span>
           <span data-bind="lonely">${lonelyHours > 0 ? `已经独处 ${lonelyHours} 个小时了，回来陪陪它吧` : '一直陪着你，关系慢慢成长。'}</span>
         </div>
       </div>
@@ -374,7 +408,13 @@ function applyStatus(raw, state) {
     const icon = q('mood-icon');
     const label = q('mood-label');
     const note = q('mood-note');
-    if (icon) icon.textContent = meta ? meta.icon : '🙂';
+    // The portrait holds the pet's own picture, not a mood glyph — so it
+    // must NOT be overwritten with the mood emoji here. It only gets the
+    // mood emoji when there is no picture at all (the portrait element
+    // then contains a text node instead of an <img>).
+    if (icon && !icon.querySelector('img')) {
+      icon.textContent = meta ? meta.icon : '🙂';
+    }
     if (label) label.textContent = meta ? meta.label : '平静';
     if (note) note.textContent = moodNote(s.mood, state);
   }
@@ -462,10 +502,6 @@ function moodNote(mood, state) {
     case 'missing_you':  return '有点想你了，还想再靠近一点';
     default:             return '一切正常，作息规律';
   }
-}
-
-function tagKindLabel(k) {
-  return ({ birthday: '生日', anniversary: '纪念日', festival: '节日' }[k]) || '';
 }
 
 // ---- 背景 (background artwork) --------------------------------------------

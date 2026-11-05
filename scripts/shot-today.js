@@ -18,6 +18,7 @@ const db = require(path.join(ROOT, 'main', 'db'));
 const scheduler = require(path.join(ROOT, 'main', 'scheduler'));
 const ipc = require(path.join(ROOT, 'main', 'ipc.js'));
 const todayBackground = require(path.join(ROOT, 'main', 'today_background.js'));
+const { PetRegistry } = require(path.join(ROOT, 'main', 'pet_registry.js'));
 
 const OUT = process.argv[2]
   ? path.resolve(process.argv[2])
@@ -28,6 +29,13 @@ app.whenReady().then(async () => {
   await db.open(path.join(dir, 'test.sqlite'));
 
   todayBackground.invalidate();
+
+  // The REAL pet registry, so the 今日 page's mood portrait shows the
+  // user's actual pet sprite instead of the mood-emoji fallback. A stub
+  // registry would silently render the fallback and the shot would not
+  // show what the app really looks like.
+  const petRegistry = new PetRegistry();
+  await petRegistry.init({ appPath: ROOT, userDataPath: path.join(dir, 'userdata') });
 
   const winMain = new BrowserWindow({
     width: 1280,
@@ -50,14 +58,7 @@ app.whenReady().then(async () => {
     setActiveReminder: () => {},
     broadcastPetState: () => {},
     petController: null,
-    petRegistry: {
-      list: () => [],
-      getManifest: () => null,
-      resolveFrames: () => ({ frames: [], variantHint: '', loop: true }),
-      isImported: () => false,
-      getRootDir: () => '',
-      rescan: () => {},
-    },
+    petRegistry,
   });
 
   // Seed a few reminder rows so the shot exercises the LIST styling, not

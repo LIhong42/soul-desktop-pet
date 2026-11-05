@@ -101,6 +101,9 @@ contextBridge.exposeInMainWorld('mp', {
     setCurrent: (id) => ipcRenderer.invoke('pet:set_current', id),
     resolveFrames: (petId, variant, direction) =>
       ipcRenderer.invoke('pet:resolve_frames', petId, variant, direction),
+    // A still portrait of the pet in use (first frame of its `default`
+    // variant) as a file:// URL, or null when there isn't one.
+    getPortrait:     ()        => ipcRenderer.invoke('pet:get_portrait'),
     // Autonomous-walk controls.
     getWalkEnabled: () => ipcRenderer.invoke('pet:get_walk_enabled'),
     setWalkEnabled: (b) => ipcRenderer.invoke('pet:set_walk_enabled', b),
@@ -263,6 +266,7 @@ contextBridge.exposeInMainWorld('mp', {
     const allowed = [
       'pet:state-changed',
       'pet:size-changed',
+      'pet:pet-changed',
       'main:open-reminder',
       'main:navigate',
       'export:progress',

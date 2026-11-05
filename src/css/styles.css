@@ -133,7 +133,11 @@ html, body {
   /* The scrim is a separate custom property so a darker artwork could raise
      it without touching the image rule. Kept at the app's own --bg tone so
      the artwork reads as a *background* to the page rather than as a filter
-     on the text. */
+     on the text.
+
+     The 今日 page overrides both of these in today.css: its artwork is a
+     light pastel room and its cards are translucent, so it wants a lighter,
+     warmer wash than the app default. */
   --today-bg-scrim: rgba(248, 247, 243, 0.82);
   background-image: var(--today-bg-image), linear-gradient(var(--today-bg-scrim), var(--today-bg-scrim));
   background-size: cover;

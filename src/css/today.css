@@ -2,8 +2,9 @@
    src/css/today.css — 今日页 (Today) 暖色纸感设计系统
    ===========================================================================
    The 今日 page is the app's landing screen and the only page with artwork
-   behind it, so it gets its own visual language: a warm, paper-like surface
-   with soft rounded cards, large readable numerals, and generous whitespace.
+   behind it, so it gets its own visual language: warm translucent paper
+   laid over the artwork, soft rounded cards, large readable numerals, and
+   generous whitespace.
 
    Everything here is scoped under `.today-page` (a class the page renderer
    puts on the content wrapper) — deliberately, because the app's other pages
@@ -12,8 +13,10 @@
 
    Palette notes:
      - The page paints the artwork from `resources/ui/` (a warm pastel room)
-       behind a translucent cream scrim. `--today-paper` is the near-white
-       card color that reads as paper on top of that artwork.
+       behind a translucent cream scrim. `--today-paper` is a *translucent*
+       near-white: the cards are sheets laid over the artwork rather than
+       opaque rectangles pasted on top of it, so the page reads as one
+       material instead of a background with white boxes on it.
      - `--today-ink` is a warm near-black. The app's global `--text` is a
        neutral #2a2a2a; on a cream background the warm variant reads less
        "grey sticker" and more "printed card".
@@ -21,14 +24,38 @@
        (`--cat-*`) so the pet-status meters keep the same meaning they have
        on the 事件 page.
 
+   Restraint notes:
+     - The page deliberately carries very few icons. Section headings,
+       panel titles and stat columns are plain text; the only glyphs left
+       are the ones that *carry meaning* — the pet's mood portrait and the
+       per-reminder category chip (which matches the 事件 page). An emoji
+       in front of every heading turned the page into a row of badges
+       competing with the data.
+
    Loaded separately from styles.css (see src/index.html) so the design
    system for one page stays in one file instead of being scattered through
    a 4000-line global stylesheet. */
 
 /* ---- Page shell --------------------------------------------------------- */
 .today-page {
-  --today-paper: #fffdfa;
-  --today-paper-2: #fff6ef;
+  /* The card surface is a *translucent* sheet of paper laid over the
+     artwork, not an opaque rectangle pasted on top of it. An opaque
+     near-white card cuts a hard edge across the pastel background and
+     reads as a foreign UI panel; a translucent one lets the artwork
+     continue through the card, so the two read as one material.
+
+     The alpha is deliberately low — the artwork behind the page should
+     read through the cards as a soft, hazy wash, not just at the edges
+     but across the whole surface. `backdrop-filter` blurs whatever is
+     behind the card, so what comes through is the *shape and colour* of
+     the picture rather than its detail: the cards look like frosted
+     glass laid over a painting. The legibility is bought back by the
+     blur and by the warm ink, not by opacity. */
+  --today-paper: rgba(255, 253, 250, 0.34);
+  /* The reminder list carries small text over the artwork, so it needs a
+     denser sheet than the large-type status cards — see the reminder
+     panel's own rule. */
+  --today-paper-list: rgba(255, 253, 250, 0.58);
   --today-ink: #3d3128;
   --today-ink-soft: #8c7d70;
   --today-line: rgba(196, 160, 132, 0.28);
@@ -55,9 +82,25 @@
 /* The scrim over the artwork. The artwork is a light pastel, so the scrim
    is a warm cream rather than the app's neutral --bg: a warm wash over a
    warm painting keeps the page feeling like one material instead of a
-   photo with a grey wash on top. */
+   photo with a grey wash on top.
+
+   The scrim is deliberately light now that the cards are translucent: the
+   cards carry their own contrast against the artwork, so a heavy wash
+   would only flatten the picture the page is built around. This value
+   just takes the sharpest edges off the artwork so text placed directly
+   on the background stays readable.
+
+   It is a vertical gradient rather than a flat wash. The artwork's top
+   edge is where the window frame and the brightest sky are, and the header
+   sits there — so the top gets a slightly heavier scrim for legibility,
+   fading downward into the warm centre of the painting. A flat scrim
+   either under-protects the top or flattens the whole picture. */
 .content.today-bg {
-  --today-bg-scrim: rgba(255, 246, 236, 0.72);
+  --today-bg-scrim: rgba(255, 246, 236, 0.62);
+  --today-bg-scrim-bottom: rgba(255, 246, 236, 0.42);
+  background-image:
+    var(--today-bg-image),
+    linear-gradient(var(--today-bg-scrim), var(--today-bg-scrim-bottom));
 }
 
 /* ---- Page header --------------------------------------------------------
@@ -133,9 +176,13 @@
 
 /* ---- Section headings ---------------------------------------------------
    Global `h2` renders at 62% opacity, which is too quiet for this page's
-   card titles. These headings carry an emoji, a bold label, and a hairline
-   rule that runs to the right edge, so the eye can scan the page by
-   section without the headings shouting. */
+   card titles. These headings carry a bold label and a hairline rule that
+   runs to the right edge, so the eye can scan the page by section without
+   the headings shouting.
+
+   The headings are plain text on purpose. An emoji in front of every
+   section title turned the page into a row of badges competing with the
+   data; the label alone is enough to name a section. */
 .today-section { margin: 22px 0 12px; }
 .today-section-head {
   display: flex;
@@ -154,10 +201,6 @@
   align-items: center;
   gap: 7px;
 }
-.today-section-head .today-section-emoji {
-  font-size: 17px;
-  line-height: 1;
-}
 /* The trailing hairline. `flex: 1` lets it fill whatever width is left.
    It fades to transparent so the rule doesn't end in a hard stop, and it
    starts warm enough to stay visible over the artwork behind the page. */
@@ -169,12 +212,24 @@
 }
 
 /* ---- Card surface -------------------------------------------------------
-   The paper card: near-white, warm hairline border, no hard drop shadow.
-   The reference design's depth comes from the artwork behind the card and
-   the soft glow, not from a crisp shadow — a shadow here would fight the
-   pastel background and read as a floating UI panel. */
+   The paper card: a translucent sheet, warm hairline border, no hard drop
+   shadow. The reference design's depth comes from the artwork behind the
+   card and the soft glow, not from a crisp shadow — a shadow here would
+   fight the pastel background and read as a floating UI panel.
+
+   `backdrop-filter: blur()` is what makes the translucency work: it
+   softens the artwork directly behind the card so the text never has to
+   compete with a busy part of the painting. The blur radius is generous
+   on purpose — the artwork should come through as a hazy wash of colour
+   and shape, never as recognizable detail, which is what keeps small
+   text readable over it. `saturate()` keeps the colours from going
+   muddy through the white veil. The `-webkit-` prefix is kept for the
+   same reason Electron's Chromium needs it in older builds; harmless
+   where unsupported. */
 .today-page .card {
   background: var(--today-paper);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
   border: 1px solid var(--today-line);
   border-radius: var(--today-radius);
   box-shadow: var(--today-shadow);
@@ -242,88 +297,139 @@
   color: var(--today-ink);
   margin: 0 0 14px;
 }
-.today-panel-title .today-panel-emoji {
-  font-size: 16px;
-  line-height: 1;
-}
 
 /* ---- Mood panel ---------------------------------------------------------
    The reference design puts the pet's illustration to the left of the mood
-   word. We don't ship that artwork, so the mood emoji stands in as the
-   "portrait" — but it gets the same generous circular paper-cut treatment
-   (a soft blush disc with an emphasis dot) so the composition reads the
-   same way: portrait | mood word | note. */
+   word. We have that illustration — it's the pet the user actually has
+   installed — so the portrait is the pet's own first frame.
+
+   The portrait shows the WHOLE character, standing on the paper with no
+   disc, no tint and no ring behind it. A sprite frame is a full-body
+   cut-out (432×576 with the character filling most of it), so cropping it
+   into a circle would cut the character's own silhouette into a shape it
+   doesn't have — it would read as a bug rather than as a portrait.
+
+   The mood is expressed by the character's own BRIGHTNESS rather than by
+   a colour wash: a bright pet is a happy pet, a dimmed pet is a sad one.
+   That keeps the artwork's own colours intact — the picture stays the
+   picture, and only the light on it changes.
+
+   When the pet has no usable `default` variant the portrait falls back to
+   the mood emoji, which sits on the same transparent ground. */
 .today-mood-row {
   display: flex;
   align-items: center;
   gap: 16px;
+  /* The row's own height is driven by the portrait — the character is the
+     tallest thing in the panel, and the mood word + note sit beside its
+     middle. Without this the row would collapse to the text's height and
+     the picture would overflow it. */
+  min-height: 152px;
 }
 .today-mood-portrait {
   flex: none;
-  width: 82px;
-  height: 82px;
-  border-radius: 50%;
-  /* A radial gradient rather than a solid fill plus an inset ring: the
-     gradient gives the paper-cut a soft lit edge with no hard circle
-     artifact, and it still accepts the per-mood tint overrides below
-     (which only need to replace the top color stop). */
-  background: radial-gradient(circle at 50% 45%, #fff6f0 0%, var(--today-blush) 62%, #ffd9c8 100%);
+  /* The box is sized for the CHARACTER, not for a sprite canvas. The
+     sprite is a tall cut-out, so the box is tall too — that way the whole
+     figure fits without the box's own height squeezing it.
+
+     The height is the character-first measurement: a full-body cut-out
+     drawn at this size puts the head near the top of the panel, next to
+     the mood word, instead of leaving the figure stranded in a tall box. */
+  width: 108px;
+  height: 152px;
+  /* The row centres its children, and a centred flex item is allowed to
+     shrink below its own height. The portrait opts out of that so the
+     picture always has a real box to fit into. */
+  align-self: stretch;
+  /* Nothing is drawn behind the character: no disc, no tint, no ring.
+     The transparent PNG's own silhouette is the portrait. */
   display: grid;
   place-items: center;
   font-size: 42px;
   line-height: 1;
   position: relative;
-  transition: background 240ms ease;
+  transition: filter 240ms ease;
 }
-/* The little "emphasis" tick that the reference draws beside the pet.
-   It sits just outside the disc's upper-right edge, so it reads as a
-   separate mark rather than a blemish on the illustration. */
-.today-mood-portrait::after {
-  content: "";
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--today-peach);
-  box-shadow: 0 0 0 4px var(--today-paper);
-  opacity: 0.85;
-}
-/* Mood accents: only the portrait disc and the mood word react, so a sad
-   pet reads at a glance without tinting the whole panel. The hues are the
-   same family the app's category palette already uses.
+/* The pet's picture inside the portrait.
 
-   The portrait overrides replace the gradient's outer stop only — the lit
-   inner stop stays, so the disc keeps its soft paper-cut shading instead
-   of flattening into a solid circle. */
-.today-mood-card[data-mood="depressed"] .today-mood-word,
-.today-mood-card[data-mood="sad"] .today-mood-word { color: #d97878; }
+   `object-fit: contain` (not `cover`) is the point of this rule: the whole
+   character must be visible, with nothing cropped away. `contain` scales
+   the sprite down until both axes fit, so a tall figure lands in a tall
+   box with the empty margins beside it.
+
+   `object-position` is what keeps the character centred. A sprite canvas
+   carries its own transparent padding and it is NOT symmetric — the
+   built-in pet's frame is 432×576 with the character filling 382×560 of
+   it, leaving 50 px of empty space on the LEFT and none on the right.
+   Centring the CANVAS would therefore push the character off to one
+   side, so the picture is nudged back toward the middle.
+
+   The nudge is a fixed fraction of the box rather than a percentage of
+   the image: the padding is a property of the artwork, not of the box,
+   so a percentage of the image would drift as the picture is scaled. */
+.today-mood-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: 56% center;
+  display: block;
+}
+/* Mood is carried by brightness, not by colour.
+
+   The character keeps its own colours; only the light on it changes. A
+   bright pet reads as a cheerful one and a dimmed pet reads as a
+   low-spirited one — the same information the old tinted disc gave, but
+   without repainting the artwork.
+
+   `filter` is applied to the WHOLE portrait element, so the emoji
+   fallback dims along with the picture and the two look the same. */
 .today-mood-card[data-mood="depressed"] .today-mood-portrait,
 .today-mood-card[data-mood="sad"] .today-mood-portrait {
-  background: radial-gradient(circle at 50% 45%, #fff4f2 0%, #fbdcd6 62%, #f4a8a0 100%);
+  filter: brightness(0.62) saturate(0.85);
 }
+
+.today-mood-card[data-mood="concerned"] .today-mood-portrait,
+.today-mood-card[data-mood="missing_you"] .today-mood-portrait,
+.today-mood-card[data-mood="lonely"] .today-mood-portrait {
+  filter: brightness(0.76) saturate(0.9);
+}
+
+.today-mood-card[data-mood="happy_clingy"] .today-mood-portrait,
+.today-mood-card[data-mood="proud"] .today-mood-portrait,
+.today-mood-card[data-mood="festive"] .today-mood-portrait {
+  filter: brightness(1.08) saturate(1.05);
+}
+
+.today-mood-card[data-mood="reminder"] .today-mood-portrait {
+  filter: brightness(0.95);
+}
+/* The neutral mood is the baseline: the picture at its own colours, at
+   its own brightness. It gets an explicit rule so the ladder reads
+   "dim → normal → bright" rather than "dim → (nothing) → bright". */
+.today-mood-card[data-mood="content"] .today-mood-portrait {
+  filter: brightness(1) saturate(1);
+}
+/* The mood WORD keeps its colour accents — the label is the one place
+   where a hue reads instantly without repainting anything. */
+.today-mood-card[data-mood="depressed"] .today-mood-word,
+.today-mood-card[data-mood="sad"] .today-mood-word { color: #d97878; }
 
 .today-mood-card[data-mood="concerned"] .today-mood-word,
 .today-mood-card[data-mood="missing_you"] .today-mood-word,
 .today-mood-card[data-mood="lonely"] .today-mood-word { color: #c98b93; }
-.today-mood-card[data-mood="concerned"] .today-mood-portrait,
-.today-mood-card[data-mood="missing_you"] .today-mood-portrait,
-.today-mood-card[data-mood="lonely"] .today-mood-portrait {
-  background: radial-gradient(circle at 50% 45%, #fff6f7 0%, #f6e2e5 62%, #d8a8b0 100%);
-}
 
 .today-mood-card[data-mood="happy_clingy"] .today-mood-word,
 .today-mood-card[data-mood="proud"] .today-mood-word,
 .today-mood-card[data-mood="festive"] .today-mood-word { color: #e08a5c; }
-.today-mood-card[data-mood="happy_clingy"] .today-mood-portrait,
-.today-mood-card[data-mood="proud"] .today-mood-portrait,
-.today-mood-card[data-mood="festive"] .today-mood-portrait {
-  background: radial-gradient(circle at 50% 45%, #fffaf2 0%, #ffe8d8 62%, #ffb894 100%);
-}
 
 .today-mood-card[data-mood="reminder"] .today-mood-word { color: #e0705f; }
-.today-mood-text { min-width: 0; }
+/* The text column sits against the character's MIDDLE, not the top of her
+   box — the mood word lines up with the character's face rather than
+   floating beside her hat. */
+.today-mood-text {
+  min-width: 0;
+  align-self: center;
+}
 .today-mood-word {
   font-size: 28px;
   font-weight: 800;
@@ -336,26 +442,6 @@
   font-size: 13px;
   line-height: 1.6;
   margin-top: 6px;
-}
-/* The little "..." affordance in the panel's top-right corner, matching the
-   reference's menu hint. It's decorative (the mood panel has no menu yet),
-   so it is aria-hidden and not focusable. */
-.today-panel-menu {
-  position: absolute;
-  top: 16px;
-  right: 18px;
-  width: 26px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--today-paper-2);
-  border: 1px solid var(--today-line);
-  color: var(--today-ink-soft);
-  font-size: 11px;
-  line-height: 1;
-  display: grid;
-  place-items: center;
-  letter-spacing: 1px;
-  user-select: none;
 }
 
 /* ---- Bond panel ---------------------------------------------------------
@@ -449,8 +535,8 @@
 }
 
 /* ---- 陪伴状态 panel -----------------------------------------------------
-   Three stat columns separated by hairlines, plus a footer note with a
-   heart. The columns echo the reference's "icon chip + big number + label".
+   Three stat columns separated by hairlines, plus a footer note. The
+   columns echo the reference's "big number + label" read.
 
    The columns are equal-width grid tracks (not flex), so the three reads
    sit at even intervals across the panel — the reference spaces them the
@@ -464,10 +550,12 @@
 @media (max-width: 640px) {
   .today-companion-stats { grid-template-columns: 1fr; gap: 16px; }
 }
+/* The cell holds only the text column now — the tinted icon chip that used
+   to sit to its left is gone, so the numbers read as three plain stats
+   rather than three icon-led tiles. */
 .today-companion-cell {
   display: flex;
   align-items: center;
-  gap: 14px;
   padding: 4px 22px;
   position: relative;
   min-width: 0;
@@ -502,28 +590,21 @@
 @media (max-width: 640px) {
   .today-companion-cell + .today-companion-cell::before { display: none; }
 }
-/* The first cell carries the panel's own left padding, so the three
-   columns are optically aligned with the rest of the panel's content. */
-.today-companion-cell:first-child { padding-left: 2px; }
-/* The tinted icon chip. */
-.today-companion-icon {
-  flex: none;
-  width: 46px;
-  height: 46px;
-  border-radius: 15px;
-  display: grid;
-  place-items: center;
-  font-size: 22px;
-  line-height: 1;
-}
-.today-companion-icon[data-tone="cal"]    { background: rgba(255, 184, 148, 0.22); }
-.today-companion-icon[data-tone="cozy"]   { background: rgba(244, 168, 160, 0.22); }
-.today-companion-icon[data-tone="streak"] { background: rgba(255, 214, 150, 0.30); }
+/* The first cell starts flush with the panel's own content edge, so the
+   three columns line up with the panel title above them. (It used to be
+   pulled back to 2px to compensate for the icon chip that sat inside the
+   cell's padding; that chip is gone, so the cell now uses the same
+   padding as its siblings.) */
+.today-companion-cell:first-child { padding-left: 0; }
 .today-companion-text { min-width: 0; }
+/* The three stats read exactly like the 亲密度 number in the bond panel:
+   the same weight, the same size, the same centred stack over a small
+   label. Sharing the type scale is what makes the two panels feel like
+   one system instead of two separately-tuned number styles. */
 .today-companion-value {
-  font-size: 30px;
+  font-size: 44px;
   font-weight: 800;
-  line-height: 1.15;
+  line-height: 1.05;
   color: var(--today-ink);
   letter-spacing: -0.01em;
 }
@@ -537,17 +618,34 @@
 .today-companion-label {
   font-size: 12px;
   color: var(--today-ink-soft);
-  margin-top: 2px;
-  letter-spacing: 0.03em;
+  margin-top: 3px;
+  letter-spacing: 0.04em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The cozy cell carries its own progress bar under the label. */
+/* The cozy cell puts its progress bar to the RIGHT of the number, in the
+   same row the number sits in — matching the bond panel, where the bar
+   lives beside the 亲密度 value rather than underneath it. */
+.today-companion-cell:has(.today-companion-bar) .today-companion-text {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+/* The number + label pair is a centred stack, so all three cells line up
+   on the same baseline grid regardless of whether they carry a bar. */
+.today-companion-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+}
 .today-companion-bar {
-  margin-top: 8px;
-  width: 100%;
-  max-width: 260px;
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  max-width: none;
+  align-self: center;
 }
 .today-companion-meta {
   display: flex;
@@ -561,18 +659,22 @@
   font-size: 12.5px;
   letter-spacing: 0.02em;
 }
-.today-companion-meta .today-heart {
-  color: var(--today-peach);
-  font-size: 13px;
-}
 
 /* ---- Reminder list ------------------------------------------------------
    Rows on this page read as a soft list rather than a stack of cards:
    the whole list lives on ONE paper panel, and each row is separated by a
    hairline. That is what keeps the reference's calm, list-like feel — a
-   stack of separate floating cards would read much busier. */
+   stack of separate floating cards would read much busier.
+
+   The list sits on a *more* opaque sheet than the status cards. A reminder
+   row is a line of small text over whatever part of the artwork happens to
+   be behind it — and the artwork's darker corners (the bookshelf, the
+   window frame) would otherwise show through the rows. The status cards
+   carry only large type, so they can afford to be more transparent. */
 .today-reminders {
-  background: var(--today-paper);
+  background: var(--today-paper-list);
+  -webkit-backdrop-filter: blur(26px) saturate(125%);
+  backdrop-filter: blur(26px) saturate(125%);
   border: 1px solid var(--today-line);
   border-radius: var(--today-radius);
   box-shadow: var(--today-shadow);
@@ -592,7 +694,7 @@
 }
 .today-reminders .card.clickable:hover {
   transform: none;
-  background: var(--today-paper-2);
+  background: rgba(255, 246, 239, 0.85);
   box-shadow: none;
   border-color: var(--today-line);
 }
@@ -642,6 +744,8 @@
   gap: 12px;
   padding: 22px 24px;
   background: var(--today-paper);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
   border: 1px solid var(--today-line);
   border-radius: var(--today-radius);
   box-shadow: var(--today-shadow);

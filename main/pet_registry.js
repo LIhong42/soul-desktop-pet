@@ -73,6 +73,21 @@ function descendToLeaf(absDir) {
   return null;
 }
 
+// The deterministic twin of `descendToLeaf`: takes the FIRST subdirectory
+// (in sorted order) at each level instead of a random one. Used for the
+// portrait, which must look the same on every render.
+function descendToLeafStable(absDir) {
+  let cur = absDir;
+  for (let depth = 0; depth < 16; depth++) {
+    const pngs = listPngs(cur);
+    const subdirs = listDirs(cur).sort();
+    if (pngs.length > 0) return cur;
+    if (subdirs.length === 0) return null;
+    cur = path.join(cur, subdirs[0]);
+  }
+  return null;
+}
+
 function parseFrames(leafDir, regex) {
   const files = listPngs(leafDir);
   const parsed = [];
@@ -235,6 +250,43 @@ class PetRegistry {
       // difference; only `frames` are from the default leaf.
       tierForced,
     };
+  }
+
+  /**
+   * A still portrait of the pet: the FIRST frame of its `default` variant,
+   * as a file:// URL.
+   *
+   * This is deliberately NOT `resolveFrames` — that one picks a random leaf
+   * directory and returns the whole animation, because the pet window wants
+   * variety. A portrait wants the opposite: the same picture every time, so
+   * the 今日 page's avatar doesn't change on every render. So the variant
+   * root is taken in order (not at random), the first parseable leaf is
+   * used, and only its first frame is returned.
+   *
+   * Returns null when the pet has no usable `default` variant — the caller
+   * then falls back to the mood emoji.
+   */
+  getPortrait(petId) {
+    const entry = this._pets.get(petId);
+    if (!entry) return null;
+    const { manifest, rootDir } = entry;
+    const v = manifest.variants && manifest.variants.default;
+    if (!v || !Array.isArray(v.roots) || v.roots.length === 0) return null;
+
+    const regexSrc = manifest.frameRegex || DEFAULT_FRAME_REGEX.source;
+    const regex = new RegExp(regexSrc);
+
+    // Walk the variant's roots IN ORDER (not at random) so the portrait is
+    // stable across renders, and take the first one that yields frames.
+    for (const root of v.roots) {
+      const rootAbs = path.join(rootDir, root);
+      if (!isDir(rootAbs)) continue;
+      const leaf = descendToLeafStable(rootAbs);
+      if (!leaf) continue;
+      const frames = parseFrames(leaf, regex);
+      if (frames.length > 0) return frames[0].url;
+    }
+    return null;
   }
 
   // Returns variant metadata (roots, loop, requiresTier) so callers

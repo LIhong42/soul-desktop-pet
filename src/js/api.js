@@ -95,6 +95,9 @@ export const api = {
     setCurrent: (id) => M.pet.setCurrent?.(id),
     resolveFrames: (petId, variant, direction) =>
       M.pet.resolveFrames?.(petId, variant, direction),
+    // A still portrait (file:// URL) of the pet currently in use — the
+    // first frame of its `default` variant. Null when there isn't one.
+    getPortrait: () => M.pet.getPortrait?.() || Promise.resolve(null),
     getWalkEnabled: () => M.pet.getWalkEnabled(),
     setWalkEnabled: (b) => M.pet.setWalkEnabled(b),
     // Pack import (frame-directory zip — see main/pet_zip_import.js).
