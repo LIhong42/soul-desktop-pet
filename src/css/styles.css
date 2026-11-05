@@ -100,6 +100,50 @@ html, body {
 
 .content { padding: 18px 22px; overflow-y: auto; height: calc(100vh - 53px); }
 
+/* ---------------------------------------------------------------------------
+   今日页背景
+   ---------------------------------------------------------------------------
+   The 今日 page paints the artwork from `resources/ui/` behind its content.
+   The image is set as an inline `background-image` on the scroll container
+   (the URL comes from the main process as a `file://` URL — the renderer
+   can't read the filesystem, so it can't reference the file by path).
+
+   Two details make the artwork usable rather than decorative noise:
+
+   - `background-size: cover` / `background-position: center` so the image
+     fills the viewport however the window is resized, instead of tiling or
+     stretching. `background-attachment: local` keeps the image pinned to the
+     *content* rather than the viewport, so the artwork doesn't float away
+     from the text when the page scrolls.
+   - A translucent white scrim between the artwork and the page content. The
+     shipped image is a warm pastel that the dark body text would otherwise
+     sit on top of at low contrast; the scrim lifts the page background back
+     toward `--bg` without hiding the picture. The cards keep their own
+     opaque `--panel` background, so they stay fully readable regardless.
+
+   The class is added and removed by src/js/pages/today.js — only the 今日
+   page has a background, every other page stays on the plain app surface.
+   The `--today-bg-image` custom property carries the URL so the image can be
+   swapped without rebuilding the rest of the rule. */
+.content.today-bg {
+  /* The scrim is a separate custom property so a darker artwork could raise
+     it without touching the image rule. Kept at the app's own --bg tone so
+     the artwork reads as a *background* to the page rather than as a filter
+     on the text. */
+  --today-bg-scrim: rgba(248, 247, 243, 0.82);
+  background-image: var(--today-bg-image), linear-gradient(var(--today-bg-scrim), var(--today-bg-scrim));
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: local;
+}
+/* Without artwork there's nothing to scrim — the page falls back to the plain
+   app surface. The class is still applied (so the transition back is smooth)
+   but the image layer is simply absent. */
+.content.today-bg.no-art {
+  background-image: none;
+}
+
 h1 { font-size: 22px; font-weight: 600; margin: 0 0 14px; letter-spacing: 0.01em; }
 h2 {
   font-size: 15px;

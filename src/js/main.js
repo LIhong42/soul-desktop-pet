@@ -2,7 +2,7 @@
 import { api, escapeHtml, fmtDateTime, toast } from './api.js';
 import { register, onChange, navigate, start } from './router.js';
 import { start as startAuth, registerLockedEventHandlers } from './auth.js';
-import './pages/today.js';
+import { clearBackground } from './pages/today.js';
 import './pages/contacts_list.js';
 import './pages/contact_detail.js';
 import './pages/contact_edit.js';
@@ -29,6 +29,11 @@ function updateActiveLink(path) {
                   (path.startsWith(r) && r !== '/');
     a.classList.toggle('active', match);
   });
+  // Only the 今日 page has a background. The router fires onChange *before*
+  // the page's own render() runs, so the artwork is cleared here on the way
+  // out and re-applied by today.js's render() on the way in. Leaving it up
+  // would paint the artwork behind every other page too.
+  if (path !== '/today') clearBackground();
 }
 
 function updatePetPill(state) {

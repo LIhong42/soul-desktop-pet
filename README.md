@@ -217,6 +217,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)
 ├─ icons/               ← application icons (icon.ico + per-size PNGs)
 ├─ resources/           ← pet frame assets (several built-in pets included)
+│  └─ ui/               ← artwork for the 今日 page's background (drop a PNG in and it shows up)
 └─ package.json
 ```
 
@@ -275,6 +276,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 - The pet shows an unread reminder count in the corner and pops up automatically when the time comes;
 - **Close a reminder whenever you like** — the nag never traps you: click the pet or its speech bubble, use **right-click → 🔕 关闭提醒**, or click the **桌宠提醒** pill in the top bar (it opens the same dialog with 完成 / 稍后 30 分钟 / 明天再提醒). Closing it only silences it for today; the entry stays on **Today** marked 已完成;
 - Check everything for the day under **Today**.
+- The **Today** page paints a background picture behind its content. The picture lives in `resources/ui/` — drop a PNG in and it shows up under **Settings → 今日页背景**, where you can pick one, follow the default, or turn the background off entirely.
 
 ### 5. Interact with the pet
 - **Single click**: triggers the "single-click action" configured for that pet (default: a gentle pet);

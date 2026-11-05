@@ -127,6 +127,13 @@ export const api = {
     get: (k) => M.settings.get(k),
     set: (k, v) => M.settings.set(k, v),
   },
+  // 今日页背景。`get()` → { list, chosen, current: {id,url}|null, noneId };
+  // `set(id)` stores the choice and returns the same shape. An empty id clears
+  // the choice (back to "跟随默认"); `noneId` means "explicitly no background".
+  todayBackground: {
+    get: ()    => M.todayBackground.get(),
+    set: (id) => M.todayBackground.set(id),
+  },
   // 文本气泡配置（吃饭提醒 / 休息提醒）。规则由主进程
   // main/pet_bubbles.js 单点定义，这里只做薄封装。
   bubbles: {

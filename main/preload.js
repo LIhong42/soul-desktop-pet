@@ -136,6 +136,14 @@ contextBridge.exposeInMainWorld('mp', {
     get: (k) => ipcRenderer.invoke('settings:get', k),
     set: (k, v) => ipcRenderer.invoke('settings:set', k, v),
   },
+  // 今日页背景（resources/ui 里的图片）。主进程扫描目录并把图片解析成
+  // file:// URL —— 渲染进程读不了文件系统，只能这样拿到本地图片。
+  //   get()     → { list, chosen, current: {id,url}|null, noneId }
+  //   set(id)   → 同 get()，并把 id 存进 settings
+  todayBackground: {
+    get: ()    => ipcRenderer.invoke('today_background:get'),
+    set: (id) => ipcRenderer.invoke('today_background:set', id),
+  },
   // 文本气泡（吃饭提醒 / 休息提醒）配置。规则本身由
   // main/pet_bubbles.js 单点定义，/settings 只能读它的自描述列表并切
   // 换开关——新增一条规则时这里不需要改动。

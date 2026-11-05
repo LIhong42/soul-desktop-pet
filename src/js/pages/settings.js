@@ -137,6 +137,23 @@ async function render() {
   const restartOnWakeRaw = await api.settings.get('pet_restart_app_on_wake');
   const restartOnWake = (restartOnWakeRaw === 'auto' || restartOnWakeRaw === 'off')
     ? restartOnWakeRaw : 'always';
+  // 今日页背景。图片在 resources/ui/，由主进程扫描目录并解析成 file:// URL
+  // （渲染进程读不了文件系统）。`chosen` 是用户选中的 id（null = 从没选过，
+  // 即跟随默认），`current` 是实际会画出来的那一张。
+  const todayBg = (await api.todayBackground.get?.())
+    || { list: [], chosen: null, current: null, noneId: '__none__' };
+  const todayBgList = todayBg.list || [];
+  const todayBgNone = todayBg.noneId ?? '__none__';
+  const todayBgOptions = [
+    // "跟随默认" = 没选过任何一张时画 folder 里的第一张；它和"无背景"是
+    // 两个不同的状态，所以分成两个选项。前者的 value 是空串——主进程把空串
+    // 解释成"清除这条设置"，从而回到"从未选过"。
+    `<option value="" ${todayBg.chosen === null ? 'selected' : ''}>跟随默认</option>`,
+    `<option value="${escapeHtml(todayBgNone)}" ${todayBg.chosen === todayBgNone ? 'selected' : ''}>无背景</option>`,
+    ...todayBgList.map((b) =>
+      `<option value="${escapeHtml(b.id)}" ${todayBg.chosen === b.id ? 'selected' : ''}>${escapeHtml(b.label)}</option>`
+    ),
+  ].join('');
 
   const petOptions = installed.length
     ? installed.map((p) =>
@@ -253,6 +270,22 @@ async function render() {
       </div>
     </div>
 
+    <div class="card" id="today-bg-card">
+      <h2>今日页背景</h2>
+      <p class="meta">「今日」页的底图。图片放在 <code>resources/ui/</code>，把新的 PNG 放进去重启应用即可出现在下面的列表里。</p>
+      <div class="form-row">
+        <div class="field">
+          <label>背景图片</label>
+          <select id="today-bg-select">${todayBgOptions}</select>
+        </div>
+      </div>
+      <p class="meta" style="margin-top:8px">
+        ${todayBgList.length
+          ? '选择后回到「今日」页即可看到效果。选「无背景」可以关掉底图。'
+          : '当前没有找到任何背景图片（<code>resources/ui/</code> 是空的或不存在）。'}
+      </p>
+    </div>
+
     <div class="card" id="update-card">
       <h2>软件更新</h2>
       <div id="update-card-body">
@@ -318,6 +351,24 @@ async function render() {
     try {
       await api.pet.setWalkEnabled(!!e.target.checked);
       toast(e.target.checked ? '自动行走已开启' : '自动行走已关闭');
+    } catch (err) {
+      toast('设置失败：' + ((err && err.message) || err));
+    }
+  };
+  document.getElementById('today-bg-select').onchange = async (e) => {
+    // The select carries three kinds of value, distinguished by the id:
+    //   "" (empty option)   → 跟随默认：清除选择，画目录里的第一张
+    //   "__none__"           → 无背景：明确关掉底图
+    //   "<file id>"          → 指定的那一张
+    //
+    // The main process stores the id verbatim and does the resolution (and
+    // the fallback), so the renderer doesn't have to know how "跟随默认"
+    // turns into an actual image.
+    const id = e.target.value;
+    const isNone = id === todayBgNone;
+    try {
+      await api.todayBackground.set(id);
+      toast(isNone ? '已关闭今日页背景' : '今日页背景已更新');
     } catch (err) {
       toast('设置失败：' + ((err && err.message) || err));
     }

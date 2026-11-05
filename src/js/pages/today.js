@@ -13,6 +13,13 @@ export async function render() {
   const app = document.getElementById('app');
   app.innerHTML = `<div class="empty">载入中…</div>`;
 
+  // The background artwork is applied *before* the data loads so the page
+  // doesn't flash the plain app surface and then repaint into the artwork.
+  // The fetch can't fail in a way that matters: `applyBackground` catches
+  // its own errors and leaves the page without artwork, which is the same
+  // thing that happens on an install with no `resources/ui` folder.
+  await applyBackground();
+
   // The "当前提醒" block drives off `listTodayView` so it covers every event
   // scheduled for today — not just the ones the scheduler has already fired.
   // This matches the user's mental model: anything I should remember today is
@@ -395,6 +402,54 @@ function moodNote(mood, state) {
 
 function tagKindLabel(k) {
   return ({ birthday: '生日', anniversary: '纪念日', festival: '节日' }[k]) || '';
+}
+
+// ---- 背景 (background artwork) --------------------------------------------
+//
+// The 今日 page paints the artwork from `resources/ui/` behind its content.
+// The image is chosen in the main process (main/today_background.js) and
+// arrives as a `file://` URL, because the renderer can't read the filesystem
+// and the main window's CSP only allows `file:` in `img-src`.
+//
+// The artwork is decoration, so every failure path here degrades to "no
+// artwork" rather than to a broken page: a missing IPC bridge, an install
+// with no `resources/ui` folder, or a stored id naming a file this machine
+// doesn't have all end the same way.
+
+const contentEl = () => document.querySelector('.content');
+
+// Paint the background onto the scroll container. `background-image` takes
+// the URL, and the `no-art` class is dropped so the artwork shows again
+// after the user turned it off and back on.
+export async function applyBackground() {
+  const el = contentEl();
+  if (!el) return;
+  try {
+    const info = await api.todayBackground.get();
+    const current = info && info.current;
+    if (current && current.url) {
+      el.style.setProperty('--today-bg-image', `url("${current.url}")`);
+      el.classList.add('today-bg');
+      el.classList.remove('no-art');
+    } else {
+      // The user turned the background off, or this install has no artwork.
+      el.classList.add('today-bg', 'no-art');
+      el.style.removeProperty('--today-bg-image');
+    }
+  } catch (e) {
+    console.warn('[today] could not load the page background:', e);
+    el.classList.add('today-bg', 'no-art');
+    el.style.removeProperty('--today-bg-image');
+  }
+}
+
+// Remove the background again when the user navigates to another page —
+// only the 今日 page has one.
+export function clearBackground() {
+  const el = contentEl();
+  if (!el) return;
+  el.classList.remove('today-bg', 'no-art');
+  el.style.removeProperty('--today-bg-image');
 }
 
 register('/today', render);
