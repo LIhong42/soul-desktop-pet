@@ -37,6 +37,11 @@ export async function render() {
   const today = new Date();
   const m = today.getMonth() + 1;
   const d = today.getDate();
+  // The weekday rides along with the date. A bare "今日 · 2026-11-05" tells
+  // you the date but not the rhythm of the week — which day is the busy one
+  // is exactly the thing a dashboard's header is there to say at a glance.
+  const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+  const weekday = WEEKDAYS[today.getDay()];
   // When the pet is not actively nagging (state !== 'REMINDER'), all of
   // today's reminder chips render muted. The user's mental model: a non-
   // nagging pet has nothing to surface, so the list rows act as a record
@@ -53,71 +58,94 @@ export async function render() {
   })();
 
   app.innerHTML = `
-    <h1>今日 · ${today.getFullYear()}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}</h1>
+    <div class="today-page">
+      <div class="today-hero">
+        <h1 class="today-hero-title">
+          <span class="today-hero-emoji">🗓️</span>
+          <span class="today-hero-date">今日 · ${today.getFullYear()}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}</span>
+          <span class="today-hero-weekday">${weekday}</span>
+        </h1>
+      </div>
 
-    <div class="section-header"><h2>🐾 桌宠状态</h2></div>
-    <div id="pet-status">${renderPetStatus(normalizeFromSnapshots(bond, cozy), state, petName)}</div>
-
-    <div class="section-header"><h2>⏰ 当前提醒</h2></div>
-    ${(() => {
-      if (todayView.length === 0) {
-        return `<div class="empty">今日暂无待办提醒 ✨</div>`;
-      }
-      // The list is already sorted by the IPC handler: pending items
-      // first, completed items last, each subgroup ordered by fire time.
-      return todayView.map((r) => {
-        const kind = r.source === 'event' ? 'reminder' : 'important';
-        const sourceLabel = r.source === 'event' ? '事件' : '重要日期';
-        const contactName = r.contact_name || '';
-        const completed = !!r.dismissed_for_today || forceMuted;
-        // The chip tells the user *when* the reminder is due. For a date
-        // that's counting down (a birthday with the advance window open)
-        // it says how many days are left; everything else just says
-        // "今日提醒".
-        const chipLabel = r.days_left != null
-          ? (r.days_left === 0 ? '就是今天' : r.days_left === 1 ? '就在明天' : `还有 ${r.days_left} 天`)
-          : '今日提醒';
-        // The card is a single line: just the event description (or a
-        // contact-name / source fallback when description is empty). No
-        // second "meta" row — duplicating the same text twice adds
-        // visual noise and doesn't carry extra information for a
-        // reminder the user already has context on.
-        //
-        // When the event HAS a description we show it alone (it's the
-        // content the user wrote). When it doesn't, we fall back to the
-        // title — but the title alone is often a generic auto-generated
-        // label ("爷爷的提醒"), so we append the description when there
-        // is one. See eventDisplayTitle() in api.js for the shared rule.
-        const description = (r.description || '').trim();
-        const titleText = r.source === 'event'
-          ? (description ? description : (r.title || contactName || sourceLabel))
-          : (r.title || contactName || sourceLabel);
-        // Preserve the event's real category (general / work) so the edit
-        // page opens the right form. important_date has no category — it
-        // doesn't have an editable form anyway, so default to general.
-        const dataCategory = r.category || 'general';
-        // Glyph + tone: each event-typed reminder should look the same as
-        // its entry on the 事件 page (🎂/💝/🎉/💼), so a birthday is
-        // visually distinct from a work reminder. categoryIcon() and
-        // eventKindAttr() are shared with events.js / event_edit.js, so the
-        // colors stay in sync without us re-defining them here.
-        const displayCategory = r.category || 'general';
-        const tone = eventKindAttr({ category: r.category, tag_kind: r.tag_kind });
-        const glyph = categoryIcon(displayCategory, r.tag_kind);
-        return `
-        <div class="card list-row clickable" data-kind="${escapeHtml(tone)}" data-source="${escapeHtml(r.source)}" data-id="${escapeHtml(r.source_id)}" data-action="reminder" data-completed="${completed}" data-category="${escapeHtml(dataCategory)}">
-          <div class="lr-id">
-            <span class="cat-icon" data-tone="${escapeHtml(tone)}">${escapeHtml(glyph)}</span>
-          </div>
-          <div class="lr-main">
-            <div class="lr-title">${escapeHtml(titleText)}${r.tag_kind && tagKindLabel(r.tag_kind) ? ` <span class="tag" style="margin-left:6px">${escapeHtml(tagKindLabel(r.tag_kind))}</span>` : ''}</div>
-          </div>
-          <div class="lr-side">
-            <div class="time-chip ${completed ? '' : 'urgent'}"><span class="chip-dot"></span>${chipLabel}</div>
-          </div>
+      <div class="today-section">
+        <div class="today-section-head">
+          <h2><span class="today-section-emoji">🐾</span>桌宠状态</h2>
         </div>
-      `}).join('');
-    })()}
+        <div id="pet-status">${renderPetStatus(normalizeFromSnapshots(bond, cozy), state, petName)}</div>
+      </div>
+
+      <div class="today-section">
+        <div class="today-section-head">
+          <h2><span class="today-section-emoji">🔔</span>当前提醒</h2>
+        </div>
+        ${(() => {
+          if (todayView.length === 0) {
+            return `
+              <div class="today-empty">
+                <span class="today-empty-icon">✓</span>
+                <div>
+                  <div>今天没有待办事项，享受轻松时光。</div>
+                  <div class="today-empty-note">一切安好，桌宠正陪着你。</div>
+                </div>
+              </div>
+            `;
+          }
+          // The list is already sorted by the IPC handler: pending items
+          // first, completed items last, each subgroup ordered by fire time.
+          return `<div class="today-reminders">${todayView.map((r) => {
+            const sourceLabel = r.source === 'event' ? '事件' : '重要日期';
+            const contactName = r.contact_name || '';
+            const completed = !!r.dismissed_for_today || forceMuted;
+            // The chip tells the user *when* the reminder is due. For a date
+            // that's counting down (a birthday with the advance window open)
+            // it says how many days are left; everything else just says
+            // "今日提醒".
+            const chipLabel = r.days_left != null
+              ? (r.days_left === 0 ? '就是今天' : r.days_left === 1 ? '就在明天' : `还有 ${r.days_left} 天`)
+              : '今日提醒';
+            // The card is a single line: just the event description (or a
+            // contact-name / source fallback when description is empty). No
+            // second "meta" row — duplicating the same text twice adds
+            // visual noise and doesn't carry extra information for a
+            // reminder the user already has context on.
+            //
+            // When the event HAS a description we show it alone (it's the
+            // content the user wrote). When it doesn't, we fall back to the
+            // title — but the title alone is often a generic auto-generated
+            // label ("爷爷的提醒"), so we append the description when there
+            // is one. See eventDisplayTitle() in api.js for the shared rule.
+            const description = (r.description || '').trim();
+            const titleText = r.source === 'event'
+              ? (description ? description : (r.title || contactName || sourceLabel))
+              : (r.title || contactName || sourceLabel);
+            // Preserve the event's real category (general / work) so the edit
+            // page opens the right form. important_date has no category — it
+            // doesn't have an editable form anyway, so default to general.
+            const dataCategory = r.category || 'general';
+            // Glyph + tone: each event-typed reminder should look the same as
+            // its entry on the 事件 page (🎂/💝/🎉/💼), so a birthday is
+            // visually distinct from a work reminder. categoryIcon() and
+            // eventKindAttr() are shared with events.js / event_edit.js, so the
+            // colors stay in sync without us re-defining them here.
+            const displayCategory = r.category || 'general';
+            const tone = eventKindAttr({ category: r.category, tag_kind: r.tag_kind });
+            const glyph = categoryIcon(displayCategory, r.tag_kind);
+            return `
+            <div class="card list-row clickable" data-kind="${escapeHtml(tone)}" data-source="${escapeHtml(r.source)}" data-id="${escapeHtml(r.source_id)}" data-action="reminder" data-completed="${completed}" data-category="${escapeHtml(dataCategory)}">
+              <div class="lr-id">
+                <span class="cat-icon" data-tone="${escapeHtml(tone)}">${escapeHtml(glyph)}</span>
+              </div>
+              <div class="lr-main">
+                <div class="lr-title">${escapeHtml(titleText)}${r.tag_kind && tagKindLabel(r.tag_kind) ? ` <span class="tag" style="margin-left:6px">${escapeHtml(tagKindLabel(r.tag_kind))}</span>` : ''}</div>
+              </div>
+              <div class="lr-side">
+                <div class="time-chip ${completed ? '' : 'urgent'}"><span class="chip-dot"></span>${chipLabel}</div>
+              </div>
+            </div>
+          `}).join('')}</div>`;
+        })()}
+      </div>
+    </div>
   `;
 
   app.querySelectorAll('.card.clickable').forEach((el) => {
@@ -166,10 +194,16 @@ api.on('pet:status-changed', (payload) => {
 api.on('pet:state-changed', (payload) => {
   lastPetState = payload;
   if (document.getElementById('pet-status')) {
-    const moodEl = document.querySelector('#pet-status .pet-stat[data-mood]');
-    const note = moodEl && moodEl.querySelector('.ps-note');
+    const moodEl = document.querySelector('#pet-status .today-mood-card[data-mood]');
+    const note = moodEl && moodEl.querySelector('[data-bind="mood-note"]');
     const mood = moodEl && moodEl.dataset.mood;
     if (note && mood) note.textContent = moodNote(mood, payload);
+    // 今日互动 counts the same day's interactions, so it moves with the
+    // pet's state too.
+    const actions = document.querySelector('#pet-status [data-bind="today-actions"]');
+    if (actions && payload && typeof payload.count === 'number') {
+      actions.textContent = String(payload.count);
+    }
   }
 });
 
@@ -241,43 +275,85 @@ function renderPetStatus(st, state, petName) {
   const next = st.nextTier;
   const weekly = st.weekScore;
   const lonelyHours = st.lonelyHours;
+  const moodMeta = MOOD_META[mood] || { label: '平静', icon: '🙂' };
+  // The three 陪伴状态 reads the reference shows as icon-chip columns:
+  // today's interactions, the cozy score, and the streak.
+  const todayActions = (state && typeof state.count === 'number') ? state.count : 0;
 
   return `
-    <div class="pet-status-grid">
-      <div class="card pet-stat" data-mood="${escapeHtml(mood)}">
-        <div class="ps-label">当前心情</div>
-        <div class="ps-mood-row">
-          <span class="ps-mood-icon">${escapeHtml(MOOD_META[mood] ? MOOD_META[mood].icon : '🙂')}</span>
-          <span class="ps-mood">${escapeHtml(MOOD_META[mood] ? MOOD_META[mood].label : '平静')}</span>
+    <div class="today-status-grid">
+      <div class="card today-mood-card" data-mood="${escapeHtml(mood)}">
+        <div class="today-panel-title"><span class="today-panel-emoji">💗</span>当前心情</div>
+        <div class="today-mood-row">
+          <div class="today-mood-portrait" data-bind="mood-icon">${escapeHtml(moodMeta.icon)}</div>
+          <div class="today-mood-text">
+            <div class="today-mood-word" data-bind="mood-label">${escapeHtml(moodMeta.label)}</div>
+            <div class="today-mood-note" data-bind="mood-note">${escapeHtml(moodNote(mood, state))}</div>
+          </div>
         </div>
-        <div class="ps-note">${escapeHtml(moodNote(mood, state))}</div>
       </div>
 
-      <div class="card pet-stat">
-        <div class="ps-label">羁绊 · ${escapeHtml(petName || '桌宠')}</div>
-        <div class="ps-mood-row">
-          <span class="ps-tier-badge" data-bind="tier-badge">${escapeHtml('T' + st.tier)}</span>
-          <span class="ps-mood" data-bind="tier-label">${escapeHtml(st.tierLabel)}</span>
+      <div class="card today-bond-card">
+        <div class="today-bond-head">
+          <div class="today-panel-title" style="margin-bottom:0"><span class="today-panel-emoji">🌱</span>关系成长</div>
+          <div class="today-tier-pill"><span data-bind="tier-badge">T${st.tier}</span> · <span data-bind="tier-label">${escapeHtml(st.tierLabel)}</span></div>
         </div>
-        <div class="ps-meter" data-bind="bond-meter" title="${next ? `距离下一等级还差 ${Math.max(0, next.threshold - st.bondValue)}` : '已达最高等级'}">
-          <div class="ps-meter-fill" data-tone="bond" data-bind="bond-fill" style="width:${pct}%"></div>
+        <div class="today-bond-body">
+          <div class="today-bond-number">
+            <b data-bind="bond-value">${st.bondValue}</b>
+            <span>亲密度</span>
+          </div>
+          <div class="today-bond-divider"></div>
+          <div class="today-bond-progress">
+            <div class="today-meter" data-bind="bond-meter" title="${next ? `距离下一等级还差 ${Math.max(0, next.threshold - st.bondValue)}` : '已达最高等级'}">
+              <div class="today-meter-fill" data-tone="bond" data-bind="bond-fill" style="width:${pct}%"></div>
+            </div>
+            <div class="today-hint" data-bind="bond-note">${next ? `距离成为${escapeHtml(TIER_LABELS[next.tier] || ('T' + next.tier))}，还差 ${Math.max(0, next.threshold - st.bondValue)} 点` : '已经达到最高等级啦'}</div>
+          </div>
         </div>
-        <div class="ps-note" data-bind="bond-note">亲密度 ${st.bondValue}${next ? ` · 距 ${escapeHtml(TIER_LABELS[next.tier] || ('T' + next.tier))} 还差 ${Math.max(0, next.threshold - st.bondValue)}` : ' · 已满级'}</div>
       </div>
 
-      <div class="card pet-stat pet-stat-wide">
-        <div class="ps-label">陪伴状态</div>
-        <div class="ps-cosy-grid">
-          ${meter('今日关系维护', weekly, 100, 'weekly')}
-          ${meter('舒适度', st.cozy, 100, 'cozy')}
+      <div class="card today-wide">
+        <div class="today-panel-title"><span class="today-panel-emoji">📊</span>陪伴状态</div>
+        <div class="today-companion-stats">
+          <div class="today-companion-cell">
+            <div class="today-companion-icon" data-tone="cal">🗓️</div>
+            <div class="today-companion-text">
+              <div class="today-companion-value" data-bind="today-actions">${todayActions}</div>
+              <div class="today-companion-label">今日互动</div>
+            </div>
+          </div>
+          <div class="today-companion-cell">
+            <div class="today-companion-icon" data-tone="cozy">😊</div>
+            <div class="today-companion-text">
+              <div class="today-companion-value" data-bind="cozy-value">${clampPct(st.cozy)}</div>
+              <div class="today-companion-label">舒适度</div>
+              <div class="today-meter today-companion-bar">
+                <div class="today-meter-fill" data-tone="cozy" data-bind="cozy-fill" style="width:${clampPct(st.cozy)}%"></div>
+              </div>
+            </div>
+          </div>
+          <div class="today-companion-cell">
+            <div class="today-companion-icon" data-tone="streak">⭐</div>
+            <div class="today-companion-text">
+              <div class="today-companion-value"><span data-bind="streak">${st.streak}</span><small>天</small></div>
+              <div class="today-companion-label">连续陪伴</div>
+            </div>
+          </div>
         </div>
-        <div class="ps-meta-row">
-          <span>连续陪伴 <b data-bind="streak">${st.streak}</b> 天</span>
-          <span data-bind="lonely">${lonelyHours > 0 ? `已独处 <b>${lonelyHours}</b> 小时` : '一直陪着你'}</span>
+        <div class="today-companion-meta">
+          <span class="today-heart">♥</span>
+          <span data-bind="lonely">${lonelyHours > 0 ? `已经独处 ${lonelyHours} 个小时了，回来陪陪它吧` : '一直陪着你，关系慢慢成长。'}</span>
         </div>
       </div>
     </div>
   `;
+}
+
+// Cozy is a 0..100 score; clamp before it reaches a CSS width so a bad
+// value can never make the bar overflow its track.
+function clampPct(v) {
+  return Math.max(0, Math.min(100, v | 0));
 }
 
 // Repaint the already-rendered 桌宠状态 block from a `pet:status-changed`
@@ -289,15 +365,15 @@ function applyStatus(raw, state) {
   if (!host) return;
   const s = normalizeStatus(raw);
   const q = (name) => host.querySelector(`[data-bind="${name}"]`);
-  const moodEl = host.querySelector('.pet-stat[data-mood]');
+  const moodEl = host.querySelector('.today-mood-card[data-mood]');
 
   // Mood: swap icon, label and the accent class in one shot.
   const meta = MOOD_META[s.mood];
   if (moodEl) {
     moodEl.dataset.mood = s.mood;
-    const icon = moodEl.querySelector('.ps-mood-icon');
-    const label = moodEl.querySelector('.ps-mood:not([data-bind])');
-    const note = moodEl.querySelector('.ps-note');
+    const icon = q('mood-icon');
+    const label = q('mood-label');
+    const note = q('mood-note');
     if (icon) icon.textContent = meta ? meta.icon : '🙂';
     if (label) label.textContent = meta ? meta.label : '平静';
     if (note) note.textContent = moodNote(s.mood, state);
@@ -308,9 +384,11 @@ function applyStatus(raw, state) {
   const fill = q('bond-fill');
   const meterEl = q('bond-meter');
   const note = q('bond-note');
+  const value = q('bond-value');
   const next = s.nextTier;
   if (badge) badge.textContent = 'T' + s.tier;
   if (tLabel) tLabel.textContent = s.tierLabel;
+  if (value) value.textContent = String(s.bondValue);
   if (fill) fill.style.width = bondPct(s) + '%';
   if (meterEl) {
     meterEl.title = next
@@ -318,44 +396,30 @@ function applyStatus(raw, state) {
       : '已达最高等级';
   }
   if (note) {
-    note.textContent = '亲密度 ' + s.bondValue + (
-      next
-        ? ` · 距 ${TIER_LABELS[next.tier] || ('T' + next.tier)} 还差 ${Math.max(0, next.threshold - s.bondValue)}`
-        : ' · 已满级'
-    );
+    note.textContent = next
+      ? `距离成为${TIER_LABELS[next.tier] || ('T' + next.tier)}，还差 ${Math.max(0, next.threshold - s.bondValue)} 点`
+      : '已经达到最高等级啦';
   }
 
-  // The two gauges + meta row. `data-tone` on the cell identifies which
-  // value feeds it, so this stays in sync with `meter()`'s markup.
-  host.querySelectorAll('.ps-meter-cell').forEach((cell) => {
-    const v = cell.dataset.tone === 'weekly' ? s.weekScore : s.cozy;
-    const b = cell.querySelector('.ps-meter-head b');
-    const f = cell.querySelector('.ps-meter-fill');
-    const clamped = Math.max(0, Math.min(100, v | 0));
-    if (b) b.textContent = String(clamped);
-    if (f) f.style.width = clamped + '%';
-  });
+  // The 陪伴状态 columns. The cozy column carries both the number and the
+  // bar, so both are patched from the same clamped value.
+  const cozyValue = q('cozy-value');
+  const cozyFill = q('cozy-fill');
+  const cozyPct = clampPct(s.cozy);
+  if (cozyValue) cozyValue.textContent = String(cozyPct);
+  if (cozyFill) cozyFill.style.width = cozyPct + '%';
   const streak = q('streak');
   if (streak) streak.textContent = String(s.streak);
+  const todayActions = q('today-actions');
+  if (todayActions && state && typeof state.count === 'number') {
+    todayActions.textContent = String(state.count);
+  }
   const lonely = q('lonely');
   if (lonely) {
-    lonely.innerHTML = s.lonelyHours > 0
-      ? `已独处 <b>${s.lonelyHours}</b> 小时`
-      : '一直陪着你';
+    lonely.textContent = s.lonelyHours > 0
+      ? `已经独处 ${s.lonelyHours} 个小时了，回来陪陪它吧`
+      : '一直陪着你，关系慢慢成长。';
   }
-}
-
-      // Tabs are 0..100 in every case; the two gauges are just labeled
-// differently so the user knows which one decays on its own.
-function meter(label, value, max, tone) {
-  const v = Math.max(0, Math.min(max, value | 0));
-  const pct = Math.round(v / max * 100);
-  return `
-    <div class="ps-meter-cell" data-tone="${escapeHtml(tone)}">
-      <div class="ps-meter-head"><span>${escapeHtml(label)}</span><b>${v}</b></div>
-      <div class="ps-meter"><div class="ps-meter-fill" data-tone="${escapeHtml(tone)}" style="width:${pct}%"></div></div>
-    </div>
-  `;
 }
 
 // Tier names for the "距 X 还差 N" hint. Mirrors TIER_LABELS in

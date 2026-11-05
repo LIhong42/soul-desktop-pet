@@ -52,7 +52,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 12px 18px;
+  padding: 10px 18px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -72,26 +72,30 @@ html, body {
 
 .pet-pill {
   display: flex; align-items: center; gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
+  padding: 4px 12px;
+  border: 1px solid transparent;
   border-radius: 999px;
   font-size: 12px;
   font-family: inherit;
   line-height: 1.4;
-  color: var(--muted);
-  background: var(--bg);
+  color: #5da15d;
+  /* The healthy state reads as a soft green chip rather than a grey
+     outlined box — the top bar is the first thing the user sees, and the
+     pet's state is the one thing worth spotting in it. */
+  background: rgba(122, 186, 122, 0.14);
   /* It is a real <button>, so it has to look like the pill it was when
      it was a plain <div> — the browser's button chrome is reset away
      here and the hover / focus affordances are added back below. */
   cursor: pointer;
-  transition: border-color 120ms, color 120ms;
+  transition: border-color 120ms, color 120ms, background 120ms;
 }
-.pet-pill:hover { border-color: var(--accent); color: var(--text); }
+.pet-pill:hover { border-color: currentColor; color: #4d9150; }
 .pet-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pet-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: #4caf50;
 }
+.pet-pill.remind { color: var(--danger); background: rgba(210, 63, 63, 0.12); }
 .pet-pill.remind .pet-dot { background: var(--danger); animation: pulse 1s infinite; }
 @keyframes pulse {
   0%, 100% { transform: scale(1); opacity: 1; }
@@ -3117,117 +3121,11 @@ body.locked #pin-modal.hidden { display: none !important; }
 .pin-cells.shake { animation: pin-shake 360ms ease-in-out; }
 .pin-cells.shake .pin-cell { border-color: var(--danger); }
 
-/* ---- 桌宠状态 (今日 page) --------------------------------------------- */
-/* Two stat tiles over a full-width gauge card. The tiles carry the
-   qualitative reads (mood, tier) while the wide card carries the
-   quantitative ones (weekly progress, cozy) — the numbers the user can
-   actually move by interacting with the pet window. */
-.pet-status-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-.pet-status-grid > .card { margin-bottom: 0; }
-.pet-stat-wide { grid-column: 1 / -1; }
-
-.pet-stat { padding: 14px 16px 12px; }
-.ps-label {
-  color: var(--muted);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  margin-bottom: 8px;
-}
-.ps-mood-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.ps-mood-icon { font-size: 26px; line-height: 1; }
-.ps-mood {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-}
-.ps-tier-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 30px;
-  height: 26px;
-  padding: 0 7px;
-  border-radius: 8px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-}
-.ps-note {
-  color: var(--muted);
-  font-size: 12px;
-  margin-top: 8px;
-  line-height: 1.5;
-}
-
-/* Progress bars. `data-tone` picks the fill hue so the weekly-progress
-   bar and the decaying cozy bar don't read as the same metric. */
-.ps-meter {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  overflow: hidden;
-  margin-top: 10px;
-}
-.ps-meter-fill {
-  height: 100%;
-  border-radius: 999px;
-  transition: width 320ms ease;
-}
-.ps-meter-fill[data-tone="bond"]   { background: var(--accent); }
-.ps-meter-fill[data-tone="weekly"] { background: var(--cat-work); }
-.ps-meter-fill[data-tone="cozy"]   { background: var(--cat-memorial); }
-
-.ps-cosy-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
-}
-.ps-meter-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 12px;
-}
-.ps-meter-head b {
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 700;
-}
-.ps-meter-cell .ps-meter { margin-top: 6px; }
-
-.ps-meta-row {
-  display: flex;
-  gap: 18px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 12px;
-}
-.ps-meta-row b { color: var(--text); }
-
-/* Mood accent: only the mood tile reacts, so a sad pet reads at a glance
-   without tinting the whole panel. */
-.pet-stat[data-mood="depressed"] .ps-mood,
-.pet-stat[data-mood="sad"] .ps-mood { color: var(--cat-memorial); }
-.pet-stat[data-mood="concerned"] .ps-mood,
-.pet-stat[data-mood="missing_you"] .ps-mood,
-.pet-stat[data-mood="lonely"] .ps-mood { color: var(--cat-anniversary); }
-.pet-stat[data-mood="happy_clingy"] .ps-mood,
-.pet-stat[data-mood="proud"] .ps-mood,
-.pet-stat[data-mood="festive"] .ps-mood { color: var(--accent); }
-.pet-stat[data-mood="reminder"] .ps-mood { color: var(--cat-general); }
+/* ---- 桌宠状态 (今日 page) ---------------------------------------------
+   Moved to src/css/today.css. The 今日 page now uses its own scoped
+   design system (the .today-* classes) so the landing screen can have a
+   warm, paper-like surface without restyling the app's shared .card /
+   .list-row primitives that every other page also uses. */
 
 /* ---- Diary editor (回忆事件 / 日记) ------------------------------------
    The writing surface and the side panel of /diary/:id.

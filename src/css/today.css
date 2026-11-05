@@ -1,0 +1,667 @@
+/* ===========================================================================
+   src/css/today.css — 今日页 (Today) 暖色纸感设计系统
+   ===========================================================================
+   The 今日 page is the app's landing screen and the only page with artwork
+   behind it, so it gets its own visual language: a warm, paper-like surface
+   with soft rounded cards, large readable numerals, and generous whitespace.
+
+   Everything here is scoped under `.today-page` (a class the page renderer
+   puts on the content wrapper) — deliberately, because the app's other pages
+   share the global `.card` / `.list-row` / `.h1` primitives and restyling
+   those globally would repaint the whole app. Only the 今日 page opts in.
+
+   Palette notes:
+     - The page paints the artwork from `resources/ui/` (a warm pastel room)
+       behind a translucent cream scrim. `--today-paper` is the near-white
+       card color that reads as paper on top of that artwork.
+     - `--today-ink` is a warm near-black. The app's global `--text` is a
+       neutral #2a2a2a; on a cream background the warm variant reads less
+       "grey sticker" and more "printed card".
+     - Accents are drawn from the app's existing category palette
+       (`--cat-*`) so the pet-status meters keep the same meaning they have
+       on the 事件 page.
+
+   Loaded separately from styles.css (see src/index.html) so the design
+   system for one page stays in one file instead of being scattered through
+   a 4000-line global stylesheet. */
+
+/* ---- Page shell --------------------------------------------------------- */
+.today-page {
+  --today-paper: #fffdfa;
+  --today-paper-2: #fff6ef;
+  --today-ink: #3d3128;
+  --today-ink-soft: #8c7d70;
+  --today-line: rgba(196, 160, 132, 0.28);
+  --today-line-strong: rgba(196, 160, 132, 0.45);
+  --today-blush: #ffe7de;
+  --today-peach: #ffb894;
+  --today-shadow: 0 2px 14px rgba(180, 130, 100, 0.10);
+  --today-shadow-lift: 0 10px 26px rgba(180, 130, 100, 0.16);
+  --today-radius: 22px;
+
+  color: var(--today-ink);
+  padding-bottom: 28px;
+
+  /* The reading column. A dashboard stretched across a 2000 px window
+     puts a 300 px gap between the two status panels and leaves the cards
+     fighting the artwork for attention — the page reads as cramped even
+     though nothing is actually touching. Capping the column and centering
+     it gives the cards room to breathe, and it keeps the composition the
+     same on a laptop and on a wide monitor. */
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+/* The scrim over the artwork. The artwork is a light pastel, so the scrim
+   is a warm cream rather than the app's neutral --bg: a warm wash over a
+   warm painting keeps the page feeling like one material instead of a
+   photo with a grey wash on top. */
+.content.today-bg {
+  --today-bg-scrim: rgba(255, 246, 236, 0.72);
+}
+
+/* ---- Page header --------------------------------------------------------
+   The date is the page's single most important fact, so it gets a large
+   numeral-forward treatment with a hand-drawn underline flourish (the
+   ::after curve) — the same "sketchbook" note the reference design uses
+   to sign off the date. */
+.today-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 18px;
+  padding: 0 4px;
+}
+.today-hero-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: var(--today-ink);
+  margin: 0;
+  position: relative;
+  padding-bottom: 8px;
+}
+/* The underline flourish. An elliptical border reads as a hand-drawn stroke
+   without needing an image asset.
+
+   It hangs off the whole title, so the stroke signs off the date and the
+   weekday together — they are set as one headline, so one stroke underlines
+   them as one headline. */
+.today-hero-title::after {
+  content: "";
+  position: absolute;
+  left: 34px;
+  right: -14px;
+  bottom: 2px;
+  height: 10px;
+  border-bottom: 2.5px solid var(--today-peach);
+  border-radius: 0 0 60% 40% / 0 0 100% 60%;
+  transform: rotate(-1.2deg);
+  opacity: 0.85;
+  pointer-events: none;
+}
+.today-hero-sub {
+  color: var(--today-ink-soft);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  margin-left: 2px;
+}
+
+/* The weekday. It is typeset exactly like the date — same size, same
+   weight, same ink — because it is the same kind of fact: the day. The
+   dot between them carries the separation instead of a chip or a second
+   weight, which would have made the weekday a different kind of thing. */
+.today-hero-weekday {
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  white-space: nowrap;
+}
+/* The separator. A middot in the softer ink reads as punctuation rather
+   than as content, so the weekday still scans as a separate field even
+   though it is set in the date's type. */
+.today-hero-weekday::before {
+  content: "·";
+  color: var(--today-ink-soft);
+  font-weight: 400;
+  margin-right: 10px;
+}
+
+/* ---- Section headings ---------------------------------------------------
+   Global `h2` renders at 62% opacity, which is too quiet for this page's
+   card titles. These headings carry an emoji, a bold label, and a hairline
+   rule that runs to the right edge, so the eye can scan the page by
+   section without the headings shouting. */
+.today-section { margin: 22px 0 12px; }
+.today-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.today-section-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--today-ink);
+  opacity: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.today-section-head .today-section-emoji {
+  font-size: 17px;
+  line-height: 1;
+}
+/* The trailing hairline. `flex: 1` lets it fill whatever width is left.
+   It fades to transparent so the rule doesn't end in a hard stop, and it
+   starts warm enough to stay visible over the artwork behind the page. */
+.today-section-head::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(196, 160, 132, 0.45), rgba(196, 160, 132, 0));
+}
+
+/* ---- Card surface -------------------------------------------------------
+   The paper card: near-white, warm hairline border, no hard drop shadow.
+   The reference design's depth comes from the artwork behind the card and
+   the soft glow, not from a crisp shadow — a shadow here would fight the
+   pastel background and read as a floating UI panel. */
+.today-page .card {
+  background: var(--today-paper);
+  border: 1px solid var(--today-line);
+  border-radius: var(--today-radius);
+  box-shadow: var(--today-shadow);
+  padding: 18px 22px;
+  margin-bottom: 14px;
+  color: var(--today-ink);
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+}
+.today-page .card.clickable:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--today-shadow-lift);
+  border-color: var(--today-line-strong);
+}
+
+/* The category color strip stays, but it becomes a soft inner accent rather
+   than a hard 4px bar — on a rounded paper card a saturated left edge reads
+   as a UI element from a different design language. */
+.today-page .card[data-kind] {
+  border-left: 1px solid var(--today-line);
+  padding-left: 22px;
+  position: relative;
+}
+.today-page .card[data-kind]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18px;
+  bottom: 18px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--cat-general);
+}
+.today-page .card[data-kind="birthday"]::before    { background: var(--cat-birthday); }
+.today-page .card[data-kind="anniversary"]::before { background: var(--cat-anniversary); }
+.today-page .card[data-kind="festival"]::before    { background: var(--cat-festival); }
+.today-page .card[data-kind="memorial"]::before    { background: var(--cat-memorial); }
+.today-page .card[data-kind="work"]::before        { background: var(--cat-work); }
+.today-page .card[data-kind="important"]::before   { background: var(--cat-birthday); }
+.today-page .card[data-kind="reminder"]::before    { background: var(--today-peach); }
+
+/* ---- 桌宠状态 grid ------------------------------------------------------
+   Two panels side by side: the mood card and the bond card. The 陪伴状态
+   panel spans the full width underneath. */
+.today-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: stretch;
+}
+@media (max-width: 860px) {
+  .today-status-grid { grid-template-columns: 1fr; }
+}
+/* The wide panel spans both columns. */
+.today-status-grid > .today-wide { grid-column: 1 / -1; }
+.today-status-grid > .card { margin-bottom: 0; }
+
+/* ---- Panel headings (inside a card) ------------------------------------- */
+.today-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--today-ink);
+  margin: 0 0 14px;
+}
+.today-panel-title .today-panel-emoji {
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* ---- Mood panel ---------------------------------------------------------
+   The reference design puts the pet's illustration to the left of the mood
+   word. We don't ship that artwork, so the mood emoji stands in as the
+   "portrait" — but it gets the same generous circular paper-cut treatment
+   (a soft blush disc with an emphasis dot) so the composition reads the
+   same way: portrait | mood word | note. */
+.today-mood-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.today-mood-portrait {
+  flex: none;
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  /* A radial gradient rather than a solid fill plus an inset ring: the
+     gradient gives the paper-cut a soft lit edge with no hard circle
+     artifact, and it still accepts the per-mood tint overrides below
+     (which only need to replace the top color stop). */
+  background: radial-gradient(circle at 50% 45%, #fff6f0 0%, var(--today-blush) 62%, #ffd9c8 100%);
+  display: grid;
+  place-items: center;
+  font-size: 42px;
+  line-height: 1;
+  position: relative;
+  transition: background 240ms ease;
+}
+/* The little "emphasis" tick that the reference draws beside the pet.
+   It sits just outside the disc's upper-right edge, so it reads as a
+   separate mark rather than a blemish on the illustration. */
+.today-mood-portrait::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--today-peach);
+  box-shadow: 0 0 0 4px var(--today-paper);
+  opacity: 0.85;
+}
+/* Mood accents: only the portrait disc and the mood word react, so a sad
+   pet reads at a glance without tinting the whole panel. The hues are the
+   same family the app's category palette already uses.
+
+   The portrait overrides replace the gradient's outer stop only — the lit
+   inner stop stays, so the disc keeps its soft paper-cut shading instead
+   of flattening into a solid circle. */
+.today-mood-card[data-mood="depressed"] .today-mood-word,
+.today-mood-card[data-mood="sad"] .today-mood-word { color: #d97878; }
+.today-mood-card[data-mood="depressed"] .today-mood-portrait,
+.today-mood-card[data-mood="sad"] .today-mood-portrait {
+  background: radial-gradient(circle at 50% 45%, #fff4f2 0%, #fbdcd6 62%, #f4a8a0 100%);
+}
+
+.today-mood-card[data-mood="concerned"] .today-mood-word,
+.today-mood-card[data-mood="missing_you"] .today-mood-word,
+.today-mood-card[data-mood="lonely"] .today-mood-word { color: #c98b93; }
+.today-mood-card[data-mood="concerned"] .today-mood-portrait,
+.today-mood-card[data-mood="missing_you"] .today-mood-portrait,
+.today-mood-card[data-mood="lonely"] .today-mood-portrait {
+  background: radial-gradient(circle at 50% 45%, #fff6f7 0%, #f6e2e5 62%, #d8a8b0 100%);
+}
+
+.today-mood-card[data-mood="happy_clingy"] .today-mood-word,
+.today-mood-card[data-mood="proud"] .today-mood-word,
+.today-mood-card[data-mood="festive"] .today-mood-word { color: #e08a5c; }
+.today-mood-card[data-mood="happy_clingy"] .today-mood-portrait,
+.today-mood-card[data-mood="proud"] .today-mood-portrait,
+.today-mood-card[data-mood="festive"] .today-mood-portrait {
+  background: radial-gradient(circle at 50% 45%, #fffaf2 0%, #ffe8d8 62%, #ffb894 100%);
+}
+
+.today-mood-card[data-mood="reminder"] .today-mood-word { color: #e0705f; }
+.today-mood-text { min-width: 0; }
+.today-mood-word {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: var(--today-ink);
+  line-height: 1.25;
+}
+.today-mood-note {
+  color: var(--today-ink-soft);
+  font-size: 13px;
+  line-height: 1.6;
+  margin-top: 6px;
+}
+/* The little "..." affordance in the panel's top-right corner, matching the
+   reference's menu hint. It's decorative (the mood panel has no menu yet),
+   so it is aria-hidden and not focusable. */
+.today-panel-menu {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  width: 26px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--today-paper-2);
+  border: 1px solid var(--today-line);
+  color: var(--today-ink-soft);
+  font-size: 11px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  letter-spacing: 1px;
+  user-select: none;
+}
+
+/* ---- Bond panel ---------------------------------------------------------
+   The reference splits this into three reads: the tier pill (top-right), the
+   big 亲密度 number, then a divider, then the progress bar + hint. */
+.today-bond-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.today-tier-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--today-blush);
+  color: #d9825f;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex: none;
+}
+.today-bond-body {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin-top: 12px;
+}
+.today-bond-number {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+  min-width: 92px;
+}
+.today-bond-number b {
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1.05;
+  color: var(--today-ink);
+  letter-spacing: -0.01em;
+}
+.today-bond-number span {
+  font-size: 12px;
+  color: var(--today-ink-soft);
+  margin-top: 3px;
+  letter-spacing: 0.04em;
+}
+/* The vertical rule between the number and the progress column. */
+.today-bond-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--today-line);
+  flex: none;
+}
+.today-bond-progress {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* ---- Meters -------------------------------------------------------------
+   Softer than the global `.ps-meter`: no hard border, a low-contrast track
+   and a rounded, gently colored fill. */
+.today-meter {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(196, 160, 132, 0.20);
+  overflow: hidden;
+}
+.today-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.today-meter-fill[data-tone="bond"]   { background: linear-gradient(90deg, #ffb894, #ff9f76); }
+.today-meter-fill[data-tone="weekly"] { background: linear-gradient(90deg, #a8c4e8, #8aa8d8); }
+.today-meter-fill[data-tone="cozy"]   { background: linear-gradient(90deg, #ffb0a4, #f4a8a0); }
+
+.today-hint {
+  color: var(--today-ink-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* ---- 陪伴状态 panel -----------------------------------------------------
+   Three stat columns separated by hairlines, plus a footer note with a
+   heart. The columns echo the reference's "icon chip + big number + label".
+
+   The columns are equal-width grid tracks (not flex), so the three reads
+   sit at even intervals across the panel — the reference spaces them the
+   same way. The hairline is drawn on the cell's left edge, which puts it
+   exactly on the track boundary. */
+.today-companion-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+}
+@media (max-width: 640px) {
+  .today-companion-stats { grid-template-columns: 1fr; gap: 16px; }
+}
+.today-companion-cell {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 22px;
+  position: relative;
+  min-width: 0;
+}
+/* The text column carries the bar, so it must be allowed to take the
+   remaining width — `min-width: 0` alone isn't enough while the cell is
+   a flex row (the text would size to its content and the bar would
+   collapse with it). */
+.today-companion-cell > .today-companion-text {
+  flex: 1;
+}
+@media (max-width: 640px) {
+  .today-companion-cell { padding: 4px 0; }
+}
+/* The hairline between columns. It is a pseudo-element rather than a border
+   so it can sit exactly halfway between two grid columns and disappear
+   entirely when the layout collapses to one column.
+
+   `left: 0` puts it on the cell's own left edge, which is the grid track
+   boundary — but the cell has horizontal padding, so the line would land
+   *inside* the next column's padding rather than between the two reads.
+   Pulling it back by half the padding centers it on the boundary. */
+.today-companion-cell + .today-companion-cell::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--today-line);
+}
+@media (max-width: 640px) {
+  .today-companion-cell + .today-companion-cell::before { display: none; }
+}
+/* The first cell carries the panel's own left padding, so the three
+   columns are optically aligned with the rest of the panel's content. */
+.today-companion-cell:first-child { padding-left: 2px; }
+/* The tinted icon chip. */
+.today-companion-icon {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  line-height: 1;
+}
+.today-companion-icon[data-tone="cal"]    { background: rgba(255, 184, 148, 0.22); }
+.today-companion-icon[data-tone="cozy"]   { background: rgba(244, 168, 160, 0.22); }
+.today-companion-icon[data-tone="streak"] { background: rgba(255, 214, 150, 0.30); }
+.today-companion-text { min-width: 0; }
+.today-companion-value {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: var(--today-ink);
+  letter-spacing: -0.01em;
+}
+.today-companion-value small {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--today-ink-soft);
+  margin-left: 3px;
+  letter-spacing: 0;
+}
+.today-companion-label {
+  font-size: 12px;
+  color: var(--today-ink-soft);
+  margin-top: 2px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The cozy cell carries its own progress bar under the label. */
+.today-companion-bar {
+  margin-top: 8px;
+  width: 100%;
+  max-width: 260px;
+}
+.today-companion-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--today-line);
+  color: var(--today-ink-soft);
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+}
+.today-companion-meta .today-heart {
+  color: var(--today-peach);
+  font-size: 13px;
+}
+
+/* ---- Reminder list ------------------------------------------------------
+   Rows on this page read as a soft list rather than a stack of cards:
+   the whole list lives on ONE paper panel, and each row is separated by a
+   hairline. That is what keeps the reference's calm, list-like feel — a
+   stack of separate floating cards would read much busier. */
+.today-reminders {
+  background: var(--today-paper);
+  border: 1px solid var(--today-line);
+  border-radius: var(--today-radius);
+  box-shadow: var(--today-shadow);
+  overflow: hidden;
+}
+.today-reminders .card {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  padding: 14px 20px;
+  transition: background 160ms ease;
+}
+.today-reminders .card + .card {
+  border-top: 1px solid var(--today-line);
+}
+.today-reminders .card.clickable:hover {
+  transform: none;
+  background: var(--today-paper-2);
+  box-shadow: none;
+  border-color: var(--today-line);
+}
+/* On the reminder panel the category strip would collide with the panel's
+   own edge, so it is dropped; the glyph's tint carries the category. */
+.today-reminders .card[data-kind] { padding-left: 20px; }
+.today-reminders .card[data-kind]::before { display: none; }
+.today-reminders .card[data-completed="true"] { opacity: 0.55; }
+.today-reminders .card[data-completed="true"]:hover { opacity: 0.8; }
+
+/* The category glyph gets the reference's rounded-square treatment. */
+.today-reminders .cat-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  font-size: 18px;
+}
+/* The row title is the star of the list, so it gets more weight than the
+   global `.lr-title`. */
+.today-reminders .lr-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--today-ink);
+}
+/* The time chip becomes a soft pill rather than a solid accent block. */
+.today-reminders .time-chip {
+  background: var(--today-blush);
+  color: #d9825f;
+  border-color: transparent;
+  font-weight: 700;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.today-reminders .time-chip.urgent {
+  background: linear-gradient(135deg, #ffb894, #ff9f76);
+  color: #fff;
+  border-color: transparent;
+}
+.today-reminders .time-chip .chip-dot { display: none; }
+
+/* ---- Empty state --------------------------------------------------------
+   The reference shows the empty reminder list as a calm green-check line
+   rather than a dashed box. */
+.today-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 24px;
+  background: var(--today-paper);
+  border: 1px solid var(--today-line);
+  border-radius: var(--today-radius);
+  box-shadow: var(--today-shadow);
+  color: var(--today-ink);
+  font-size: 14.5px;
+}
+.today-empty-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(122, 186, 122, 0.20);
+  color: #5da15d;
+  font-size: 15px;
+  font-weight: 700;
+}
+.today-empty-note {
+  color: var(--today-ink-soft);
+  font-size: 13px;
+  margin-top: 3px;
+}

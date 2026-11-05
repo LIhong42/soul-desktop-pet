@@ -14,6 +14,10 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>SoulDesktopPet</title>
   <link rel="stylesheet" href="css/styles.css" />
+  <!-- The 今日 page's own design system. Loaded after styles.css so it can
+       override the global primitives it opts out of (cards, headings) for
+       its own scope only — see the scoping note at the top of today.css. -->
+  <link rel="stylesheet" href="css/today.css" />
 </head>
 <body>
   <header class="topbar">
