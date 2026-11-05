@@ -95,8 +95,96 @@ function lunarToSolarYmd(lunarYear, lunarMonth, lunarDay) {
   }
 }
 
+// The lunar date of a solar date, as { year, month, day }.
+//
+// The lunar *year* is what "how many years has this been" counts for a
+// lunar anniversary: a 农历 birthday recurs on the same lunar date every
+// year, and the number of lunar years since the origin is what the user
+// means by "至今 N 年" — even though the solar date of that lunar day
+// shifts by a month or so from year to year.
+//
+// `year` here is the Chinese lunar year proper (which is what
+// `.getYear()` returns), NOT the solar year the lunar date falls in.
+function solarToLunar(date) {
+  const { Solar } = lib();
+  try {
+    const lunar = Solar.fromYmd(
+      date.getFullYear(), date.getMonth() + 1, date.getDate()
+    ).getLunar();
+    return {
+      year: lunar.getYear(),
+      month: lunar.getMonth(),
+      day: lunar.getDay(),
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// The occurrence of a lunar (month, day) that is NEXT relative to
+// `today` — the same day-or-after rule the solar anniversaries use —
+// plus how many lunar years have passed since the origin.
+//
+// `originLunarYear` is the lunar year the anniversary was first
+// observed. Without it there is no "since" number, and the card shows
+// the countdown alone.
+//
+// The "since" count is measured at the LAST occurrence on or before
+// today, exactly like the solar rule: the number ticks up ON the
+// anniversary and then holds for the rest of the lunar year. It never
+// jumps in the middle of the night.
+//
+// Returns null when the lunar date can't be resolved.
+function nextLunarOccurrence(lunarMonth, lunarDay, originLunarYear, today) {
+  if (!lunarMonth || !lunarDay) return null;
+  const { Lunar } = lib();
+
+  // The most recent occurrence on or before today. Candidates are the
+  // same lunar date in this solar year and in the previous one — the
+  // lunar date of a solar day can fall in either.
+  const thisLunar = solarToLunar(today);
+  let lastOccurrence = null;
+  for (const solarYear of [today.getFullYear(), today.getFullYear() - 1]) {
+    let solar;
+    try {
+      solar = Lunar.fromYmd(solarYear, lunarMonth, lunarDay).getSolar();
+    } catch (e) {
+      continue;
+    }
+    const cand = new Date(
+      solar.getYear(), solar.getMonth() - 1, solar.getDay(), 0, 0, 0, 0
+    );
+    if (cand.getTime() <= today.getTime() && cand.getTime() > 0) {
+      if (!lastOccurrence || cand.getTime() > lastOccurrence.getTime()) {
+        lastOccurrence = cand;
+      }
+    }
+  }
+
+  let yearsSince = null;
+  if (originLunarYear && lastOccurrence) {
+    const occLunar = solarToLunar(lastOccurrence);
+    if (occLunar) {
+      yearsSince = Math.max(0, occLunar.year - originLunarYear);
+    }
+  }
+
+  // The NEXT occurrence — on or after today.
+  const next = nextSolarDateForLunar(lunarMonth, lunarDay, new Date(
+    today.getFullYear(), today.getMonth(), today.getDate() - 1, 0, 0, 0, 0
+  ));
+  if (!next) return null;
+  const daysUntilNext = Math.round(
+    (next.getTime() - today.getTime()) / (24 * 3600 * 1000)
+  );
+
+  return { nextDate: next, daysUntilNext, yearsSince };
+}
+
 module.exports = {
   nextSolarDateForLunar,
   validateLunar,
   lunarToSolarYmd,
+  solarToLunar,
+  nextLunarOccurrence,
 };

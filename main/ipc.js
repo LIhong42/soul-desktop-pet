@@ -5,8 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const AdmZip = require('adm-zip');
 const db = require('./db');
-const { fmtDateTime, computeNextFireEvent, DEFAULT_ADVANCE_DAYS, importantDateOccurrence, nextImportantDateOccurrence } = require('./time_util');
+const { fmtDateTime, computeNextFireEvent, DEFAULT_ADVANCE_DAYS, importantDateOccurrence } = require('./time_util');
 const { validateLunar } = require('./lunar');
+const { listAnniversaries } = require('./anniversaries');
 const { listFestivals, festivalLabel } = require('./festivals');
 const {
   installPetZip, removeImported,
@@ -622,12 +623,15 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
     return true;
   });
 
-  // Every important date, across all contacts, with the day counts the
+  // Every anniversary the user has recorded, with the day counts the
   // 今日页's 纪念日 carousel shows.
   //
   // The per-contact `important_dates:list` handler above can't serve this:
   // it needs one contact_id, and the carousel spans the whole address book.
-  // So this joins contacts in and computes the two numbers the card shows —
+  //
+  // The gathering and the counting live in main/anniversaries.js, which
+  // merges the two places an anniversary can be recorded — a contact's
+  // own date, and a 提醒日期 tagged 生日 / 纪念日 — and computes:
   //
   //   days_until_next — whole days from today to the next occurrence of
   //     (month, day). 0 means it is today.
@@ -644,38 +648,7 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
   // Rows with remind_enabled = 0 are included — the user asked the
   // carousel to show the dates they added, and silencing a reminder is
   // about nagging, not about hiding the date itself.
-  ipcMain.handle('important_dates:list_all', () => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const rows = db.all(
-      `SELECT d.*, c.name AS contact_name
-         FROM important_dates d
-         LEFT JOIN contacts c ON c.id = d.contact_id
-        ORDER BY d.month, d.day`
-    );
-    return rows.map((row) => {
-      const occ = nextImportantDateOccurrence(row, today);
-      return {
-        id: row.id,
-        contact_id: row.contact_id,
-        contact_name: row.contact_name || null,
-        label: row.label,
-        kind: row.kind,
-        month: row.month,
-        day: row.day,
-        year: row.year || null,
-        remind_enabled: !!row.remind_enabled,
-        // Null when the row has no origin year — the card then shows only
-        // the countdown, without a "至今 N 年" clause.
-        years_since: row.year ? occ.yearsSince : null,
-        days_until_next: occ.daysUntilNext,
-        // The date of the NEXT occurrence, as YYYY-MM-DD — the card shows
-        // it so the user can tell *which* upcoming date is being counted
-        // down to (this year's, or next year's for a date already past).
-        next_date: occ.nextDate,
-      };
-    });
-  });
+  ipcMain.handle('important_dates:list_all', () => listAnniversaries(db));
 
   // ---- Events ----
   // Categories: 'general' (the default "提醒日期" page), 'memorial' (回忆事件),

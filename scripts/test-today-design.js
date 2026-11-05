@@ -136,7 +136,9 @@ app.whenReady().then(async () => {
     // The section TITLES, not just their count. The page grew a 纪念日
     // section (the rotating anniversary carousel), so asserting a bare
     // count would only ever tell us the number changed — naming the
-    // sections is what actually pins the page's structure.
+    // sections is what actually pins the page's structure. The order
+    // matters too: the two sections the day is *about* (纪念日, 当前提醒)
+    // come first, and the pet's own state last.
     sectionTitles: Array.from(document.querySelectorAll('.today-section-head h2'))
       .map((h) => h.textContent.trim()),
     weekday: (document.querySelector('.today-hero-weekday') || {}).textContent || '',
@@ -179,9 +181,9 @@ app.whenReady().then(async () => {
   check('the 陪伴状态 columns have no icon chips', !markup.companionIcon);
   check('every section heading is rendered', markup.sectionHeads === 3,
     `got ${markup.sectionHeads}`);
-  check('the sections are 桌宠状态 / 纪念日 / 当前提醒',
+  check('the sections are 纪念日 / 当前提醒 / 桌宠状态',
     JSON.stringify(markup.sectionTitles) ===
-      JSON.stringify(['桌宠状态', '纪念日', '当前提醒']),
+      JSON.stringify(['纪念日', '当前提醒', '桌宠状态']),
     JSON.stringify(markup.sectionTitles));
   // The page must actually be LAID OUT. Every size assertion below reads a
   // bounding box, and a hidden element (the PIN gate sets `display: none`

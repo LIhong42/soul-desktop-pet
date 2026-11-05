@@ -76,13 +76,6 @@ export async function render() {
 
       <div class="today-section">
         <div class="today-section-head">
-          <h2>桌宠状态</h2>
-        </div>
-        <div id="pet-status">${renderPetStatus(normalizeFromSnapshots(bond, cozy), petName, portrait)}</div>
-      </div>
-
-      <div class="today-section">
-        <div class="today-section-head">
           <h2>纪念日</h2>
         </div>
         ${renderAnniversaryCarousel(importantDates)}
@@ -158,6 +151,13 @@ export async function render() {
             </div>
           `}).join('')}</div>`;
         })()}
+      </div>
+
+      <div class="today-section">
+        <div class="today-section-head">
+          <h2>桌宠状态</h2>
+        </div>
+        <div id="pet-status">${renderPetStatus(normalizeFromSnapshots(bond, cozy), petName, portrait)}</div>
       </div>
     </div>
   `;
@@ -276,6 +276,17 @@ function yearsSincePhrase(years) {
 
 // Render the carousel. Returns the empty state when the user has no
 // important dates yet, so the section never renders as a bare heading.
+// The 纪念日 carousel.
+//
+// ONE CARD AT A TIME. The strip is a rotation, not a scroller: at any
+// moment exactly one anniversary is on screen, and the next one replaces
+// it a minute later. The cards are stacked in the same place and the
+// rotation cross-fades between them, so the section never changes height
+// and the user's eye is never pulled sideways to a card that is half off
+// the edge.
+//
+// The cards are ordered by the backend (soonest first), so the strip
+// leads with whatever is next.
 function renderAnniversaryCarousel(dates) {
   const rows = (dates || []).filter(Boolean);
   if (rows.length === 0) {
@@ -284,15 +295,13 @@ function renderAnniversaryCarousel(dates) {
         <span class="today-empty-icon">📅</span>
         <div>
           <div>还没有添加纪念日。</div>
-          <div class="today-empty-note">在联系人详情里添加生日或纪念日，这里会轮流展示。</div>
+          <div class="today-empty-note">在联系人详情里添加纪念日，这里会轮流展示。</div>
         </div>
       </div>
     `;
   }
 
-  // One card per date. The cards are ordered by the backend (month, day),
-  // so the strip reads as a calendar year rather than in insertion order.
-  const cards = rows.map((row) => {
+  const cards = rows.map((row, i) => {
     const label = (row.label || '').trim() || dateKindLabel(row.kind);
     const who = (row.contact_name || '').trim();
     const kindLabel = dateKindLabel(row.kind);
@@ -302,19 +311,27 @@ function renderAnniversaryCarousel(dates) {
     // row has no origin year — "至今" with no number would be nonsense.
     const since = yearsSincePhrase(row.years_since);
     const until = daysLeftPhrase(row.days_until_next);
-    // "谁的纪念日" — the contact's name, when there is one. An important
-    // date always belongs to a contact in this schema, but the contact
-    // may have been deleted since (the FK cascades the date away, so this
-    // is defensive only) — the line still reads without it.
+    // "谁的纪念日" — the contact's name, when there is one. A date can
+    // also be a standalone reminder with no contact at all (a 提醒日期
+    // the user never attached to anyone), in which case the label alone
+    // carries the line.
     const whoText = who ? `${who} 的` : '';
     const name = `${whoText}${label}`;
     // The date this card counts down to, as a tooltip. The card itself
     // stays one line; the exact date is the detail you want on hover.
     const nextDate = row.next_date || '';
-    // The tail of the line is split in two: the type label (生日 / 纪念日)
+    // The tail of the line is split in two: the type label (纪念日 / 忌日)
     // stays in the soft ink, while the age and the countdown take the
     // accent — the countdown is the number the card exists to show, and
     // it should be the thing the eye lands on.
+    //
+    // The type clause is DROPPED when the row's own label already says
+    // it. A row labelled 忌日 whose kind is 忌日 would otherwise read
+    // "忌日忌日", and one labelled 结婚纪念日 would read
+    // "结婚纪念日纪念日" — the type is right there in the name, so
+    // printing it again says nothing. The clause only earns its place
+    // when the label is something else (a 提醒日期 titled "领证" with
+    // the anniversary kind still needs to say it is an anniversary).
     //
     // The two spans are written with NO whitespace between them. The card
     // is a flex row, and whitespace between inline elements becomes an
@@ -322,10 +339,30 @@ function renderAnniversaryCarousel(dates) {
     // as extra gaps between the clauses, making the line look loosely
     // spaced and inconsistent from card to card. The separator spaces
     // are therefore written into the text itself.
-    const kindText = kindLabel ? kindLabel + ' · ' : '';
+    //
+    // The separator belongs to the clause it FOLLOWS, not to the one
+    // before it. When the type clause is dropped, the name is left
+    // without a trailing middot and the age would butt up against it
+    // ("妈妈 的忌日至今 36 年"). So the name carries its own separator
+    // when it is the last clause before the figures.
+    const labelSaysKind = kindLabel && (label === kindLabel || label.includes(kindLabel));
+    const kindText = (kindLabel && !labelSaysKind) ? kindLabel : '';
     const statText = [since, until].filter(Boolean).join(' · ');
+    // The name is followed by the type clause and then by the figures.
+    // It needs a trailing middot only when something comes after it.
+    const nameText = (kindText || statText) ? `${name} · ` : name;
+    // The type clause carries its own trailing middot for the same
+    // reason — it sits between the name and the figures.
+    const kindSpanText = kindText ? `${kindText} · ` : '';
+    // Where the card leads when it is clicked. The two kinds of
+    // anniversary live in different tables and have different detail
+    // pages, so the card has to say which one it is.
+    const source = row.source === 'event' ? 'event' : 'important_date';
+    // Only the first card is visible on the first render; the rotation
+    // brings the others in. The class is what the CSS fades on.
+    const shown = i === 0 ? ' today-anniv-card--shown' : '';
     return `
-      <div class="card today-anniv-card" data-id="${escapeHtml(row.id || '')}" data-tone="${escapeHtml(tone)}" title="${escapeHtml(nextDate)}"><span class="today-anniv-icon">${escapeHtml(icon)}</span><span class="today-anniv-name">${escapeHtml(name)}</span><span class="today-anniv-kind">${escapeHtml(kindText)}</span><span class="today-anniv-stat">${escapeHtml(statText)}</span></div>
+      <div class="card today-anniv-card${shown}" data-id="${escapeHtml(row.id || '')}" data-source="${escapeHtml(source)}" data-tone="${escapeHtml(tone)}" title="${escapeHtml(nextDate)}"><span class="today-anniv-icon">${escapeHtml(icon)}</span><span class="today-anniv-name">${escapeHtml(nameText)}</span><span class="today-anniv-kind">${escapeHtml(kindSpanText)}</span><span class="today-anniv-stat">${escapeHtml(statText)}</span></div>
     `;
   }).join('');
 
@@ -344,23 +381,29 @@ function renderAnniversaryCarousel(dates) {
 // Auto-rotation. The strip advances by one card every `ROTATE_MS` and
 // wraps around.
 //
+// ONE CARD AT A TIME. The cards are stacked in the same place and the
+// rotation cross-fades between them — there is no horizontal scrolling
+// any more, because a carousel that shows three cards at once is a
+// *scroller*, and a scroller that also rotates is a thing that moves
+// under the user's eye while they read it. One card, one minute.
+//
 // The rotation is paused whenever the user is interacting with the strip:
-// hovering it, focusing inside it, or scrolling it by hand. A carousel
-// that yanks the content away while the user is reading it is the single
-// most annoying thing a carousel can do — the timer restarts only after
-// the user has been idle for a moment, so they always get a full beat to
+// hovering it, focusing inside it, or clicking a dot. A carousel that
+// yanks the content away while the user is reading it is the single most
+// annoying thing a carousel can do — the timer restarts only after the
+// user has been idle for a moment, so they always get a full beat to
 // read whatever they were looking at.
 //
 // A single timer is kept at module scope rather than per-render, so
 // navigating away from 今日 and back doesn't leave an orphaned interval
 // running against a detached DOM node.
-const ROTATE_MS = 5000;
+const ROTATE_MS = 60 * 1000;
 
 let annivTimer = null;
 let annivIndex = 0;
 
-// The pause flag. Set by the hover/focus/scroll listeners and cleared by
-// the idle timer, so the rotation resumes on its own a moment after the
+// The pause flag. Set by the hover/focus listeners and cleared by the
+// idle timer, so the rotation resumes on its own a moment after the
 // user lets go.
 let annivPaused = false;
 let annivResumeTimer = null;
@@ -377,62 +420,24 @@ function startAnniversaryRotation(app) {
 
   const dots = Array.from(app.querySelectorAll('#today-anniv-dots .today-anniv-dot'));
 
-  // True while the strip is being driven by the user rather than by the
-  // rotation. It is set from the INPUT events — a wheel, a touch, a drag
-  // on the scrollbar — and not from the `scroll` event, because the
-  // rotation's own scrolling produces `scroll` events too, and there is
-  // no way to tell those apart from the user's by looking at the
-  // positions alone: the two can start from the same place and end up
-  // crossing each other.
+  // Bring one card to the front. The cards are stacked on top of each
+  // other, so "showing" a card means making it opaque and putting it in
+  // front; the others are faded out and made inert underneath.
   //
-  // The input events are unambiguous — a programmatic scroll never
-  // produces a wheel or a touch.
-  let userScrolling = false;
-
-  // The index of the card currently at the left edge. Read off the
-  // scroll position rather than tracked separately, so a manual scroll
-  // by the user re-syncs it and the rotation continues from where they
-  // left it instead of jumping back to a stale position.
-  //
-  // The same `scroll-padding-left` offset that `goTo` applies is added
-  // back here, so the two agree on where a card sits.
-  const currentIndex = () => {
-    const left = track.scrollLeft;
-    const padding = parseFloat(getComputedStyle(track).scrollPaddingLeft) || 0;
-    let best = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < cards.length; i++) {
-      const dist = Math.abs(cards[i].offsetLeft - track.offsetLeft - padding - left);
-      if (dist < bestDist) { bestDist = dist; best = i; }
-    }
-    return best;
-  };
-
-  // Move to a given card. `behavior: 'smooth'` animates the scroll so the
-  // strip glides rather than jumps.
-  const goTo = (i, smooth = true) => {
+  // The previous card is faded out and the new one faded in at the same
+  // time, so the swap reads as a cross-fade rather than a blink.
+  const show = (i) => {
     const idx = ((i % cards.length) + cards.length) % cards.length;
     annivIndex = idx;
-    const card = cards[idx];
-    // `scrollLeft` is set from the card's offset within the track rather
-    // than from a computed card width, so a card of any width (long
-    // contact names, long labels) still lands flush at the left edge.
-    //
-    // The track's `scroll-padding-left` is subtracted, because that is
-    // where the browser really snaps the card to: with the padding in
-    // place the card sits that far off the edge, and a target that
-    // ignored it would be a few pixels short every time.
-    const padding = parseFloat(getComputedStyle(track).scrollPaddingLeft) || 0;
-    const target = card.offsetLeft - track.offsetLeft - padding;
-    if (typeof track.scrollTo === 'function') {
-      // `behavior: 'auto'` means "whatever the CSS `scroll-behavior` says",
-      // and the track says `smooth` — so 'auto' would animate too. Only
-      // `instant` really jumps, and the first card has to appear without
-      // a glide when the page is first rendered.
-      track.scrollTo({ left: target, behavior: smooth ? 'smooth' : 'instant' });
-    } else {
-      track.scrollLeft = target;
-    }
+    cards.forEach((c, ci) => {
+      const on = ci === idx;
+      c.classList.toggle('today-anniv-card--shown', on);
+      // A hidden card must not be clickable — the pointer would land on
+      // whichever card is on top, and "inert" is what keeps the click
+      // from opening a date the user cannot see.
+      c.setAttribute('aria-hidden', on ? 'false' : 'true');
+      if (on) c.removeAttribute('inert'); else c.setAttribute('inert', '');
+    });
     dots.forEach((d, di) => d.classList.toggle('active', di === idx));
   };
 
@@ -448,8 +453,6 @@ function startAnniversaryRotation(app) {
     annivResumeTimer = setTimeout(() => {
       annivPaused = false;
       annivResumeTimer = null;
-      // The user has let go, so the strip is ours again.
-      userScrolling = false;
     }, 1200);
   };
 
@@ -458,62 +461,41 @@ function startAnniversaryRotation(app) {
   root.addEventListener('focusin', pause);
   root.addEventListener('focusout', resume);
 
-  // The user taking hold of the strip: a wheel, a touch, a drag on the
-  // scrollbar, or a click on a card. None of these ever come from the
-  // rotation, so they are a reliable signal that the strip is being
-  // driven by hand.
-  const userTookOver = () => {
-    userScrolling = true;
-    pause();
-    resume();
-  };
-  track.addEventListener('wheel', userTookOver, { passive: true });
-  track.addEventListener('touchstart', userTookOver, { passive: true });
-  track.addEventListener('pointerdown', userTookOver, { passive: true });
-
-  // Re-sync the index with whatever is at the left edge. This runs for
-  // the rotation's own scrolling too, but that is harmless: the
-  // rotation has already set the index to where it is heading, and the
-  // card that is actually at the edge is the same one.
-  track.addEventListener('scroll', () => {
-    const idx = currentIndex();
-    if (idx === annivIndex) return;
-    annivIndex = idx;
-    dots.forEach((d, di) => d.classList.toggle('active', di === idx));
-    // A scroll the user started has to hold the rotation still until
-    // they let go. The rotation's own scroll must not, or the carousel
-    // would stop for a moment after every single tick.
-    if (userScrolling) {
-      pause();
-      resume();
-    }
-  }, { passive: true });
-
-  // Clicking a dot jumps straight to that card.
+  // Clicking a dot jumps straight to that card, and holding the strip
+  // still while the user does it.
   dots.forEach((dot) => {
     dot.onclick = () => {
       const i = parseInt(dot.dataset.index, 10);
-      if (Number.isFinite(i)) goTo(i);
+      if (!Number.isFinite(i)) return;
+      pause();
+      resume();
+      show(i);
     };
   });
 
-  // Clicking a card opens the important date's detail page, so the user
-  // can edit or delete it from the dashboard.
+  // Clicking a card opens that anniversary's detail page, so the user
+  // can edit or delete it from the dashboard. The two kinds of
+  // anniversary live in different tables and have different pages.
   cards.forEach((card) => {
     card.onclick = () => {
       const id = card.dataset.id;
-      if (id) navigate('/important-dates/' + id);
+      if (!id) return;
+      if (card.dataset.source === 'event') {
+        navigate('/events/' + id + '?category=general');
+      } else {
+        navigate('/important-dates/' + id);
+      }
     };
   });
 
   annivTimer = setInterval(() => {
     if (annivPaused) return;
-    goTo(annivIndex + 1);
+    show(annivIndex + 1);
   }, ROTATE_MS);
 
-  // Start on the first card without animating — the strip is already at
-  // scroll position 0 on a fresh render.
-  goTo(0, false);
+  // Start on the first card. The markup already marked it as shown, but
+  // `show()` is what syncs the dots and the inert flags.
+  show(0);
 }
 
 // Tear the carousel's timers down. Called at the start of every render

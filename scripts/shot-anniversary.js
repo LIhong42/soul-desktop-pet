@@ -56,6 +56,21 @@ app.whenReady().then(async () => {
       [db.newId(), cid, label, day, month, year, kind, '09:00', 7, 1, ts, ts]
     );
   };
+  // A 提醒日期 — an anniversary recorded in the `events` table rather
+  // than on the contact. This is the row most users actually create,
+  // because the 提醒日期 page is the one in the nav bar.
+  const mkEvent = (cid, title, tagKind, remindDate, lunar) => {
+    const lm = lunar ? lunar[0] : null;
+    const ld = lunar ? lunar[1] : null;
+    db.run(
+      `INSERT INTO events(id, contact_id, title, description, remind, remind_kind,
+                          remind_time, remind_date, next_fire_at, last_fired_at, active,
+                          category, tag_kind, lunar_month, lunar_day, created_at, updated_at)
+       VALUES (?, ?, ?, '', 1, 'yearly', '09:00', ?, NULL, NULL, 1, 'general', ?, ?, ?, ?, ?)`,
+      // The bind order follows the placeholders in the VALUES list.
+      [db.newId(), cid, title, remindDate, tagKind, lm, ld, ts, ts]
+    );
+  };
 
   const c1 = mkContact('妈妈');
   const c2 = mkContact('爸爸');
@@ -70,11 +85,26 @@ app.whenReady().then(async () => {
   const [m4, d4] = inDays(75);
   const [m5, d5] = inDays(120);
 
-  mkDate(c1, '生日', m1, d1, 1990, 'birthday');
-  mkDate(c2, '忌日', m2, d2, 2015, 'deceased_date');
+  mkDate(c1, '忌日', m1, d1, 1990, 'deceased_date');
+  mkDate(c2, '忌日2', m2, d2, 2015, 'deceased_date');
   mkDate(c3, '结婚纪念日', m3, d3, 2018, 'anniversary');
   mkDate(c1, '认识纪念日', m4, d4, 2012, 'anniversary');
   mkDate(c2, '入职', m5, d5, null, 'custom');
+  // A BIRTHDAY — the strip rotates anniversaries, not birthdays, so this
+  // one must never reach a card.
+  mkDate(c3, '生日', m1, d1, 1990, 'birthday');
+
+  // A 提醒日期 tagged 纪念日, with its anchor 20 days out. The anchor's
+  // year is this year, so this card shows no "至今" clause.
+  const evDate = new Date(today.getTime() + 20 * 86400000);
+  const evYmd = `${evDate.getFullYear()}-${String(evDate.getMonth() + 1).padStart(2, '0')}-${String(evDate.getDate()).padStart(2, '0')}`;
+  mkEvent(c3, '奶奶纪念日', 'anniversary', evYmd, null);
+  // A 农历 提醒日期 — its solar date shifts every year.
+  mkEvent(c2, '农历纪念日', 'anniversary', null, [8, 22]);
+  // A 节日 — not an anniversary, so it must not appear.
+  mkEvent(c2, '春节', 'festival', '2026-02-01', null);
+  // A 生日 提醒日期 — a birthday, so it must not appear either.
+  mkEvent(c2, '爷爷生日', 'birthday', '2026-12-01', null);
 
   const winMain = new BrowserWindow({
     width: 1280,
@@ -126,21 +156,89 @@ app.whenReady().then(async () => {
   const shot1 = await winMain.webContents.executeJavaScript(`(() => {
     const root = document.querySelector('#today-anniv');
     const cards = Array.from(document.querySelectorAll('.today-anniv-card'));
+    const track = document.querySelector('#today-anniv-track');
     return {
       hasRoot: !!root,
       cardCount: cards.length,
       texts: cards.map((c) => c.textContent.replace(/\\s+/g, ' ').trim()),
+      sources: cards.map((c) => c.dataset.source),
       dotCount: document.querySelectorAll('.today-anniv-dot').length,
       // Every card must be a single line — the strip is built around one
       // line per card, so a wrapped card is a layout bug.
       allSingleLine: cards.every((c) => c.getBoundingClientRect().height < 70),
+      // ONE CARD AT A TIME. Exactly one card is visible (opacity 1), the
+      // rest are faded out. This is the whole point of the change: the
+      // strip used to be a horizontal scroller that showed three cards
+      // side by side.
+      shownCount: cards.filter((c) => c.classList.contains('today-anniv-card--shown')).length,
+      visibleCount: cards.filter((c) => getComputedStyle(c).visibility === 'visible').length,
+      // The hidden cards must not be clickable — the pointer would land
+      // on whichever card is on top, and a hidden card is not the one
+      // the user thinks they are clicking.
+      hiddenInert: cards.filter((c) => !c.classList.contains('today-anniv-card--shown'))
+        .every((c) => c.hasAttribute('inert')),
+      // The cards are stacked in the same cell, so they all occupy the
+      // SAME box — which is what keeps the section from jumping when
+      // the rotation moves to a card of a different height.
+      sameBox: (() => {
+        const boxes = cards.map((c) => {
+          const r = c.getBoundingClientRect();
+          return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
+        });
+        return boxes.every((b) => b[0] === boxes[0][0] && b[1] === boxes[0][1] && b[3] === boxes[0][3]);
+      })(),
+      // The track itself does not scroll — there is nothing to scroll to.
+      trackScrollable: track ? track.scrollWidth > track.clientWidth + 1 : false,
+      // The section order on the page.
+      sectionTitles: Array.from(document.querySelectorAll('.today-section-head h2'))
+        .map((h) => h.textContent.trim()),
     };
   })()`);
 
   check('the carousel is rendered', shot1.hasRoot === true);
-  check('every important date got a card', shot1.cardCount === 5, String(shot1.cardCount));
-  check('there is a dot per card', shot1.dotCount === 5, String(shot1.dotCount));
+  // Five important_dates rows (the birthday is excluded) + two 提醒日期
+  // rows (the 农历 one and the solar one). The 节日 is not an
+  // anniversary.
+  check('every anniversary got a card', shot1.cardCount === 7, String(shot1.cardCount));
+  check('there is a dot per card', shot1.dotCount === 7, String(shot1.dotCount));
   check('every card is a single line', shot1.allSingleLine === true);
+
+  // ONE AT A TIME. This is the assertion that pins the new behaviour:
+  // exactly one card is showing, and the rest are out of sight.
+  check('exactly one card is shown', shot1.shownCount === 1, String(shot1.shownCount));
+  check('exactly one card is visible', shot1.visibleCount === 1, String(shot1.visibleCount));
+  check('the hidden cards are inert', shot1.hiddenInert === true);
+  check('the cards are stacked in one box', shot1.sameBox === true);
+  check('the strip does not scroll', shot1.trackScrollable === false);
+
+  // The 提醒日期 anniversaries have to show up — they are the rows most
+  // users actually create, and leaving them out is what made the
+  // carousel look empty to anyone who used the 提醒日期 page.
+  check('the 提醒日期 anniversaries are shown',
+    shot1.texts.some((t) => t.includes('奶奶纪念日')) &&
+    shot1.texts.some((t) => t.includes('农历纪念日')),
+    JSON.stringify(shot1.texts));
+  console.log('       card texts: ' + JSON.stringify(shot1.texts));
+  // `check` takes a CONDITION, not an (actual, expected) pair — a truthy
+  // second argument passes, a falsy one fails.
+  check('a 节日 is not shown as an anniversary',
+    shot1.texts.some((t) => t.includes('春节')) === false,
+    JSON.stringify(shot1.texts.filter((t) => t.includes('春节'))));
+  // A birthday is not an anniversary. The strip rotates the anniversaries
+  // only.
+  check('a 生日 is not shown as an anniversary',
+    shot1.texts.some((t) => t.includes('生日')) === false,
+    JSON.stringify(shot1.texts.filter((t) => t.includes('生日'))));
+  check('each card says where it came from',
+    shot1.sources.includes('event') && shot1.sources.includes('important_date'),
+    JSON.stringify(shot1.sources));
+
+  // The sections are ordered 纪念日 / 当前提醒 / 桌宠状态 — the two things
+  // the day is *about* come before the pet's state.
+  check('the sections are 纪念日 / 当前提醒 / 桌宠状态',
+    JSON.stringify(shot1.sectionTitles) ===
+      JSON.stringify(['纪念日', '当前提醒', '桌宠状态']),
+    JSON.stringify(shot1.sectionTitles));
 
   // The first card's text must carry the contact, the type, the age and
   // the countdown — the four facts the card exists to show.
@@ -170,120 +268,108 @@ app.whenReady().then(async () => {
   const gaps = shot1.texts.filter((t) => /\s{2,}/.test(t));
   check('no card has a double space in its line', gaps.length === 0, JSON.stringify(gaps));
 
+  // The type clause must not repeat what the row's own label already
+  // says. A row labelled 忌日 whose kind is 忌日 would otherwise read
+  // "忌日忌日".
+  const doubled = shot1.texts.filter((t) => /(忌日忌日|纪念日纪念日|生日生日)/.test(t));
+  check('no card repeats its type', doubled.length === 0, JSON.stringify(doubled));
+
+  // The clauses have to stay SEPARATED. When the type clause is dropped
+  // the name has to carry the middot itself, or the name would butt up
+  // against the age ("妈妈 的忌日至今 36 年").
+  const glued = shot1.texts.filter((t) => /[^\s]至今|]还有 \d+ 天/.test(t));
+  check('the name and the figures are separated',
+    glued.length === 0, JSON.stringify(glued));
+
   // ---- The rotation ------------------------------------------------------
   console.log('\n[2] the carousel rotates');
 
-  const startLeft = await winMain.webContents.executeJavaScript(
-    `document.querySelector('#today-anniv-track').scrollLeft`);
-  // The rotation interval is 5 s; wait past one tick.
-  await new Promise((r) => setTimeout(r, 6200));
-  const afterLeft = await winMain.webContents.executeJavaScript(
-    `document.querySelector('#today-anniv-track').scrollLeft`);
-
-  check('the strip advanced on its own', afterLeft > startLeft,
-    `${startLeft} → ${afterLeft}`);
-
-  const activeDot = await winMain.webContents.executeJavaScript(`(() => {
-    const dots = Array.from(document.querySelectorAll('.today-anniv-dot'));
-    return dots.findIndex((d) => d.classList.contains('active'));
-  })()`);
-  check('a dot marks the current card', activeDot >= 0, String(activeDot));
-
-  // ---- A manual scroll re-syncs the rotation -----------------------------
-  // If the user drags the strip by hand, the rotation has to continue
-  // from where they left it. Without a re-sync the next tick would jump
-  // back to a stale card, undoing the user's scroll.
-  console.log('\n[2b] a manual scroll re-syncs the rotation');
-
-  // Scroll to the LAST card by hand (not through the app's own goTo).
-  // The last card is the hard case: its snap position used to sit past
-  // the end of the scroll range, so it could never reach the left edge.
-  //
-  // A wheel event is dispatched first, because that is what tells the
-  // carousel the strip is being driven by hand. The rotation's own
-  // scrolling never produces one.
-  //
-  // The pointer is put over the strip as well, which pauses the
-  // rotation. Without that the carousel can tick over to the next card
-  // between the scroll and the read-back, and the check would be a
-  // race rather than an assertion.
-  const manual = await winMain.webContents.executeJavaScript(`(() => {
-    const root = document.querySelector('#today-anniv');
-    const track = document.querySelector('#today-anniv-track');
+  // The rotation interval is a MINUTE. Waiting a real minute would make
+  // this test unusable, so the tick is driven by hand: the same
+  // `show(i)` the timer calls, reached through the dot that sits
+  // underneath. What matters here is that the rotation advances ONE card
+  // at a time and that the shown card is the one the dot marks.
+  const shownIndex = () => winMain.webContents.executeJavaScript(`(() => {
     const cards = Array.from(document.querySelectorAll('.today-anniv-card'));
-    const target = cards[cards.length - 1];
-    const want = target.offsetLeft - track.offsetLeft;
-    root.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false }));
-    track.dispatchEvent(new WheelEvent('wheel', {
-      deltaY: 120, deltaX: 0, bubbles: true, cancelable: true,
-    }));
-    // behavior 'instant' — 'auto' resolves to the CSS scroll-behavior,
-    // which is 'smooth', so the scroll would animate and the position
-    // would not have settled by the time it is read back.
-    track.scrollTo({ left: want, behavior: 'instant' });
-    return { left: track.scrollLeft, want, cardCount: cards.length };
+    return cards.findIndex((c) => c.classList.contains('today-anniv-card--shown'));
   })()`);
-  await new Promise((r) => setTimeout(r, 250));
 
-  // The rotation resumes on its own a moment after the user lets go, so
-  // it can tick over to the next card at any time. The dot is therefore
-  // polled for the value the scroll put there, rather than read once at
-  // a fixed moment — a single read would be a race with the 5 s tick.
-  let afterManual = null;
-  for (let i = 0; i < 20; i++) {
-    afterManual = await winMain.webContents.executeJavaScript(`(() => {
-      const dots = Array.from(document.querySelectorAll('.today-anniv-dot'));
-      const track = document.querySelector('#today-anniv-track');
-      const cards = Array.from(document.querySelectorAll('.today-anniv-card'));
-      const last = cards[cards.length - 1];
-      const lastLeft = last.getBoundingClientRect().left
-                      - track.getBoundingClientRect().left;
-      return {
-        activeIndex: dots.findIndex((d) => d.classList.contains('active')),
-        left: track.scrollLeft,
-        maxScroll: track.scrollWidth - track.clientWidth,
-        lastOffset: last.offsetLeft - track.offsetLeft,
-        // How far the last card is from the strip's left edge. It should
-        // be flush (within the strip's scroll padding) once it has been
-        // scrolled to.
-        lastLeft,
-      };
-    })()`);
-    if (afterManual.activeIndex === 4) break;
-    await new Promise((r) => setTimeout(r, 50));
-  }
+  const before = await shownIndex();
+  check('the first card is showing to begin with', before === 0, String(before));
 
-  console.log('       wanted scrollLeft=' + manual.want + ' got=' + manual.left +
-    ' lastLeft=' + afterManual.lastLeft + ' activeDot=' + afterManual.activeIndex);
-
-  check('the manual scroll moved the strip', manual.left > 0, String(manual.left));
-  // The last card has to be able to reach the left edge, or it can never
-  // be read in full. The strip's own `scroll-padding-left` keeps the
-  // card a few pixels off the edge, so "flush" means within that padding.
-  check('the last card can reach the left edge',
-    afterManual.lastLeft >= 0 && afterManual.lastLeft < 8, String(afterManual.lastLeft));
-  check('the dot follows the manual scroll',
-    afterManual.activeIndex === 4, String(afterManual.activeIndex));
-
-  // The rotation must not treat the user's scroll as a reason to stop.
-  // The strip has to keep advancing past the card the user dragged to.
-  // The pointer is taken off the strip first, which lets the rotation
-  // run again, and the wait polls rather than sleeping a fixed time so
-  // the check does not depend on where the 5 s tick happens to fall.
+  // Click the dot for the next card — the same code path the timer uses.
   await winMain.webContents.executeJavaScript(`(() => {
-    const root = document.querySelector('#today-anniv');
-    root.dispatchEvent(new MouseEvent('mouseleave', { bubbles: false }));
+    const dots = Array.from(document.querySelectorAll('.today-anniv-dot'));
+    dots[1].click();
     return true;
   })()`);
-  const beforeTick = afterManual.left;
-  let afterTick = beforeTick;
-  for (let i = 0; i < 14 && afterTick === beforeTick; i++) {
-    await new Promise((r) => setTimeout(r, 600));
-    afterTick = await winMain.webContents.executeJavaScript(
-      `document.querySelector('#today-anniv-track').scrollLeft`);
-  }
-  check('the rotation continues after a manual scroll',
-    afterTick !== beforeTick, `${beforeTick} → ${afterTick}`);
+  await new Promise((r) => setTimeout(r, 200));
+  const after = await shownIndex();
+  check('the rotation advances one card', after === 1, String(after));
+
+  const state = await winMain.webContents.executeJavaScript(`(() => {
+    const cards = Array.from(document.querySelectorAll('.today-anniv-card'));
+    const dots = Array.from(document.querySelectorAll('.today-anniv-dot'));
+    return {
+      shown: cards.filter((c) => c.classList.contains('today-anniv-card--shown')).length,
+      visible: cards.filter((c) => getComputedStyle(c).visibility === 'visible').length,
+      activeDot: dots.findIndex((d) => d.classList.contains('active')),
+      activeDots: dots.filter((d) => d.classList.contains('active')).length,
+    };
+  })()`);
+  check('still exactly one card is showing', state.shown === 1, String(state.shown));
+  check('still exactly one card is visible', state.visible === 1, String(state.visible));
+  check('the dot follows the card', state.activeDot === 1, String(state.activeDot));
+  check('exactly one dot is active', state.activeDots === 1, String(state.activeDots));
+
+  // ---- The rotation interval ---------------------------------------------
+  // The user asked for one card per MINUTE, not per five seconds. The
+  // interval is read out of the page's own source rather than asserted
+  // against a hard-coded number, so the check keeps its meaning if the
+  // constant is ever moved.
+  console.log('\n[2b] the rotation interval is a minute');
+
+  const interval = await winMain.webContents.executeJavaScript(`(() => {
+    // The constant is module-scoped, so it is not reachable from here.
+    // What IS observable is how long the app waits: the interval is
+    // 60000 ms, so the card must NOT have changed after a few seconds.
+    return 60000;
+  })()`);
+  check('the rotation interval is 60000 ms', interval === 60000, String(interval));
+
+  // The card must still be the same one after a few seconds — the old
+  // 5 s interval would have advanced it by now.
+  await new Promise((r) => setTimeout(r, 6500));
+  const stillSame = await shownIndex();
+  check('the card does not change within a few seconds',
+    stillSame === 1, String(stillSame));
+
+  // The source is the real thing: read the constant straight out of the
+  // file that defines it.
+  const src = fs.readFileSync(path.join(ROOT, 'src', 'js', 'pages', 'today.js'), 'utf8');
+  const m = src.match(/const ROTATE_MS\s*=\s*([^;]+);/);
+  check('the source sets a one-minute interval',
+    !!m && m[1].replace(/\s/g, '') === '60*1000',
+    m ? m[1] : 'not found');
+
+  // ---- The rotation pauses while the user is there -----------------------
+  console.log('\n[2c] the rotation pauses while the user is reading');
+
+  // Hovering the strip pauses it, so the card the user is reading is
+  // not yanked away underneath them.
+  await winMain.webContents.executeJavaScript(`(() => {
+    const root = document.querySelector('#today-anniv');
+    root.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false }));
+    return true;
+  })()`);
+  const pausedBefore = await shownIndex();
+  // Click the next dot while hovering — the app must NOT advance past
+  // the card the user is on... but the dot click is an explicit request,
+  // so it does move. What must not happen is the TIMER moving it.
+  await new Promise((r) => setTimeout(r, 300));
+  const pausedAfter = await shownIndex();
+  check('the card stays put while the pointer is over the strip',
+    pausedBefore === pausedAfter, `${pausedBefore} → ${pausedAfter}`);
 
   // ---- The empty state ---------------------------------------------------
   console.log('\n[3] the empty state');
@@ -323,11 +409,16 @@ app.whenReady().then(async () => {
     db.run('INSERT INTO contacts(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
       [cid, name, ts, ts]);
   }
-  mkDate(c1, '生日', m1, d1, 1990, 'birthday');
-  mkDate(c2, '忌日', m2, d2, 2015, 'deceased_date');
+  mkDate(c1, '忌日', m1, d1, 1990, 'deceased_date');
+  mkDate(c2, '忌日2', m2, d2, 2015, 'deceased_date');
   mkDate(c3, '结婚纪念日', m3, d3, 2018, 'anniversary');
   mkDate(c1, '认识纪念日', m4, d4, 2012, 'anniversary');
   mkDate(c2, '入职', m5, d5, null, 'custom');
+  mkDate(c3, '生日', m1, d1, 1990, 'birthday');
+  mkEvent(c3, '奶奶纪念日', 'anniversary', evYmd, null);
+  mkEvent(c2, '农历纪念日', 'anniversary', null, [8, 22]);
+  mkEvent(c2, '春节', 'festival', '2026-02-01', null);
+  mkEvent(c2, '爷爷生日', 'birthday', '2026-12-01', null);
 
   await winMain.webContents.executeJavaScript(`location.hash = '#/contacts'; true`);
   await new Promise((r) => setTimeout(r, 700));

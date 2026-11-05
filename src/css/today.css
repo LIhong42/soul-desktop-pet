@@ -765,72 +765,53 @@
 .today-reminders .time-chip .chip-dot { display: none; }
 
 /* ---- 纪念日 carousel ----------------------------------------------------
-   A single-row strip of date cards that scrolls horizontally and rotates
-   on its own.
+   A single date card that rotates on its own — ONE at a time.
 
-   The strip is `overflow-x: auto` with the scrollbar hidden — the user
-   swipes it, but the page never shows a scrollbar for it. `scroll-snap`
-   makes each card land flush against the left edge when the rotation
-   stops it there, which is what keeps the "one card at a time" read
-   crisp instead of leaving two half-cards visible.
-
-   `scroll-behavior: smooth` is set on the track so the programmatic
-   scroll (the rotation) glides. The user's own swipe is unaffected —
-   Chromium applies smooth scrolling to scripted scrolls, not to touch
-   or wheel gestures. */
+   The cards are stacked in the same place (a one-column grid, every card
+   in the same cell) and the rotation cross-fades between them. So the
+   section always shows exactly one anniversary, never three side by
+   side, and the strip's height is set by the tallest card rather than
+   by whichever card happens to be showing. */
 .today-anniv {
   overflow: hidden;
   /* The strip is a rounded window onto the track; the cards inside carry
      their own radius, so the window clips them cleanly. */
   border-radius: var(--today-radius);
 }
+/* The track is a STACK, not a scroller.
+
+   Every card occupies the same cell, one on top of the next, and only
+   the front one is opaque. The rotation cross-fades between them, so
+   the section never changes height and the eye is never pulled
+   sideways to a card that is half off the edge.
+
+   The grid does the stacking: a grid with a single column and every
+   card in the same cell (`grid-area: 1 / 1`) gives every card the same
+   box, and the card that is faded out is still in the layout so the
+   strip's height is decided by the TALLEST card rather than by
+   whichever one happens to be showing. A single card of the set would
+   otherwise make the section jump every time the rotation moved to a
+   shorter one. */
 .today-anniv-track {
-  display: flex;
-  gap: 12px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-behavior: smooth;
-  scroll-snap-type: x mandatory;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-rows: 1fr;
   /* Room for the card's lift shadow, so a hovered card isn't clipped by
      the strip's own bounds. */
   padding: 4px 4px 10px;
   margin: -4px -4px -10px;
-  /* The snap position of a card is its offset from the track's left edge
-     less this padding — the card sits that far off the edge rather than
-     flush against it. The padding keeps the card's shadow from being
-     clipped by the strip. */
-  scroll-padding-left: 4px;
-  scroll-padding-right: 4px;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
 }
-/* The trailing spacer. It is a flex item like any other, so it has to
-   opt out of shrinking and carry no content of its own.
-
-   It is one viewport wide — as wide as the strip itself. The scroll area
-   is otherwise exactly as long as the cards, which puts the last card's
-   snap position past the end of the scroll range: the last card could
-   only ever be seen half off the edge, and the rotation's final step
-   landed somewhere the user could never read. A spacer as wide as the
-   visible strip gives the scroll range the room it needs to bring the
-   last card flush to the left, and it re-sizes with the window on its
-   own, with nothing to measure from JS. */
-.today-anniv-track::after {
-  content: "";
-  flex: 0 0 100%;
-  width: 100%;
-}
-.today-anniv-track::-webkit-scrollbar { display: none; }
-
 /* The card itself. One line, three clauses, separated by middots.
 
-   `flex: none` is essential: a flex item defaults to shrinking, and a
-   shrinking card would wrap its text into two lines and break the
-   one-line read the strip is built around. `white-space: nowrap` is the
-   belt-and-braces version of the same rule — it keeps the line intact
-   even if the card is squeezed. */
+   Every card occupies the SAME grid cell, so the front one covers the
+   ones behind it. A card that is not the front one is faded out and
+   made inert — `inert` keeps it from being clicked and out of the tab
+   order, so the pointer can't land on a date the user cannot see.
+
+   `white-space: nowrap` keeps the line intact; the card is a flex row
+   and its clauses must never wrap onto a second line. */
 .today-page .card.today-anniv-card {
-  flex: none;
+  grid-area: 1 / 1;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -843,11 +824,22 @@
   -webkit-backdrop-filter: blur(26px) saturate(125%);
   backdrop-filter: blur(26px) saturate(125%);
   cursor: pointer;
-  scroll-snap-align: start;
+  /* The cards are stacked, so the hidden ones must fade rather than
+     vanish — the transition is what turns the swap into a cross-fade.
+     The visibility is toggled too, so a hidden card is not reachable
+     by a screen reader or by the tab key. */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 420ms ease, visibility 420ms ease;
+  z-index: 0;
+}
+.today-page .card.today-anniv-card.today-anniv-card--shown {
+  opacity: 1;
+  visibility: visible;
+  z-index: 1;
 }
 /* The card is clickable, so it gets the same lift as the other clickable
-   cards on the page — but a translate would shift it out of its snap
-   position, so the lift is carried by the shadow and the border instead. */
+   cards on the page. */
 .today-page .card.today-anniv-card:hover {
   transform: none;
   border-color: var(--today-line-strong);
