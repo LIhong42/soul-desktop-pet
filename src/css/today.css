@@ -862,25 +862,18 @@
   background: rgba(196, 160, 132, 0.18);
 }
 
-/* The contact + label — the card's primary read, so it carries the
-   strongest weight. */
+/* The head of the line — "和小雨的结婚纪念日". The card's primary read,
+   so it carries the strongest weight. */
 .today-anniv-name {
   font-size: 14.5px;
   font-weight: 700;
   color: var(--today-ink);
 }
 
-/* The type label (生日 / 纪念日 / 忌日) and its trailing separator. It is
-   context, not a figure, so it stays in the soft ink. */
-.today-anniv-kind {
-  font-size: 13px;
-  color: var(--today-ink-soft);
-}
-
-/* The age and the countdown. The countdown is the one number the card
-   exists to show, so the pair takes the peach accent and a heavier
-   weight — it reads as the "live" half of the line, against the name's
-   static weight and the type's quiet grey.
+/* The figures — "纪念日至今 2642 天 · 还有 12 天". The countdown is the
+   one number the card exists to show, so the pair takes the peach accent
+   and a heavier weight — it reads as the "live" half of the line, against
+   the name's static weight.
 
    `tabular-nums` keeps the digits from shifting width as the countdown
    ticks, so the card's text doesn't jitter between renders. */

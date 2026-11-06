@@ -75,6 +75,10 @@ app.whenReady().then(async () => {
   const c1 = mkContact('妈妈');
   const c2 = mkContact('爸爸');
   const c3 = mkContact('小雨');
+  // A contact whose date is named after them — the label repeats the
+  // contact's name ("小绮的纪念日"). The card must de-duplicate it, so
+  // the line reads "和小绮的纪念日" and not "和小绮的小绮的纪念日".
+  const c4 = mkContact('小绮');
   const inDays = (n) => {
     const d = new Date(today.getTime() + n * 86400000);
     return [d.getMonth() + 1, d.getDate()];
@@ -93,9 +97,11 @@ app.whenReady().then(async () => {
   // A BIRTHDAY — the strip rotates anniversaries, not birthdays, so this
   // one must never reach a card.
   mkDate(c3, '生日', m1, d1, 1990, 'birthday');
+  // A date whose label repeats the contact's name.
+  mkDate(c4, '小绮的纪念日', m2, d2, 2019, 'anniversary');
 
   // A 提醒日期 tagged 纪念日, with its anchor 20 days out. The anchor's
-  // year is this year, so this card shows no "至今" clause.
+  // year is this year, so this card shows "至今 0 天".
   const evDate = new Date(today.getTime() + 20 * 86400000);
   const evYmd = `${evDate.getFullYear()}-${String(evDate.getMonth() + 1).padStart(2, '0')}-${String(evDate.getDate()).padStart(2, '0')}`;
   mkEvent(c3, '奶奶纪念日', 'anniversary', evYmd, null);
@@ -196,11 +202,11 @@ app.whenReady().then(async () => {
   })()`);
 
   check('the carousel is rendered', shot1.hasRoot === true);
-  // Five important_dates rows (the birthday is excluded) + two 提醒日期
+  // Six important_dates rows (the birthday is excluded) + two 提醒日期
   // rows (the 农历 one and the solar one). The 节日 is not an
   // anniversary.
-  check('every anniversary got a card', shot1.cardCount === 7, String(shot1.cardCount));
-  check('there is a dot per card', shot1.dotCount === 7, String(shot1.dotCount));
+  check('every anniversary got a card', shot1.cardCount === 8, String(shot1.cardCount));
+  check('there is a dot per card', shot1.dotCount === 8, String(shot1.dotCount));
   check('every card is a single line', shot1.allSingleLine === true);
 
   // ONE AT A TIME. This is the assertion that pins the new behaviour:
@@ -240,27 +246,29 @@ app.whenReady().then(async () => {
       JSON.stringify(['纪念日', '当前提醒', '桌宠状态']),
     JSON.stringify(shot1.sectionTitles));
 
-  // The first card's text must carry the contact, the type, the age and
-  // the countdown — the four facts the card exists to show.
+  // The first card's text must carry the contact, the type, the day
+  // count and the countdown — the facts the card exists to show.
   const first = shot1.texts[0] || '';
   console.log('       first card reads: ' + first);
-  check('a card names the contact', /的|妈妈|爸爸|小雨/.test(first), first);
+  check('a card names the contact', /和.*的/.test(first), first);
   check('a card carries a countdown', /今天|明天|还有 \d+ 天/.test(first), first);
 
-  // At least one card must show the age. The date that is today has an
-  // origin year, so its card carries "至今 N 年".
-  const withAge = shot1.texts.filter((t) => /至今 \d+ 年/.test(t));
-  check('a card shows the years since', withAge.length >= 1, JSON.stringify(shot1.texts));
+  // At least one card must show the day count. The date that is today has
+  // an origin year, so its card carries "纪念日至今 N 天".
+  const withDays = shot1.texts.filter((t) => /至今 \d+ 天/.test(t));
+  check('a card shows the days since', withDays.length >= 1, JSON.stringify(shot1.texts));
 
-  // The card with no origin year must NOT claim an age.
+  // "至今 0 天" is technically true and completely useless — the origin
+  // date IS today, so the anniversary started this morning. The clause is
+  // dropped rather than printed.
+  const zeroDays = shot1.texts.filter((t) => /至今 0 天/.test(t));
+  check('no card claims "至今 0 天"', zeroDays.length === 0, JSON.stringify(zeroDays));
+
+  // The card with no origin year must NOT claim a day count — there is
+  // no origin date to count from.
   const noYearCard = shot1.texts.find((t) => t.includes('入职'));
-  check('a date without an origin year shows no age',
+  check('a date without an origin year shows no day count',
     noYearCard && !/至今/.test(noYearCard), noYearCard);
-
-  // "至今 0 年" is technically true and completely useless, so a date
-  // whose origin year IS this year gets no age clause either.
-  const zeroAge = shot1.texts.filter((t) => /至今 0 年/.test(t));
-  check('no card claims "至今 0 年"', zeroAge.length === 0, JSON.stringify(zeroAge));
 
   // The clauses are joined by a single middot with one space on each
   // side. The card's markup is a flex row, so stray whitespace between
@@ -274,10 +282,32 @@ app.whenReady().then(async () => {
   const doubled = shot1.texts.filter((t) => /(忌日忌日|纪念日纪念日|生日生日)/.test(t));
   check('no card repeats its type', doubled.length === 0, JSON.stringify(doubled));
 
-  // The clauses have to stay SEPARATED. When the type clause is dropped
-  // the name has to carry the middot itself, or the name would butt up
-  // against the age ("妈妈 的忌日至今 36 年").
-  const glued = shot1.texts.filter((t) => /[^\s]至今|]还有 \d+ 天/.test(t));
+  // The head must not repeat the contact's name. The card leads with
+  // "和{联系人}的{label}", so a label that already starts with the
+  // contact's name would say it twice ("和小绮的小绮的纪念日").
+  const repeatedName = shot1.texts.filter((t) => {
+    const m = t.match(/和(.+?)的/);
+    if (!m) return false;
+    const who = m[1];
+    return t.slice(t.indexOf('的') + 1).startsWith(who);
+  });
+  check('no card repeats the contact name', repeatedName.length === 0, JSON.stringify(repeatedName));
+
+  // The de-duplicated card reads "和小绮的纪念日" — the contact's name
+  // leads, and the label's own repetition of it is dropped.
+  const xiaoqiCard = shot1.texts.find((t) => t.includes('小绮'));
+  check('a label that repeats the contact name is de-duplicated',
+    xiaoqiCard && xiaoqiCard.includes('和小绮的纪念日'),
+    xiaoqiCard);
+
+  // The clauses have to stay SEPARATED. When a clause is dropped the one
+  // before it has to carry the middot itself, or the name would butt up
+  // against the figures ("和小雨的忌日还有 12 天").
+  //
+  // The "至今 N 天" clause legitimately starts with the type word, so
+  // the check looks for a name butting straight into a FIGURE — a
+  // digit or a count word — rather than into "至今".
+  const glued = shot1.texts.filter((t) => /的(还有|就是今天|就在明天)|\d(至今|还有)/.test(t));
   check('the name and the figures are separated',
     glued.length === 0, JSON.stringify(glued));
 
@@ -403,9 +433,9 @@ app.whenReady().then(async () => {
 
   // ---- Screenshots -------------------------------------------------------
   // Re-seed and capture, so the PNG shows the populated carousel. The
-  // `DELETE FROM contacts` above removed every contact, so all three
+  // `DELETE FROM contacts` above removed every contact, so all four
   // have to be recreated before their dates can be inserted again.
-  for (const [cid, name] of [[c1, '妈妈'], [c2, '爸爸'], [c3, '小雨']]) {
+  for (const [cid, name] of [[c1, '妈妈'], [c2, '爸爸'], [c3, '小雨'], [c4, '小绮']]) {
     db.run('INSERT INTO contacts(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
       [cid, name, ts, ts]);
   }
@@ -415,6 +445,7 @@ app.whenReady().then(async () => {
   mkDate(c1, '认识纪念日', m4, d4, 2012, 'anniversary');
   mkDate(c2, '入职', m5, d5, null, 'custom');
   mkDate(c3, '生日', m1, d1, 1990, 'birthday');
+  mkDate(c4, '小绮的纪念日', m2, d2, 2019, 'anniversary');
   mkEvent(c3, '奶奶纪念日', 'anniversary', evYmd, null);
   mkEvent(c2, '农历纪念日', 'anniversary', null, [8, 22]);
   mkEvent(c2, '春节', 'festival', '2026-02-01', null);

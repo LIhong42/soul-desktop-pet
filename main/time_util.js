@@ -188,6 +188,8 @@ function clampToMonth(year, month, day) {
 //     (month, day). 0 when it is today.
 //   yearsSince     — how many full years have elapsed since the date's
 //     ORIGIN year, as of today.
+//   daysSince      — how many whole DAYS have elapsed since the date's
+//     ORIGIN date (year + month + day), as of today.
 //
 // `yearsSince` is the "至今" number — "how long this has been". It is
 // measured at the LAST occurrence (the most recent one on or before
@@ -197,12 +199,18 @@ function clampToMonth(year, month, day) {
 // make it flip to 37 the day AFTER the birthday, which is exactly the
 // "the number jumped overnight" bug the age is supposed to avoid.
 //
+// `daysSince` is the same idea in DAYS: the exact distance from the
+// origin date to today. It is what the 今日页 card prints as
+// "纪念日至今 N 天". It only grows — it never resets on the anniversary
+// — so it is the number that answers "这件事已经过去多久了".
+//
 // The two numbers therefore move in opposite directions at different
 // moments, and both are correct: the age ticks up ON the date, and the
 // countdown ticks up the day AFTER it.
 //
 // A row with no origin year (year IS NULL) has no age to report, so
-// `yearsSince` comes back null and the caller omits the clause.
+// `yearsSince` and `daysSince` both come back null and the caller omits
+// the clause.
 //
 // `today` must be a midnight-normalized date (see `clampToMonth`'s
 // callers) so the day difference is a whole number of days.
@@ -221,6 +229,7 @@ function nextImportantDateOccurrence(row, today) {
   const daysUntilNext = Math.round((target.getTime() - today.getTime()) / DAY_MS);
 
   let yearsSince = null;
+  let daysSince = null;
   if (row.year) {
     // The age as of today, measured at the most RECENT anniversary — the
     // last time this date actually happened, on or before today.
@@ -240,11 +249,27 @@ function nextImportantDateOccurrence(row, today) {
     // Clamped at 0 so a row whose year is in the future (data entry typo,
     // or a birthday recorded before it happened) reads 0 rather than -1.
     yearsSince = Math.max(0, lastOccurrence.getFullYear() - (row.year | 0));
+
+    // The exact number of days from the ORIGIN date to today. The origin
+    // date is the row's own (year, month, day) — the day the thing
+    // actually happened, not the anniversary it repeats on.
+    //
+    // It is clamped at 0 for the same reason as the age: a row whose
+    // origin year is in the future has not happened yet, so "0 天" is the
+    // honest answer (it happens today or later) rather than a negative
+    // number of days.
+    //
+    // The origin day is clamped to a real calendar day the same way the
+    // occurrence is, so a Feb-29 origin in a common year lands on Feb 28
+    // rather than spilling into March.
+    const origin = clampToMonth(row.year | 0, m, d);
+    daysSince = Math.max(0, Math.round((today.getTime() - origin.getTime()) / DAY_MS));
   }
   return {
     nextDate: target,
     daysUntilNext,
     yearsSince,
+    daysSince,
   };
 }
 

@@ -53,6 +53,8 @@ const ANNIVERSARY_TAG_KINDS = ['anniversary'];
 //   year           — the origin year, or null when there is none
 //   remind_enabled — whether the reminder is switched on
 //   years_since    — how many years it has been, or null when unknown
+//   days_since     — how many whole days since the origin date, or null
+//                    when the row has no origin year
 //   days_until_next — whole days to the next occurrence (0 = today)
 //   next_date      — the next occurrence, as a Date
 function listAnniversaries(db, now = new Date()) {
@@ -87,8 +89,11 @@ function listAnniversaries(db, now = new Date()) {
       year: row.year || null,
       remind_enabled: !!row.remind_enabled,
       // Null when the row has no origin year — the card then shows only
-      // the countdown, without a "至今 N 年" clause.
+      // the countdown, without a "至今" clause.
       years_since: row.year ? occ.yearsSince : null,
+      // The exact number of days since the origin date. Null for the same
+      // reason as `years_since`: no origin year, no "至今 N 天".
+      days_since: row.year ? occ.daysSince : null,
       days_until_next: occ.daysUntilNext,
       next_date: occ.nextDate,
     });
@@ -131,7 +136,7 @@ function listAnniversaries(db, now = new Date()) {
       // A 农历 anniversary. Its solar date shifts from year to year, so
       // it needs the lunar calendar to resolve. There is no origin year
       // for it — the form only ever captured a month and a day — so the
-      // card shows the countdown without a "至今 N 年" clause.
+      // card shows the countdown without a "至今" clause.
       const occ = nextLunarOccurrence(ev.lunar_month, ev.lunar_day, null, today);
       if (!occ) continue;
       out.push({
@@ -141,6 +146,8 @@ function listAnniversaries(db, now = new Date()) {
         day: ev.lunar_day,
         year: null,
         years_since: occ.yearsSince,
+        // No origin year → no origin date → no "至今 N 天" either.
+        days_since: null,
         days_until_next: occ.daysUntilNext,
         next_date: occ.nextDate,
       });
@@ -166,6 +173,9 @@ function listAnniversaries(db, now = new Date()) {
       day: parsed.getDate(),
       year: parsed.getFullYear(),
       years_since: occ.yearsSince,
+      // `remind_date`'s YEAR is the origin year, so the origin date is
+      // known here and the "至今 N 天" clause can be shown.
+      days_since: occ.daysSince,
       days_until_next: occ.daysUntilNext,
       next_date: occ.nextDate,
     });

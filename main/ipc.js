@@ -636,10 +636,13 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
   //   days_until_next — whole days from today to the next occurrence of
   //     (month, day). 0 means it is today.
   //   years_since     — how many full years have passed since the date's
-  //     ORIGIN year. This is the "纪念日至今" number: a birthday recorded
-  //     with year=1990 that is 36 years old today reads 36, and the same
-  //     date next year reads 37. A row with no year has no origin, so this
-  //     is null and the card omits the "至今 N 年" clause.
+  //     ORIGIN year. A birthday recorded with year=1990 that is 36 years
+  //     old today reads 36, and the same date next year reads 37. A row
+  //     with no year has no origin, so this is null.
+  //   days_since      — how many whole DAYS have passed since the date's
+  //     ORIGIN date (year + month + day). This is the number the card
+  //     prints as "纪念日至今 N 天". Null for the same reason as
+  //     years_since: no origin year, no origin date, no clause.
   //
   // The next occurrence is computed against the *calendar day*, not the
   // wall-clock time: a date whose month/day is today counts 0 days even

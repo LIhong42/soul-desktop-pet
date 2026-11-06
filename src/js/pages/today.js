@@ -205,15 +205,19 @@ export async function render() {
 // the reminders. A strip shows one date at a time, rotates through them,
 // and keeps the page's vertical rhythm.
 //
-// Each card is ONE line, carrying four facts:
-//   1. whose date it is (contact + label) — "妈妈 的生日"
-//   2. the type — "生日" / "纪念日" / "忌日"
-//   3. how long it has been — "至今 38 年" (only when the row has an
-//      origin year; a row without one has no age to report)
-//   4. how long until the next one — "还有 12 天"
+// Each card is ONE line, carrying three facts:
+//   1. whose date it is — "和小雨的结婚纪念日". The contact's name leads,
+//      and the row's own label only contributes the part that names the
+//      occasion (a label that repeats the contact's name is de-duplicated,
+//      so the card never reads "小绮 的小绮的纪念日").
+//   2. how long it has been — "纪念日至今 2642 天" (only when the row has
+//      an origin year; a row without one has no origin date to count
+//      from, and a row whose origin date is today has nothing worth
+//      saying yet)
+//   3. how long until the next one — "还有 12 天"
 //
 // The facts are separated by a middot so the line reads as one sentence
-// rather than four competing labels.
+// rather than three competing labels.
 
 // The type of an important date, in the user's words. Mirrors the `kind`
 // values stored in the `important_dates` table (see the edit form in
@@ -261,17 +265,43 @@ function daysLeftPhrase(days) {
   return `还有 ${days} 天`;
 }
 
-// The "how long since" phrase. Years are the unit that matters for a
-// birthday or an anniversary, so that's what we count — a date with no
-// origin year gets no clause at all.
+// The "how long since" clause, in days: "纪念日至今 2642 天".
 //
-// A year of 0 means the date's origin year IS the current year, so
-// "至今 0 年" would be technically true and completely useless. The
-// clause is dropped instead: for a first-year date the countdown alone
-// says everything worth saying.
-function yearsSincePhrase(years) {
-  if (years == null || years <= 0) return '';
-  return `至今 ${years} 年`;
+// The type word leads the clause so the number has something to hang
+// off — "至今 2642 天" on its own is a number the reader has to work out
+// the subject of, while "纪念日至今 2642 天" answers "how long has this
+// anniversary been going on" in one read.
+//
+// The clause is dropped when the row has no origin year: there is no
+// origin date to count from, and saying nothing beats saying a wrong
+// number.
+//
+// It is dropped for 0 days too. Zero days means the origin date IS
+// today — the anniversary started this morning — and "至今 0 天" is
+// technically true and completely useless. (The old years-based clause
+// dropped 0 for the same reason.) The countdown alone says everything
+// worth saying on that day.
+function daysSincePhrase(days, kindLabel) {
+  if (days == null || days <= 0) return '';
+  const word = kindLabel || DATE_KIND_LABEL.anniversary;
+  return `${word}至今 ${days} 天`;
+}
+
+// Drop the contact's name from the front of the row's label, when the
+// label repeats it.
+//
+// Users often name a date after the person it belongs to — the contact
+// 小绮 gets a date labelled "小绮的纪念日". The card already leads with
+// the contact's name, so printing the label as well says the same thing
+// twice: "小绮 的小绮的纪念日".
+//
+// Only a leading "{name}的" is removed, and only when the name matches
+// exactly. A label that merely contains the name ("和小绮一起的纪念日")
+// is left alone — it says something the contact's name alone does not.
+function stripContactPrefix(label, who) {
+  if (!who) return label;
+  const prefix = `${who}的`;
+  return label.startsWith(prefix) ? label.slice(prefix.length) : label;
 }
 
 // Render the carousel. Returns the empty state when the user has no
@@ -307,31 +337,33 @@ function renderAnniversaryCarousel(dates) {
     const kindLabel = dateKindLabel(row.kind);
     const tone = DATE_KIND_TONE[row.kind] || 'general';
     const icon = DATE_KIND_ICON[row.kind] || DATE_KIND_ICON.custom;
-    // The three clauses of the line. The middle one is dropped when the
-    // row has no origin year — "至今" with no number would be nonsense.
-    const since = yearsSincePhrase(row.years_since);
+    // The two figure clauses. The "since" one is dropped when the row
+    // has no origin year — "至今" with no number would be nonsense.
     const until = daysLeftPhrase(row.days_until_next);
-    // "谁的纪念日" — the contact's name, when there is one. A date can
-    // also be a standalone reminder with no contact at all (a 提醒日期
-    // the user never attached to anyone), in which case the label alone
-    // carries the line.
-    const whoText = who ? `${who} 的` : '';
-    const name = `${whoText}${label}`;
+    // "纪念日至今 N 天" — the exact number of days since the origin date.
+    // It only exists when the row carries an origin year (the form's
+    // optional 年 field); without one there is no origin date to count
+    // from, and the clause is dropped rather than printed as "0 天".
+    const daysSince = daysSincePhrase(row.days_since, kindLabel);
     // The date this card counts down to, as a tooltip. The card itself
     // stays one line; the exact date is the detail you want on hover.
     const nextDate = row.next_date || '';
-    // The tail of the line is split in two: the type label (纪念日 / 忌日)
-    // stays in the soft ink, while the age and the countdown take the
-    // accent — the countdown is the number the card exists to show, and
-    // it should be the thing the eye lands on.
+    // The head of the line is "和{谁}的{什么}" — "和小雨的结婚纪念日".
     //
-    // The type clause is DROPPED when the row's own label already says
-    // it. A row labelled 忌日 whose kind is 忌日 would otherwise read
-    // "忌日忌日", and one labelled 结婚纪念日 would read
-    // "结婚纪念日纪念日" — the type is right there in the name, so
-    // printing it again says nothing. The clause only earns its place
-    // when the label is something else (a 提醒日期 titled "领证" with
-    // the anniversary kind still needs to say it is an anniversary).
+    // The CONTACT's name is what identifies the date, so it always comes
+    // first, introduced by 和. The row's own label is reduced to the
+    // part that names the occasion: when the label repeats the contact
+    // ("小绮的纪念日" on a contact called 小绮) the repetition is dropped,
+    // otherwise the card would read "小绮 的小绮的纪念日" and say the
+    // same thing twice.
+    //
+    // A date can also be a standalone reminder with no contact at all (a
+    // 提醒日期 the user never attached to anyone). There is nobody to
+    // introduce, so the line starts with the label itself — no lonely
+    // leading "和".
+    const name = who ? `和${who}的${stripContactPrefix(label, who)}` : label;
+    // The figures take the accent — the countdown is the number the card
+    // exists to show, and it should be the thing the eye lands on.
     //
     // The two spans are written with NO whitespace between them. The card
     // is a flex row, and whitespace between inline elements becomes an
@@ -341,19 +373,13 @@ function renderAnniversaryCarousel(dates) {
     // are therefore written into the text itself.
     //
     // The separator belongs to the clause it FOLLOWS, not to the one
-    // before it. When the type clause is dropped, the name is left
-    // without a trailing middot and the age would butt up against it
-    // ("妈妈 的忌日至今 36 年"). So the name carries its own separator
-    // when it is the last clause before the figures.
-    const labelSaysKind = kindLabel && (label === kindLabel || label.includes(kindLabel));
-    const kindText = (kindLabel && !labelSaysKind) ? kindLabel : '';
-    const statText = [since, until].filter(Boolean).join(' · ');
-    // The name is followed by the type clause and then by the figures.
-    // It needs a trailing middot only when something comes after it.
-    const nameText = (kindText || statText) ? `${name} · ` : name;
-    // The type clause carries its own trailing middot for the same
-    // reason — it sits between the name and the figures.
-    const kindSpanText = kindText ? `${kindText} · ` : '';
+    // before it. When a clause is dropped, the one before it would butt
+    // up against the next ("和小雨的纪念日还有 12 天") — so each clause
+    // carries its own trailing middot when something comes after it.
+    const statText = [until, daysSince].filter(Boolean).join(' · ');
+    // The head carries a trailing middot only when something comes after
+    // it.
+    const nameText = statText ? `${name} · ` : name;
     // Where the card leads when it is clicked. The two kinds of
     // anniversary live in different tables and have different detail
     // pages, so the card has to say which one it is.
@@ -362,7 +388,7 @@ function renderAnniversaryCarousel(dates) {
     // brings the others in. The class is what the CSS fades on.
     const shown = i === 0 ? ' today-anniv-card--shown' : '';
     return `
-      <div class="card today-anniv-card${shown}" data-id="${escapeHtml(row.id || '')}" data-source="${escapeHtml(source)}" data-tone="${escapeHtml(tone)}" title="${escapeHtml(nextDate)}"><span class="today-anniv-icon">${escapeHtml(icon)}</span><span class="today-anniv-name">${escapeHtml(nameText)}</span><span class="today-anniv-kind">${escapeHtml(kindSpanText)}</span><span class="today-anniv-stat">${escapeHtml(statText)}</span></div>
+      <div class="card today-anniv-card${shown}" data-id="${escapeHtml(row.id || '')}" data-source="${escapeHtml(source)}" data-tone="${escapeHtml(tone)}" title="${escapeHtml(nextDate)}"><span class="today-anniv-icon">${escapeHtml(icon)}</span><span class="today-anniv-name">${escapeHtml(nameText)}</span><span class="today-anniv-stat">${escapeHtml(statText)}</span></div>
     `;
   }).join('');
 

@@ -29,7 +29,7 @@ contextBridge.exposeInMainWorld('mp', {
   importantDates: {
     list: (contactId) => ipcRenderer.invoke('important_dates:list', contactId),
     // Every important date across all contacts, with the day counts the
-    // 今日页's 纪念日 carousel renders (days_until_next / years_since).
+    // 今日页's 纪念日 carousel renders (days_until_next / days_since).
     listAll: () => ipcRenderer.invoke('important_dates:list_all'),
     create: (contactId, input) => ipcRenderer.invoke('important_dates:create', contactId, input),
     update: (id, input) => ipcRenderer.invoke('important_dates:update', id, input),

@@ -178,6 +178,84 @@ console.log('\n[2] years_since is the age as of today');
   check('a 忌日 reads the years since', occ.yearsSince === 11, String(occ.yearsSince));
 }
 
+// ---- 3. days_since -------------------------------------------------------
+//
+// The "纪念日至今 N 天" clause. It counts the DAYS from the origin date
+// to today, which is a different number from yearsSince: the years are
+// rounded down to whole years, the days are exact.
+
+console.log('\n[3] days_since is the exact day count from the origin date');
+
+// The core case: an anniversary recorded with its origin date, viewed
+// later. The day count is the exact distance between the two calendar
+// days — no rounding, no anniversary resetting.
+{
+  const occ = nextImportantDateOccurrence({ month: 8, day: 16, year: 2019 }, day(2026, 11, 6));
+  const expected = Math.round((day(2026, 11, 6) - day(2019, 8, 16)) / 86400000);
+  check('the day count is the exact distance from the origin',
+    occ.daysSince === expected, `${occ.daysSince} vs ${expected}`);
+}
+
+// The day count must NOT reset on the anniversary. A year later it is
+// bigger by the days in between, even though yearsSince may have ticked
+// up too.
+{
+  const before = nextImportantDateOccurrence({ month: 8, day: 16, year: 2019 }, day(2026, 8, 15));
+  const on = nextImportantDateOccurrence({ month: 8, day: 16, year: 2019 }, day(2026, 8, 16));
+  check('the day count does not reset on the anniversary',
+    on.daysSince === before.daysSince + 1, `${before.daysSince} → ${on.daysSince}`);
+}
+
+// The origin day itself reads 0 days. That is a REAL state — the
+// anniversary started today — and it is different from "no origin year",
+// which is null.
+{
+  const occ = nextImportantDateOccurrence({ month: 11, day: 6, year: 2026 }, day(2026, 11, 6));
+  check('an origin date of today reads 0 days', occ.daysSince === 0, String(occ.daysSince));
+}
+
+// A row with no origin year has no origin DATE either, so there is
+// nothing to count from: null, not 0.
+{
+  const occ = nextImportantDateOccurrence({ month: 11, day: 5, year: null }, day(2026, 11, 1));
+  check('a row without an origin year has no day count', occ.daysSince === null, String(occ.daysSince));
+}
+{
+  const occ = nextImportantDateOccurrence({ month: 11, day: 5 }, day(2026, 11, 1));
+  check('a missing year field also has no day count', occ.daysSince === null, String(occ.daysSince));
+}
+
+// An origin year in the future has not happened yet — the count clamps
+// at 0 rather than going negative.
+{
+  const occ = nextImportantDateOccurrence({ month: 11, day: 5, year: 2030 }, day(2026, 11, 1));
+  check('a future origin date clamps to 0 days', occ.daysSince === 0, String(occ.daysSince));
+}
+
+// A leap-day origin is clamped to a real calendar day, the same way the
+// occurrence is. 2021 is a common year, so Feb 29 lands on Feb 28.
+{
+  const occ = nextImportantDateOccurrence({ month: 2, day: 29, year: 2021 }, day(2026, 11, 6));
+  const expected = Math.round((day(2026, 11, 6) - day(2021, 2, 28)) / 86400000);
+  check('a leap-day origin clamps to Feb 28 in a common year',
+    occ.daysSince === expected, `${occ.daysSince} vs ${expected}`);
+}
+
+// A leap-day origin in a leap year lands on Feb 29 itself.
+{
+  const occ = nextImportantDateOccurrence({ month: 2, day: 29, year: 2020 }, day(2026, 11, 6));
+  const expected = Math.round((day(2026, 11, 6) - day(2020, 2, 29)) / 86400000);
+  check('a leap-day origin lands on Feb 29 in a leap year',
+    occ.daysSince === expected, `${occ.daysSince} vs ${expected}`);
+}
+
+// The count must be exact across a leap boundary: a 2020 origin counts
+// the extra Feb 29 of 2024 along the way.
+{
+  const occ = nextImportantDateOccurrence({ month: 1, day: 1, year: 2020 }, day(2026, 1, 1));
+  check('the day count is exact across a leap year', occ.daysSince === 2192, String(occ.daysSince));
+}
+
 // ---- Report --------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

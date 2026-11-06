@@ -149,6 +149,9 @@ async function main() {
   const todayRow = byLabel('忌日');
   check('a date that is today counts 0 days', todayRow.days_until_next, 0);
   check('a date that is today has an age', typeof todayRow.years_since, 'number');
+  // The "纪念日至今 N 天" count — the exact days from the origin date to
+  // today. It exists because the row has an origin year.
+  check('a date that is today has a day count', typeof todayRow.days_since, 'number');
 
   // The date 40 days out.
   const futureRow = byLabel('结婚纪念日');
@@ -163,6 +166,9 @@ async function main() {
   // The date with no origin year.
   const noYearRow = byLabel('入职');
   check('a row without an origin year has no age', noYearRow.years_since, null);
+  // No origin year means no origin DATE, so there is nothing to count the
+  // days from — the clause is dropped rather than printed as "0 天".
+  check('a row without an origin year has no day count', noYearRow.days_since, null);
   check('a row without an origin year still counts days', noYearRow.days_until_next, 100);
 
   // The date whose reminder is off — it must still appear in the carousel.
@@ -181,6 +187,9 @@ async function main() {
   check('its tag becomes the card kind', evRow.kind, 'anniversary');
   check('it counts its days', evRow.days_until_next, 12);
   check('its anchor year is the origin year', evRow.year, evSoon.getFullYear());
+  // `remind_date`'s year IS the origin year, so the 提醒日期 side knows
+  // the origin date and can report the day count too.
+  check('it has a day count', typeof evRow.days_since, 'number');
 
   const lunarRow = byLabel('农历纪念日');
   checkTrue('a 农历 提醒日期 is listed', !!lunarRow);
@@ -189,6 +198,8 @@ async function main() {
   check('it keeps its lunar day', lunarRow.day, 22);
   check('a lunar date has no origin year', lunarRow.year, null);
   check('a lunar date has no age to report', lunarRow.years_since, null);
+  // No origin year → no origin date → no day count either.
+  check('a lunar date has no day count to report', lunarRow.days_since, null);
   checkTrue('a lunar date still counts its days',
     typeof lunarRow.days_until_next === 'number' && lunarRow.days_until_next >= 0,
     String(lunarRow.days_until_next));
