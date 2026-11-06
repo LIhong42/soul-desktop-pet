@@ -3,13 +3,11 @@
 // ---------------------------------------------------------------------------
 // What this is
 // ---------------------------------------------------------------------------
-// Scans `resources/ui/` for the images the 今日 page paints behind its
-// content and hands the renderer `file://` URLs for them.
-//
-// The folder is scanned rather than hard-coded, for the same reason
-// `resources/text_boxes` is: dropping a new PNG in is the only step needed to
-// add an option. The ids are the filenames without their extensions, so
-// `today-background.png` → `today-background`.
+// The 今日 page paints one of the images in `resources/ui/` behind its
+// content, and the user picks which one in 设置. This module owns that
+// *choice*; the folder itself is catalogued by main/ui_artwork.js, which is
+// also where the other pages' artwork (the contact detail page's header
+// banner) is registered.
 //
 // ---------------------------------------------------------------------------
 // Why a module instead of reading the folder inline in ipc.js
@@ -21,33 +19,32 @@
 // here, next to those two, means the three can't disagree about how a local
 // image reaches the renderer.
 //
-// The scan result is memoised because the folder is static at runtime;
-// re-stat'ing it on every 今日 page render would be wasted work.
-//
 // ---------------------------------------------------------------------------
 // Resolution order
 // ---------------------------------------------------------------------------
 // `active()` reports the file the 今日 page should use as its background:
 //
 //   1. The user's choice, stored in settings as `today_background_id`.
-//   2. Otherwise the folder's default — the first entry by sort order, which
-//      is what makes "just ship one and it works" true.
+//   2. Otherwise the default — the first of the 今日 page's own artwork by sort
+//      order, which is what makes "just ship one and it works" true.
 //
 // A choice that names a file this install doesn't have degrades to the
 // default rather than to no background at all: the artwork is decoration, and
 // a missing decoration should never blank the page.
 //
+// Only artwork the 今日 page *owns* is offered here. An image claimed by
+// another page (the contact detail page's banner) is that page's own
+// furniture and stays out of this picker — see main/ui_artwork.js.
+//
 // The 今日 page also has to be readable *over* the artwork, so the CSS puts a
 // translucent scrim between the image and the content — that's a styling
 // concern, not one of this module's.
 
-const fs = require('fs');
-const path = require('path');
-const { pathToFileURL } = require('url');
+const uiArtwork = require('./ui_artwork');
 
 // Only these are offered. Lowercased because a `.PNG` from a Windows
 // screenshot tool must not silently vanish.
-const ACCEPTED_EXT = '.png';
+const ACCEPTED_EXT = uiArtwork.ACCEPTED_EXT;
 
 // The settings key the user's choice is stored under.
 const SETTING_KEY = 'today_background_id';
@@ -61,84 +58,28 @@ const SETTING_KEY = 'today_background_id';
 // able to turn it back on via the "跟随默认" option.
 const NONE = '__none__';
 
-// Memoised scan. `null` ⇒ never scanned.
-let cache = null;
-
 /**
  * Locate the ui directory. `appPath` is the app root (the parent of `main/`),
  * matching how pet_registry finds `resources/pets`.
  */
 function uiDir(appPath) {
-  return path.join(appPath || path.join(__dirname, '..'), 'resources', 'ui');
+  return uiArtwork.uiDir(appPath);
 }
 
 /**
- * List the available background images.
+ * List the background images the 今日 page may use.
  *
  * Returns `[{ id, file, url, label }]`, sorted by id so the order is stable
  * across machines — `readdir` order is filesystem-dependent, and a list that
  * reorders itself between launches makes "the one I picked" ambiguous to a
  * user comparing screenshots.
  *
- * Sorting is numeric-aware (`2` before `10`), falling back to a plain string
- * compare so a non-numeric id (`today-background`) still lands somewhere
- * sensible. With the shipped art there's exactly one entry, so the sort is
- * belt-and-braces for when a second one is dropped in.
- *
- * `url` is a `file://` URL for the renderer; `file` is the bare filename for
- * diagnostics. A file that vanishes between the readdir and the stat (a sync
- * tool mid-copy) is skipped instead of surfaced as a choice that 404s.
+ * Only the 今日 page's OWN artwork is listed. An image claimed by another page
+ * (the contact detail page's banner) belongs to that page's layout and is not
+ * a background the user picks from a list.
  */
 function list(appPath) {
-  if (cache) return cache;
-
-  const dir = uiDir(appPath);
-  let names = [];
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    // No folder at all. Not an error: a build without any ui artwork simply
-    // has no background, and the 今日 page renders on the plain app surface.
-    cache = [];
-    return cache;
-  }
-
-  const rows = [];
-  for (const name of names) {
-    if (!name.toLowerCase().endsWith(ACCEPTED_EXT)) continue;
-    // Skip directories that merely end in .png, and anything we can't stat.
-    const abs = path.join(dir, name);
-    try {
-      if (!fs.statSync(abs).isFile()) continue;
-    } catch { continue; }
-
-    const id = path.basename(name, path.extname(name));
-    if (!id) continue;
-    rows.push({
-      id,
-      file: name,
-      // Same encoding the frame loader relies on: a Chinese filename has to be
-      // percent-encoded or the <img> fails to load silently.
-      url: pathToFileURL(abs).href,
-      // What the picker shows. The raw id is the honest label — inventing a
-      // name here would mean a second place to update when a PNG is renamed.
-      label: id,
-    });
-  }
-
-  rows.sort((a, b) => {
-    const na = Number(a.id);
-    const nb = Number(b.id);
-    const aNum = Number.isFinite(na);
-    const bNum = Number.isFinite(nb);
-    if (aNum && bNum) return na - nb;
-    if (aNum) return -1;      // numeric ids first, then named ones
-    if (bNum) return 1;
-    return a.id.localeCompare(b.id);
-  });
-
-  cache = rows;
-  return cache;
+  return uiArtwork.byOwner(appPath, 'today');
 }
 
 /**
@@ -146,7 +87,7 @@ function list(appPath) {
  * page render in case a dev adds a PNG while the app is running.
  */
 function invalidate() {
-  cache = null;
+  uiArtwork.invalidate();
 }
 
 /**

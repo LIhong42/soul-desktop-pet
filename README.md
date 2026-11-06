@@ -207,6 +207,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  ├─ app_relaunch.js     kills the process and starts a new one (the last-resort wake recovery)
 │  ├─ pet_state.js        the pet reminder-state payload (one shape for the broadcast and `pet:get_state`)
 │  ├─ anniversaries.js    the 纪念日 carousel's query (merges the contact's dates and the 提醒日期 list)
+│  ├─ ui_artwork.js       the shared resources/ui/ artwork catalogue (which page owns which picture)
 │  └─ festivals.js        festival library
 ├─ pet/                 ← pet window preload
 ├─ src/                 ← renderer process (main window)
@@ -228,21 +229,26 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │                        └─ events_memorial.js  ← the 回忆事件 list (a wall of cards)
 │  ├─ css/
 │  │  ├─ styles.css       ← global styles (top bar, cards, forms …)
-│  │  └─ today.css        ← the 今日 page's own design system (scoped to .today-*)
+│  │  ├─ today.css        ← the 今日 page's own design system (scoped to .today-*)
+│  │  └─ contact.css      ← the 联系人详情页's own design system (scoped to .cd-*)
 ├─ scripts/             ← utility scripts (incl. `verify-cutout.js`, the cutout regression check)
 │  ├─ verify-diary-db.js       ← DB regression check for the diary fields (background / content)
 │  ├─ test-diary-editor.js     ← UI regression check for the diary editor
 │  ├─ test-today-design.js     ← UI regression check for the 今日 page's design system
+│  ├─ test-contact-design.js   ← UI regression check for the 联系人详情页's design system
+│  ├─ test-contact-tabs.js     ← UI regression check for the 联系人详情页's tabs / rows
 │  ├─ verify-anniversary-carousel.js ← date-count checks for the 纪念日 carousel
 │  ├─ verify-anniversary-db.js ← DB-level checks for the carousel's query
 │  ├─ shot-anniversary.js      ← renders the 纪念日 carousel and saves a PNG
 │  ├─ shot-today.js            ← renders the 今日 page and saves a PNG
+│  ├─ shot-contact.js          ← renders the 联系人详情页 and saves a PNG
 │  └─ shot-pages.js            ← renders several pages, to check shared styles didn't spill
 ├─ docs/                ← documentation
 │  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)
 ├─ icons/               ← application icons (icon.ico + per-size PNGs)
 ├─ resources/           ← pet frame assets (several built-in pets included)
-│  └─ ui/               ← artwork for the 今日 page's background (drop a PNG in and it shows up)
+│  └─ ui/               ← artwork for the app's pages (drop a PNG in and it shows up)
+│                        ←   user-detail-background.png is the 联系人详情页's banner
 └─ package.json
 ```
 
@@ -290,6 +296,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 ### 2. Add a contact
 - Go to **Contacts → New Contact**, fill in a name and relationship, pick or upload an avatar;
 - The contact detail page has a tab bar: **概览 / 喜好 / 忌讳 / 礼物**. The overview carries the important dates and memory events — a contact's important dates and their reminders share one list, ordered by how soon each one comes up; each kind tab is where that contact's likes / taboos / gifts live — search them, add new ones, page through them, or delete a batch.
+- The contact detail page is **its own design system** (`src/css/contact.css`), scoped under `.cd-page` exactly the way the 今日 page's is under `.today-page` — one page's design lives in one file and applies to that page only. It opens on a **full-bleed photo banner** (`resources/ui/user-detail-background.png`) with the avatar tile, the name and relationship, and the 编辑基本信息 pill on a white-to-transparent wash, so the artwork shows through on the right where nothing has to be read. Below it the tab row sits on warm cream paper, and the sections are **white rounded cards**: a section title carries a short orange bar on its left, each row leads with a tinted icon tile, and the right-hand side holds a peach **date chip** with the countdown underneath it (`● 2027-3-1` / `还有 3 个月`). A memory event shows its first photo in the tile, a 「第一次」 tag and a clock chip. `scripts/test-contact-design.js` guards all of it: that the stylesheet loads *after* `styles.css` (otherwise the page's own rules lose the specificity fight against the global primitives), that the artwork really arrives as a `file://` URL and really decodes, that the computed paper colour / card radius / accent bar / date chip are the intended ones, that nothing leaks onto the 今日 page — and that the 今日 page's background picker does **not** offer this banner, because the picture is **owned** by this page.
 
 ### 3. Write a diary entry
 - **Memory Events → New** → a diary page opens; write the title. The side panel on the right holds the paper style;
@@ -306,7 +313,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 - The **纪念日** strip is a **rotating carousel** over the anniversaries you have recorded — and it shows **exactly one card at a time**, not a row of them. The cards are stacked in the same place and the rotation cross-fades between them, so the section never changes height and the eye is never pulled sideways to a card that is half off the edge. The strip advances one card **every minute**; the dots underneath mark the current card and can be clicked to jump straight to one.
 - **What counts as an anniversary.** The strip reads **two** places, because there are two and users reach for either one: the **contact's own dates** (anniversaries, 忌日 and custom dates, added from the contact's detail page) **and** the **提醒日期** list (a yearly reminder tagged 纪念日 — which is the page in the nav bar, and for most people the only one they ever use). **Birthdays are not in the strip** — a birthday is its own kind of thing, with its own place (the 当前提醒 panel surfaces it on the day, and the contact's detail page lists it), so it does not take a slot here. A 节日, an untagged reminder and a one-off appointment are left out for the same reason.
 - Each card is **one line**: whose date it is (`和小雨的结婚纪念日`), **how many days until the next one** (`还有 75 天` / `就是今天` / `就在明天`), and **how many days it has been going on so far** (`纪念日至今 2882 天`). The name leads with the **contact**, and a label that repeats that contact's own name (a date called "小绮的纪念日" on a contact called 小绮) has the repetition dropped, so the card never reads "和小绮的小绮的纪念日". The rotation **pauses while you are engaged with it** — hovering it, or focusing it with the keyboard — and resumes once you let go, so the card you are reading never gets yanked away. Clicking a card opens that date's own page — the important-date detail page, or the 提醒日期 detail page for a row that came from there — where it can be edited or deleted. The two numbers are counted on separate rules: **"纪念日至今 N 天"** is the exact day count from the date's **origin date** to today (it never resets on the anniversary — it only ever grows), while **"还有 N 天" restarts the day *after* the anniversary has passed**. A date with no year recorded has no origin date, and so no "至今" clause at all (saying "至今 0 天" would be meaningless), and a date whose *reminder* is switched off still appears in the strip — silencing a reminder is about being left alone, not about hiding the date. A **农历** anniversary works the same way, but its solar date shifts every year, so the countdown is resolved through the lunar calendar; the 提醒日期 form only ever captured a month and a day for it, so such a card carries the countdown without a "至今" clause.
-- The **Today** page paints a background picture behind its content. The picture lives in `resources/ui/` — drop a PNG in and it shows up under **Settings → 今日页背景**, where you can pick one, follow the default, or turn the background off entirely.
+- The **Today** page paints a background picture behind its content. The picture lives in `resources/ui/` — drop a PNG in and it shows up under **Settings → 今日页背景**, where you can pick one, follow the default, or turn the background off entirely. Pictures can be **owned** by a page: `user-detail-background.png` belongs to the contact detail page (it is its banner), so it is deliberately kept out of the 今日 picker — the shared catalogue in `main/ui_artwork.js` is what decides.
 
 ### 5. Interact with the pet
 - **Single click**: triggers the "single-click action" configured for that pet (default: a gentle pet);

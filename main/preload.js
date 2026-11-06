@@ -150,6 +150,12 @@ contextBridge.exposeInMainWorld('mp', {
     get: ()    => ipcRenderer.invoke('today_background:get'),
     set: (id) => ipcRenderer.invoke('today_background:set', id),
   },
+  // 联系人详情页头图（resources/ui 里的固定插画）。主进程解析成 file:// URL
+  // 交给渲染进程；返回 null 表示这张图没装，页面会退回到纯色横幅。
+  //   get() → { id, url } | null
+  contactBanner: {
+    get: () => ipcRenderer.invoke('contact_banner:get'),
+  },
   // 文本气泡（吃饭提醒 / 休息提醒）配置。规则本身由
   // main/pet_bubbles.js 单点定义，/settings 只能读它的自描述列表并切
   // 换开关——新增一条规则时这里不需要改动。

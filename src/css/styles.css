@@ -15,6 +15,12 @@
   --shadow-md: 0 4px 8px rgba(40, 30, 20, 0.06), 0 8px 24px rgba(40, 30, 20, 0.06);
   --shadow: var(--shadow-sm);
   --radius: 10px;
+  /* The scroll container's padding, as variables. Pages that want to paint
+     edge-to-edge (the contact detail page's header banner) escape the
+     padding with a matching negative margin — hard-coding the numbers in
+     two files would silently break the moment either side changed. */
+  --content-pad-y: 18px;
+  --content-pad-x: 22px;
   /* The 「返回」 chevron, kept as a mask so it can be painted with the
      link's own color (currentColor) instead of shipping an SVG per page. */
   --icon-arrow-left: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 5l-7 7 7 7'/%3E%3C/svg%3E");
@@ -102,7 +108,11 @@ html, body {
   50% { transform: scale(1.3); opacity: 0.7; }
 }
 
-.content { padding: 18px 22px; overflow-y: auto; height: calc(100vh - 53px); }
+.content {
+  padding: var(--content-pad-y) var(--content-pad-x);
+  overflow-y: auto;
+  height: calc(100vh - 53px);
+}
 
 /* ---------------------------------------------------------------------------
    今日页背景
@@ -1087,15 +1097,6 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 .contact-avatar svg { width: 22px; height: 22px; display: block; }
 .contact-avatar img  { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-/* Larger avatar for the contact-detail header. Mirrors `.contact-avatar`
-   but is sized for prominence and uses 32px glyphs. */
-.contact-avatar-lg {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
-}
-.contact-avatar-lg svg { width: 32px; height: 32px; }
-
 /* The avatar shown next to the picker in the editor — slightly bigger so
    the user can preview their selection without zooming. */
 .contact-avatar-preview {
@@ -1105,111 +1106,23 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 }
 .contact-avatar-preview svg { width: 30px; height: 30px; }
 
-/* Contact-detail header layout. The avatar lives on the left; the name and
-   action links sit to its right. Replaces the older "row between" header
-   which kept the avatar off-screen and made relationship look like a
-   footnote of the name. */
-.contact-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-.contact-header-text { flex: 1; min-width: 0; }
-.contact-header-text h1 {
-  margin: 0 0 6px 0;
-  font-size: 22px;
-  font-weight: 700;
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0;
-}
-.contact-header-actions { display: flex; gap: 12px; }
-
 /* Relationship badge that appears next to the contact name (list row,
-   detail header, search row). Same font-size as the name so they read as
-   peers instead of "name + meta footnote". The `·` separator is muted to
-   break the two strings without visual shouting. */
-.lr-title .relationship,
-.contact-header-text .relationship {
+   search row). Same font-size as the name so they read as peers instead of
+   "name + meta footnote". The `·` separator is muted to break the two
+   strings without visual shouting.
+
+   The contact-detail header draws its own version of this — it sits on the
+   photo banner and is styled in contact.css. */
+.lr-title .relationship {
   color: var(--muted);
   font-weight: 500;
   margin-left: 2px;
 }
-.lr-title .relationship-sep,
-.contact-header-text .relationship-sep {
+.lr-title .relationship-sep {
   color: var(--muted);
   margin: 0 6px;
   font-weight: 400;
 }
-
-/* ---- Contact detail tab bar -----------------------------------------
-   The contact detail page owns everything about one contact, so the
-   per-kind lists (喜好 / 忌讳 / 礼物) live behind tabs instead of the
-   old top-level nav entries. The bar reads as a segmented control: a
-   hairline bottom border spans the full width, the active tab carries
-   the accent underline, and the count badge sits beside the label. */
-.cd-tabs {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  margin: 0 0 14px 0;
-  border-bottom: 1px solid var(--border);
-}
-.cd-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px 10px 14px;
-  color: var(--muted);
-  text-decoration: none;
-  font-weight: 600;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition: color 140ms ease, border-color 140ms ease;
-}
-.cd-tab:hover { color: var(--text); }
-.cd-tab.is-active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-/* Count badge — a muted pill that reads as "how many rows live here".
-   The active tab keeps the accent tint so the number stays legible
-   against the accent underline. */
-.cd-tab-count {
-  min-width: 20px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  text-align: center;
-}
-.cd-tab.is-active .cd-tab-count {
-  background: var(--accent-soft);
-  border-color: transparent;
-  color: var(--accent);
-}
-/* The count next to a section title inside a tab body. */
-.cd-count {
-  margin-left: 8px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-/* "编辑" affordance on an attribute row — a quiet chevron-ish label that
-   tells the user the row opens an editor. */
-.cd-row-go {
-  color: var(--muted);
-  font-size: 12px;
-  flex-shrink: 0;
-  margin-left: 10px;
-}
-.attribute-clickable:hover .cd-row-go { color: var(--accent); }
 
 /* ---- Icon picker grid ----
    Editor page lists every glyph as a tappable tile; the currently-selected

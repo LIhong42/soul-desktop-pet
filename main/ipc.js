@@ -38,6 +38,8 @@ const { relaunchApp } = require('./app_relaunch');
 const petTextBoxes = require('./pet_text_boxes');
 // 今日页背景 catalog (resources/ui) — scanned, not hard-coded.
 const todayBackground = require('./today_background');
+// resources/ui 里所有页面共用的插画目录（今日页背景 + 联系人详情页头图）。
+const uiArtwork = require('./ui_artwork');
 const videoFrameSplit = require('./video_frame_split');
 // 快速记录窗口（桌宠右键菜单 → 📝 记录）。独立于 PIN 门禁的主窗口。
 const quickRecord = require('./quick_record');
@@ -1559,6 +1561,19 @@ function normFreeText(s) {
     db.setSetting(todayBackground.SETTING_KEY, s);
     return todayBackground.active(null, db);
   });
+
+  // ---- 联系人详情页头图 ----
+  //
+  // The contact detail page paints a fixed banner artwork behind its header.
+  // It lives in `resources/ui/` next to the 今日 page's background and is
+  // catalogued by main/ui_artwork.js, which hands the renderer a `file://`
+  // URL (the renderer can't read the filesystem).
+  //
+  //   get() → { id, url } | null
+  //
+  // `null` means the artwork isn't installed — the page then paints its plain
+  // warm banner, so a missing decoration never breaks the page.
+  ipcMain.handle('contact_banner:get', () => uiArtwork.contactBanner(null));
 
   // ---- App PIN gate ----
   // The renderer must never see the salt/hash. verifyPin runs scrypt

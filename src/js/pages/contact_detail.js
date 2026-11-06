@@ -26,7 +26,7 @@
 // keyed by "contactId:kind" in a module-level Map, so flipping to another
 // tab and back keeps whatever the user had typed.
 
-import { api, escapeHtml, displayName, eventKindAttr, contactColorIndex, fmtDate, formatRelative, countdownTo, categoryIcon, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, wireDateInputs, repeatLabel, eventDisplayTitle, todayYmd } from '../api.js';
+import { api, escapeHtml, displayName, eventKindAttr, contactColorIndex, fmtDate, formatRelative, countdownTo, categoryIcon, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, getCachedPhotoDataUrl, fetchPhotoDataUrl, wireDateInputs, repeatLabel, eventDisplayTitle, todayYmd } from '../api.js';
 import { iconSVG, suggestIconKind } from '../icons.js';
 import { register, navigate } from '../router.js';
 import {
@@ -160,6 +160,37 @@ function renderItemRow(it) {
 
 // --- Header + tab bar ---------------------------------------------------
 
+// The banner artwork.
+//
+// The image is a 1.6 MB PNG, and it reaches the renderer as a `file://` URL
+// (the renderer can't read the filesystem). Loading it takes long enough
+// that a contact page painted on demand would show a blank banner for a
+// beat before the photo appeared.
+//
+// So it is fetched and preloaded as soon as this module is loaded — which
+// happens at app start — and the page then paints with the image already
+// in the cache.
+let bannerUrl = '';
+let bannerImage = null;
+
+async function warmBanner() {
+  try {
+    const banner = await api.contactBanner.get();
+    bannerUrl = (banner && banner.url) || '';
+    if (bannerUrl) {
+      // The reference is kept so the preload isn't collected before it has
+      // finished decoding.
+      bannerImage = new Image();
+      bannerImage.src = bannerUrl;
+    }
+  } catch (e) {
+    // No artwork (or no IPC bridge): the page paints the plain warm
+    // banner. Not an error worth interrupting the user over.
+    console.error('[contact] could not load the header banner', e);
+  }
+}
+warmBanner();
+
 function detailAvatarHTML(c) {
   const url = c.custom_avatar_path ? getCachedAvatarDataUrl(c.id) : '';
   if (url) return `<img src="${escapeHtml(url)}" alt=""/>`;
@@ -169,29 +200,43 @@ function detailAvatarHTML(c) {
   return iconSVG(name, { title: displayName(c), size: 32 });
 }
 
-function headerHTML(c) {
+// The header is a full-bleed banner: the contact's photo (or glyph), the
+// name and the relationship sit on the artwork, washed out on the left so
+// the text stays readable while the picture shows through on the right.
+//
+// `bannerUrl` is the `file://` URL of `resources/ui/user-detail-background.png`,
+// handed over by the main process (the renderer can't read the filesystem).
+// An empty URL means the artwork isn't installed — the page then paints a
+// plain warm banner instead of a broken image.
+function headerHTML(c, bannerUrl) {
+  const art = bannerUrl
+    ? ` style="--cd-banner-image:url(&quot;${escapeHtml(bannerUrl)}&quot;)"`
+    : '';
   return `
-    <div class="contact-header">
-      <div class="contact-avatar contact-avatar-lg"
-           style="color: var(--contact-${contactColorIndex(c.name)})">
-        ${detailAvatarHTML(c)}
-      </div>
-      <div class="contact-header-text">
-        <h1>${escapeHtml(displayName(c))}${c.relationship
-          ? `<span class="relationship-sep">·</span><span class="relationship">${escapeHtml(c.relationship)}</span>`
-          : ''}</h1>
-        <div class="contact-header-actions">
-          <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/edit">编辑基本信息</a>
-          <a class="inline-link" href="#/contacts"><span class="icon-arrow-left"></span>返回</a>
+    <header class="cd-banner${bannerUrl ? '' : ' no-art'}"${art}>
+      <div class="cd-banner-inner">
+        <div class="cd-avatar" style="color: var(--contact-${contactColorIndex(c.name)})">
+          ${detailAvatarHTML(c)}
+        </div>
+        <div class="cd-banner-text">
+          <h1>${escapeHtml(displayName(c))}${c.relationship
+            ? `<span class="relationship-sep">·</span><span class="relationship">${escapeHtml(c.relationship)}</span>`
+            : ''}</h1>
+          <div class="cd-banner-actions">
+            <a class="cd-edit-pill" href="#/contacts/${escapeHtml(c.id)}/edit">编辑基本信息<span class="cd-chevron"></span></a>
+          </div>
         </div>
       </div>
-    </div>
+    </header>
   `;
 }
 
 // The tab bar. Each tab is a real hash link, so the browser's back button
 // and the "复制链接" affordance keep working, and the active tab is a
 // server-rendered `is-active` class rather than a JS toggle.
+//
+// The 「返回」 link sits at the right end of the same row, so the banner
+// stays as clean as the design draws it.
 function tabBarHTML(c, active, counts) {
   const tabs = [
     { key: 'overview', label: '概览', href: `#/contacts/${escapeHtml(c.id)}` },
@@ -200,15 +245,18 @@ function tabBarHTML(c, active, counts) {
     { key: 'gift',  label: KIND_META.gift.title,  href: `#/contacts/${escapeHtml(c.id)}/${KIND_META.gift.url}`,  count: counts.gift },
   ];
   return `
-    <nav class="cd-tabs" role="tablist">
-      ${tabs.map((t) => `
-        <a class="cd-tab${t.key === active ? ' is-active' : ''}"
-           role="tab" aria-selected="${t.key === active}"
-           href="${t.href}">
-          ${escapeHtml(t.label)}${t.count === undefined ? '' : `<span class="cd-tab-count">${t.count}</span>`}
-        </a>
-      `).join('')}
-    </nav>
+    <div class="cd-tabbar">
+      <nav class="cd-tabs" role="tablist">
+        ${tabs.map((t) => `
+          <a class="cd-tab${t.key === active ? ' is-active' : ''}"
+             role="tab" aria-selected="${t.key === active}"
+             href="${t.href}">
+            ${escapeHtml(t.label)}${t.count === undefined ? '' : `<span class="cd-tab-count">${t.count}</span>`}
+          </a>
+        `).join('')}
+      </nav>
+      <a class="cd-back" href="#/contacts"><span class="icon-arrow-left"></span>返回</a>
+    </div>
   `;
 }
 
@@ -233,6 +281,29 @@ function nextEventTs(e) {
   return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
 }
 
+// "2027-3-1" — the date a chip shows. No zero padding, the way the design
+// writes it, and the year is included because "3-1" alone is ambiguous
+// about which occurrence is meant.
+function ymdFromTs(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+// The date part of a database timestamp ("2026-05-12 09:00:00" → "2026-5-12").
+function ymdFromDb(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || ''));
+  return m ? `${+m[1]}-${+m[2]}-${+m[3]}` : '';
+}
+
+// The countdown line under a date chip: "还有 3 个月", "就是今天", or nothing
+// when the moment has passed.
+function countdownFromTs(ts) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (ts === today) return '就是今天';
+  return countdownTo(new Date(ts)) || '';
+}
+
 // One row of the 重要日期 section — a row from the `important_dates` table.
 function importantDateRow(d) {
   const kindTone = d.kind === 'birthday' ? 'birthday'
@@ -241,6 +312,17 @@ function importantDateRow(d) {
   const icon = d.kind === 'birthday' ? '🎂'
              : d.kind === 'anniversary' ? '💝'
              : '📅';
+  // The chip shows when the date comes up *next* — "2027-3-1" — instead of
+  // the bare "每年 3-1", and the countdown underneath says how far away it
+  // is. Together they answer "when is it?" in one glance.
+  const next = nextAnnualTs(d.month, d.day);
+  const cd = countdownFromTs(next);
+  const meta = [
+    `每年 ${d.month}-${d.day}`,
+    d.year ? `${d.year}年生` : '',
+    d.remind_enabled === 0 ? '已关闭' : `提醒 ${d.remind_time || '09:00'}`,
+    (d.remind_enabled !== 0 && d.advance_days > 0) ? `提前 ${d.advance_days} 天` : '',
+  ].filter(Boolean).join(' · ');
   return `
     <div class="card list-row clickable" data-kind="important" data-important="${escapeHtml(d.id)}">
       <div class="lr-id">
@@ -248,10 +330,11 @@ function importantDateRow(d) {
       </div>
       <div class="lr-main">
         <div class="lr-title">${escapeHtml(d.label)} <span class="tag" style="margin-left:6px">${escapeHtml(kindLabel(d.kind))}</span></div>
-        <div class="lr-meta">每年 ${d.month}/${d.day}${d.year ? ' · ' + d.year + '年生' : ''} · 提醒 ${escapeHtml(d.remind_time || '09:00')}${d.remind_enabled === 0 ? ' · 已关闭' : ''}${d.remind_enabled !== 0 && d.advance_days > 0 ? ` · 提前 ${d.advance_days} 天` : ''}</div>
+        <div class="lr-meta">${escapeHtml(meta)}</div>
       </div>
       <div class="lr-side">
-        <div class="time-chip"><span class="chip-dot"></span>每年 ${d.month}-${d.day}</div>
+        <div class="time-chip"><span class="chip-dot"></span>${ymdFromTs(next)}</div>
+        ${cd ? `<div class="time-chip muted">${escapeHtml(cd)}</div>` : ''}
       </div>
     </div>
   `;
@@ -261,8 +344,12 @@ function importantDateRow(d) {
 // or anniversary the user created as an event, or any dated reminder).
 function eventRow(e) {
   const kind = eventKindAttr(e);
-  const rel = formatRelative(e.next_fire_at || e.remind_date);
-  const cd = countdownTo(e.next_fire_at || e.remind_date);
+  const at = e.next_fire_at || e.remind_date || '';
+  const dateText = ymdFromDb(at);
+  const cd = countdownTo(at);
+  // A reminder that fires within the day is worth shouting about; the
+  // countdown line turns warm, the chip stays quiet.
+  const soon = !!cd && /分钟|小时/.test(cd);
   return `
     <div class="card list-row clickable" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(e.id)}" data-category="${escapeHtml(e.category || 'general')}">
       <div class="lr-id">
@@ -273,11 +360,67 @@ function eventRow(e) {
         <div class="lr-meta">${escapeHtml(repeatLabel(e))}${e.active ? '' : ' · 已结束'}</div>
       </div>
       <div class="lr-side">
-        <div class="time-chip ${cd ? 'urgent' : ''}"><span class="chip-dot"></span>${escapeHtml(rel)}</div>
-        ${cd ? `<div class="time-chip muted">${escapeHtml(cd)}</div>` : ''}
+        ${dateText ? `<div class="time-chip"><span class="chip-dot"></span>${dateText}</div>` : ''}
+        ${cd ? `<div class="time-chip muted${soon ? ' cd-soon' : ''}">${escapeHtml(cd)}</div>` : ''}
       </div>
     </div>
   `;
+}
+
+// A memorial event row. The tile holds the first photo when there is one —
+// the memory *is* the picture — and falls back to the category glyph.
+function memorialRow(e) {
+  const photoId = e.first_photo_id || (e.photo_ids && e.photo_ids[0]) || '';
+  const details = [e.place, e.activities, e.notes].filter(Boolean).join(' · ');
+  const meta = [
+    e.photo_count > 0 ? `${e.photo_count} 张照片` : '回忆事件',
+    details ? clip(details, 28) : '',
+  ].filter(Boolean).join(' · ');
+  return `
+    <div class="card list-row clickable" data-kind="memorial" data-memorial="${escapeHtml(e.id)}">
+      <div class="lr-id">
+        <span class="cd-thumb">
+          <span class="cat-icon" data-tone="memorial">${escapeHtml(categoryIcon('memorial', null))}</span>
+          ${photoId ? `<img alt="" data-photo-id="${escapeHtml(photoId)}" hidden/>` : ''}
+        </span>
+      </div>
+      <div class="lr-main">
+        <div class="lr-title">${escapeHtml(e.title || '(无标题)')} <span class="tag" style="margin-left:6px">${escapeHtml(memorialKindLabel(e.kind))}</span></div>
+        <div class="lr-meta">${escapeHtml(meta)}</div>
+      </div>
+      <div class="lr-side">
+        <div class="time-chip cd-clock-chip"><span class="cd-clock"></span>${escapeHtml(formatRelative(e.occurred_at))}</div>
+      </div>
+    </div>
+  `;
+}
+
+// Trim a meta line to a readable length.
+function clip(s, n) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n) + '…' : t;
+}
+
+// The memorial tiles show their first photo as soon as the bytes arrive.
+// The photos come from the main process as data URLs (the CSP forbids any
+// other scheme), so the first paint shows the glyph and the photo swaps in
+// when the cache resolves.
+function paintMemorialThumbs(root) {
+  root.querySelectorAll('img[data-photo-id]').forEach((img) => {
+    const id = img.dataset.photoId;
+    const cached = getCachedPhotoDataUrl(id);
+    if (cached) { showThumb(img, cached); return; }
+    fetchPhotoDataUrl(id).then((url) => {
+      if (url) showThumb(img, url);
+    });
+  });
+}
+
+function showThumb(img, url) {
+  if (url) img.src = url;
+  img.hidden = false;
+  const glyph = img.parentElement && img.parentElement.querySelector('.cat-icon');
+  if (glyph) glyph.classList.add('hidden');
 }
 
 async function renderOverview(c) {
@@ -322,21 +465,10 @@ async function renderOverview(c) {
     </div>
     ${memorial.length === 0
       ? `<div class="empty">还没有回忆事件</div>`
-      : memorial.map((e) => `
-        <div class="card list-row clickable" data-kind="memorial" data-memorial="${escapeHtml(e.id)}">
-          <div class="lr-id">
-            <span class="cat-icon" data-tone="memorial">${escapeHtml(categoryIcon('memorial', null))}</span>
-          </div>
-          <div class="lr-main">
-            <div class="lr-title">${escapeHtml(e.title || '(无标题)')} <span class="tag" style="margin-left:6px">${escapeHtml(memorialKindLabel(e.kind))}</span></div>
-            <div class="lr-meta">${e.photo_count > 0 ? `${e.photo_count} 张照片` : '回忆事件'}</div>
-          </div>
-          <div class="lr-side">
-            <div class="time-chip"><span class="chip-dot"></span>${escapeHtml(formatRelative(e.occurred_at))}</div>
-          </div>
-        </div>
-      `).join('')}
+      : memorial.map(memorialRow).join('')}
   `;
+
+  paintMemorialThumbs(body);
 
   document.getElementById('add-date').onclick = () => showDateDialog(c.id);
   document.getElementById('add-event').onclick = () => navigate('/events/new?category=general&contact_id=' + c.id);
@@ -695,10 +827,17 @@ async function render(args, tab) {
   const itemsByKind = { like: likes, taboo: taboos, gift: gifts };
   const counts = { like: likes.length, taboo: taboos.length, gift: gifts.length };
 
+  // The header banner artwork. It is preloaded when this module loads (see
+  // warmBanner above), so the URL is normally already known by the time the
+  // page paints; the fetch is only repeated if the first one failed.
+  if (!bannerUrl) await warmBanner();
+
   app.innerHTML = `
-    ${headerHTML(c)}
-    ${tabBarHTML(c, tab, counts)}
-    <div id="cd-body"></div>
+    <div class="cd-page">
+      ${headerHTML(c, bannerUrl)}
+      ${tabBarHTML(c, tab, counts)}
+      <div class="cd-body" id="cd-body"></div>
+    </div>
   `;
 
   if (tab === 'overview') {

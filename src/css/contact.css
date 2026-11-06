@@ -1,0 +1,425 @@
+/* src/css/contact.css — the contact-detail page's own design system.
+ *
+ * ---------------------------------------------------------------------------
+ * Why a separate file
+ * ---------------------------------------------------------------------------
+ * The contact detail page (联系人具体信息) was rebuilt around a warm,
+ * paper-like design: a full-bleed photo banner behind the contact header, a
+ * tab row on cream paper, rounded white cards with tinted icon tiles and a
+ * date chip on the right.
+ *
+ * Those styles would be wrong on every other page — the 联系人 list, the
+ * 今日 page, the editors — so they live here, scoped under `.cd-page`, and
+ * the file is loaded *after* styles.css so it can override the global
+ * primitives it opts out of (cards, headings, chips) for its own scope only.
+ * This mirrors the arrangement today.css already uses for the 今日 page.
+ *
+ * Every rule below is prefixed with `.cd-page` (or a `.cd-` class that only
+ * exists inside it) on purpose: nothing in here may leak onto another page.
+ */
+
+.cd-page {
+  /* ---- Palette ---------------------------------------------------------
+     The page is warm paper, not the app's neutral grey-white: a cream
+     surface, a warm brown ink, and the app's own accent for the few
+     interactive pieces. The accent stays `var(--accent)` so the top bar,
+     the nav pills and this page speak one colour. */
+  --cd-paper: #f9efe7;
+  --cd-card: #ffffff;
+  --cd-ink: #3a2620;          /* card / headline text */
+  --cd-ink-soft: #a18476;     /* meta lines, secondary text */
+  --cd-ink-strong: #5f3b29;   /* section titles */
+  --cd-line: #f0e2d8;         /* hairlines, card borders */
+  --cd-accent-soft: #fbe6d8;  /* tinted tiles, date chips */
+  --cd-bar: #e9ab85;          /* the accent bar beside a section title */
+  --cd-radius: 18px;
+  --cd-shadow: 0 2px 10px rgba(120, 70, 40, 0.06), 0 14px 32px rgba(120, 70, 40, 0.07);
+  /* Two small glyphs, painted as masks so they take the colour of whatever
+     carries them (the same trick the global 「返回」 chevron uses). */
+  --cd-icon-chevron-right: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5l7 7-7 7'/%3E%3C/svg%3E");
+  --cd-icon-clock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E");
+
+  /* The banner is edge-to-edge, so the page pulls itself out of the scroll
+     container's padding. The padding itself lives in styles.css as
+     --content-pad-y / --content-pad-x, so the two can't drift apart. */
+  margin: calc(-1 * var(--content-pad-y)) calc(-1 * var(--content-pad-x));
+  min-height: 100%;
+  background: var(--cd-paper);
+  color: var(--cd-ink);
+}
+
+/* ---------------------------------------------------------------------------
+   Header banner
+   ---------------------------------------------------------------------------
+   The artwork (`resources/ui/user-detail-background.png`) reaches the
+   renderer as a `file://` URL and is handed to CSS through the
+   `--cd-banner-image` custom property, so the image can be swapped without
+   rebuilding the rest of the rule.
+
+   The white-to-transparent wash on the left is what makes the name and the
+   avatar readable over a photo: the artwork shows through on the right,
+   where nothing has to be read. */
+.cd-banner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 138px;
+  padding: 24px 32px;
+  background-image:
+    linear-gradient(90deg,
+      rgba(255, 251, 247, 0.97) 0%,
+      rgba(255, 247, 240, 0.90) 34%,
+      rgba(255, 245, 236, 0.55) 62%,
+      rgba(255, 243, 232, 0.18) 100%),
+    var(--cd-banner-image, none);
+  background-size: cover;
+  background-position: center 58%;
+  background-repeat: no-repeat;
+  overflow: hidden;
+}
+/* No artwork installed — a plain warm banner instead of a bare card. */
+.cd-banner.no-art {
+  background-image: linear-gradient(120deg, #ffeade 0%, #ffd9c4 52%, #f6c6b2 100%);
+}
+.cd-banner-inner {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+/* The avatar tile — a rounded square that echoes the icon tiles in the
+   lists, with the photo (or glyph) inside it. */
+.cd-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  background: color-mix(in srgb, currentColor 14%, #fff);
+  box-shadow: 0 6px 18px rgba(120, 70, 40, 0.16);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  flex: none;
+}
+.cd-avatar svg { width: 34px; height: 34px; display: block; }
+.cd-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.cd-banner-text { min-width: 0; }
+.cd-banner-text h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  color: #3d2a22;
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.cd-banner-text .relationship-sep {
+  color: var(--cd-ink-soft);
+  font-weight: 400;
+  margin: 0 8px;
+}
+.cd-banner-text .relationship {
+  color: #a5785f;
+  font-weight: 600;
+  font-size: 19px;
+  margin-left: 0;
+}
+
+/* The 「编辑基本信息 ›」 pill — a translucent white chip on the banner. */
+.cd-edit-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 2px 10px rgba(120, 70, 40, 0.10);
+  color: #8a5a41;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 140ms ease, color 140ms ease, box-shadow 180ms ease;
+}
+.cd-edit-pill:hover {
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 4px 14px rgba(120, 70, 40, 0.16);
+}
+.cd-chevron {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask-image: var(--cd-icon-chevron-right);
+  mask-image: var(--cd-icon-chevron-right);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  transition: transform 180ms ease;
+}
+.cd-edit-pill:hover .cd-chevron { transform: translateX(2px); }
+
+/* ---------------------------------------------------------------------------
+   Tab bar
+   ---------------------------------------------------------------------------
+   The tabs sit on the cream paper, below the banner, with a hairline that
+   runs the full width. The count badge is a small outlined circle, the way
+   the design draws it. */
+.cd-page .cd-tabbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--cd-line);
+}
+.cd-page .cd-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-bottom: none;
+  margin: 0;
+}
+.cd-page .cd-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 13px 16px 12px;
+  color: #9a8073;
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 700;
+  border-bottom: 3px solid transparent;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+.cd-page .cd-tab:hover { color: var(--cd-ink); }
+.cd-page .cd-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.cd-page .cd-tab-count {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--cd-line);
+  color: #a78d80;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cd-page .cd-tab.is-active .cd-tab-count {
+  background: var(--cd-accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+/* The count next to a section title inside a tab body. */
+.cd-page .cd-count {
+  margin-left: 0;
+  color: var(--cd-ink-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* The 「返回」 control — the same chevron pill the rest of the app uses,
+   kept on the tab row so the banner stays as clean as the design has it. */
+.cd-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px 5px 9px;
+  border-radius: 999px;
+  color: var(--cd-ink-soft);
+  font-size: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 140ms ease, background 140ms ease;
+}
+.cd-back:hover { color: var(--accent); background: rgba(255, 255, 255, 0.7); }
+
+/* ---------------------------------------------------------------------------
+   Page body
+   --------------------------------------------------------------------------- */
+.cd-body { padding: 0 32px 28px; }
+
+/* Section titles carry a short orange bar on the left, the way the design
+   draws them. The bar is a pseudo-element, so the title's text stays
+   exactly what it was. */
+.cd-page .section-header { margin: 24px 0 12px; }
+.cd-page .section-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--cd-ink-strong);
+  opacity: 1;
+}
+.cd-page .section-header h2::before {
+  content: '';
+  width: 4px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--cd-bar);
+  flex: none;
+}
+
+/* The section actions are pills: a filled accent one and an outlined one. */
+.cd-page .btn {
+  border-radius: 999px;
+  padding: 7px 15px;
+  font-weight: 600;
+}
+.cd-page .btn.secondary {
+  background: rgba(255, 255, 255, 0.72);
+  color: #996a54;
+  border-color: #edd9cb;
+}
+.cd-page .btn.secondary:hover {
+  background: #fff;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------------------
+   Cards
+   ---------------------------------------------------------------------------
+   Rounded white cards on cream paper. The category colour strip the global
+   `.card[data-kind]` rule paints is dropped here — the tinted icon tile
+   carries the category instead, which is how the design reads it. */
+.cd-page .card {
+  background: var(--cd-card);
+  border: 1px solid var(--cd-line);
+  border-left: none;
+  border-radius: var(--cd-radius);
+  padding: 16px 18px;
+  margin-bottom: 12px;
+  box-shadow: var(--cd-shadow);
+}
+.cd-page .card.list-row { gap: 16px; }
+.cd-page .list-row .lr-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--cd-ink);
+}
+.cd-page .list-row .lr-meta {
+  color: var(--cd-ink-soft);
+  font-size: 12.5px;
+}
+.cd-page .list-row .lr-side { min-width: 104px; }
+
+/* The icon tile — bigger than the global 36px, with the same soft tint. */
+.cd-page .cat-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  font-size: 24px;
+}
+
+/* A memorial event shows its first photo in the tile instead of the glyph. */
+.cd-page .cd-thumb {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  overflow: hidden;
+  flex: none;
+  display: block;
+}
+.cd-page .cd-thumb .cat-icon { width: 100%; height: 100%; }
+.cd-page .cd-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The date chip on the right: a peach pill with the date, and the countdown
+   underneath it as plain muted text. */
+.cd-page .time-chip {
+  background: var(--cd-accent-soft);
+  color: var(--accent);
+  border: none;
+  padding: 4px 11px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.cd-page .time-chip.urgent { background: var(--accent); color: #fff; }
+.cd-page .time-chip.muted {
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  color: var(--cd-ink-soft);
+  font-weight: 500;
+}
+/* A reminder that fires within the day — the countdown turns warm. */
+.cd-page .time-chip.muted.cd-soon {
+  color: var(--accent);
+  font-weight: 700;
+}
+/* The clock chip on a memorial row — outlined, with a clock glyph. */
+.cd-page .cd-clock-chip {
+  background: #fff;
+  border: 1px solid var(--cd-line);
+  color: var(--cd-ink-soft);
+  font-weight: 600;
+  gap: 5px;
+}
+.cd-page .cd-clock {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask-image: var(--cd-icon-clock);
+  mask-image: var(--cd-icon-clock);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+/* The 「第一次」-style tag next to a memorial title. */
+.cd-page .tag {
+  background: var(--cd-accent-soft);
+  color: #c96a4a;
+  font-weight: 700;
+  padding: 2px 9px;
+}
+
+/* The rows inside a 喜好 / 忌讳 / 礼物 card are separated by a hairline
+   rather than by their own boxes. */
+.cd-page .card .attribute-clickable { padding: 4px 0; }
+.cd-page .card .attribute-clickable + .attribute-clickable {
+  border-top: 1px solid var(--cd-line);
+}
+.cd-page .card .attribute-clickable:hover { background: rgba(251, 230, 216, 0.45); }
+.cd-page .cd-row-go { color: var(--cd-ink-soft); }
+
+/* The search + filter row of a kind tab. */
+.cd-page .section-search,
+.cd-page .section-event-filter {
+  border-radius: 999px;
+  border-color: var(--cd-line);
+  background: #fff;
+}
+.cd-page .list-tail .meta { color: var(--cd-ink-soft); }
+
+/* The empty state — a dashed outline on the cream paper. */
+.cd-page .empty {
+  border-color: var(--cd-line);
+  color: var(--cd-ink-soft);
+  border-radius: var(--cd-radius);
+  background: rgba(255, 255, 255, 0.5);
+}

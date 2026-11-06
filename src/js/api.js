@@ -140,6 +140,11 @@ export const api = {
     get: ()    => M.todayBackground.get(),
     set: (id) => M.todayBackground.set(id),
   },
+  // 联系人详情页的头图插画。`get()` → { id, url } | null；null 表示这张图
+  // 没装，页面退回到纯色横幅。
+  contactBanner: {
+    get: () => M.contactBanner?.get?.() || Promise.resolve(null),
+  },
   // 文本气泡配置（吃饭提醒 / 休息提醒）。规则由主进程
   // main/pet_bubbles.js 单点定义，这里只做薄封装。
   bubbles: {
