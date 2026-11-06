@@ -79,7 +79,7 @@ async function render(args, params) {
 // Re-render ONLY the list subtree (#work-list) and the search-row chrome
 // (清除 button + match counter). Never touches #work-q, so the IME
 // composition context (候选词, 拼音中间态, 光标位置) survives every
-// keystroke — same pattern as attributes.js / contact_detail.js.
+// keystroke — same pattern as contact_detail.js / events_memorial.js.
 function rerenderList() {
   const events = pageState.allEvents;
   const cById = pageState.cById;

@@ -1,9 +1,9 @@
 // src/js/pages/contact_edit.js — create or edit a contact (basic info only).
 //
 // Likes / taboos / gifts used to be edited inline here, but they now live in
-// the global contact_attributes table and are managed from the dedicated
-// `/likes`, `/taboos`, `/gifts` top-level pages. The reminder card below
-// links the user there.
+// the global contact_attributes table and are managed from the contact
+// detail page's per-kind tabs (喜好 / 忌讳 / 礼物). The card below points
+// the user there.
 //
 // Avatar: the contact row carries two independent fields:
 //
@@ -81,7 +81,9 @@ async function render(args) {
 
     <div class="card">
       <div class="section-header"><h2>喜好 / 忌讳 / 礼物</h2></div>
-      <div class="meta">在顶部导航的「<a class="inline-link" href="#/likes">喜好</a> / <a class="inline-link" href="#/taboos">忌讳</a> / <a class="inline-link" href="#/gifts">礼物</a>」页面统一管理。</div>
+      <div class="meta">${isNew
+        ? '保存联系人后，在联系人详情页的「喜好 / 忌讳 / 礼物」页签里逐条记录。'
+        : `在联系人详情页的「<a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/likes">喜好</a> / <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/taboos">忌讳</a> / <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/gifts">礼物</a>」页签里逐条记录。`}</div>
     </div>
 
     <div class="row" style="margin-top:14px; gap:8px;">

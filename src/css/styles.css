@@ -633,35 +633,6 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 .filter-row .section-search { flex: 2; min-width: 0; }
 .filter-row .section-event-filter { flex: 1; min-width: 140px; }
 
-/* Global attributes pages: search + contact-filter dropdown share a row.
-   Input takes the wider 2/3, dropdown takes the narrower 1/3. */
-.filter-row #attr-search { flex: 2; min-width: 0; }
-.filter-row #attr-contact-filter { flex: 1; min-width: 140px; }
-
-/* Global attributes page (/likes, /taboos, /gifts): per-row card with avatar
-   + contact name + description + edit/delete actions. Reuses .card / .row /
-   .avatar so no new primitives needed; just spacing tweaks. */
-.attribute-row .row { gap: 12px; align-items: center; }
-.attribute-row .row > div { min-width: 0; }
-
-/* Inline edit row inside contact_detail section lists. */
-.section-edit-desc,
-.section-edit-event {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 13px;
-  font-family: inherit;
-  background: white;
-}
-.section-edit-desc:focus,
-.section-edit-event:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
-
 /* Memorial event form: multi-contact picker.
    Each contact is a card in a flexible grid; clicking a card toggles the
    `.selected` class. The toolbar above provides 全选 / 清空 + a live count.
@@ -1069,12 +1040,12 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 .list-row.no-id { grid-template-columns: minmax(0, 1fr) auto; }
 
 /* ---- List-row two-tier content ----
-   Some lists (e.g. /likes, /taboos, /gifts) want both a header line and a
-   prominent content line in the middle column. `.lr-title` is reserved for
-   the upper "header" — contact name + date — and `.lr-title-main` carries
-   the actual content the user came to read (description, label, etc).
-   Both lines share the same font weight/size so they read as one block
-   instead of a "title + faded meta" hierarchy. */
+   Some lists (e.g. the contact detail's 喜好 / 忌讳 / 礼物 tabs) want both a
+   header line and a prominent content line in the middle column.
+   `.lr-title` is reserved for the upper "header" — contact name + date —
+   and `.lr-title-main` carries the actual content the user came to read
+   (description, label, etc). Both lines share the same font weight/size so
+   they read as one block instead of a "title + faded meta" hierarchy. */
 .lr-title-main {
   font-weight: 600;
   font-size: 14px;
@@ -1082,45 +1053,6 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Inline meta right next to the row's primary title — used for date
-   suffixes on the contact-name line. Smaller and muted so the title
-   itself stays the focal point. */
-.lr-meta-inline {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-  margin-left: 2px;
-}
-/* Created-at timestamp pinned to the right edge of an attribute list row.
-   Same font size / weight as the description so the eye reads it as part of
-   the row content rather than a faint accessory. */
-.lr-created-at {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--muted);
-  white-space: nowrap;
-}
-/* Attribute-row middle column: override the default column flex so the
-   contact name and the description sit on a single line instead of stacked.
-   The contact name is fixed-width via flex-shrink:0; the description takes
-   the remaining space and ellipsises on overflow. The selector matches the
-   specificity of `.list-row .lr-main` so it actually wins the cascade. */
-.list-row .lr-main.lr-main-inline {
-  flex-direction: row;
-  align-items: baseline;
-  gap: 10px;
-}
-.list-row .lr-main.lr-main-inline .lr-title {
-  flex-shrink: 0;
-  max-width: 30%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.list-row .lr-main.lr-main-inline .lr-title-main {
-  flex: 1;
-  min-width: 0;
-}
-
 /* Clickable list rows that lead to a detail page. Mirrors `.card.clickable`
    (lift + shadow on hover) but is scoped to the attribute-style rows that
    share the same `.card` base — keeping the visual cue consistent across
@@ -1211,6 +1143,73 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   margin: 0 6px;
   font-weight: 400;
 }
+
+/* ---- Contact detail tab bar -----------------------------------------
+   The contact detail page owns everything about one contact, so the
+   per-kind lists (喜好 / 忌讳 / 礼物) live behind tabs instead of the
+   old top-level nav entries. The bar reads as a segmented control: a
+   hairline bottom border spans the full width, the active tab carries
+   the accent underline, and the count badge sits beside the label. */
+.cd-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin: 0 0 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.cd-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px 10px 14px;
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 600;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+.cd-tab:hover { color: var(--text); }
+.cd-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+/* Count badge — a muted pill that reads as "how many rows live here".
+   The active tab keeps the accent tint so the number stays legible
+   against the accent underline. */
+.cd-tab-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+.cd-tab.is-active .cd-tab-count {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+/* The count next to a section title inside a tab body. */
+.cd-count {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* "编辑" affordance on an attribute row — a quiet chevron-ish label that
+   tells the user the row opens an editor. */
+.cd-row-go {
+  color: var(--muted);
+  font-size: 12px;
+  flex-shrink: 0;
+  margin-left: 10px;
+}
+.attribute-clickable:hover .cd-row-go { color: var(--accent); }
 
 /* ---- Icon picker grid ----
    Editor page lists every glyph as a tappable tile; the currently-selected

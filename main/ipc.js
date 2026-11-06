@@ -436,8 +436,8 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
 
   // ---- Contact attributes (likes / taboos / gifts — global table) ----
   // All likes/taboos/gifts entries live in contact_attributes and are managed
-  // through these handlers. The per-contact sub-pages and the three new global
-  // top-level pages (/likes, /taboos, /gifts) all funnel through here.
+  // through these handlers. The contact detail page's 喜好 / 忌讳 / 礼物 tabs
+  // and the pet window's 快速记录 both funnel through here.
   const ATTR_KINDS = new Set(['like', 'taboo', 'gift']);
 
   ipcMain.handle('attributes:list', (_e, kind, opts = {}) => {

@@ -23,7 +23,7 @@
 
 ### 👥 Contact Management
 - Create / edit / delete contacts, with custom avatars, nicknames, and relationships;
-- Bind three tag categories per contact — **likes · taboos · gifts** — managed from a global tag library;
+- Bind three tag categories per contact — **likes · taboos · gifts** — each one managed on that contact's own detail page, behind a tab of the same name;
 - Record important dates in the Gregorian or the **Chinese lunar calendar**, either one-off or recurring yearly;
 - Each important date can set **how many days ahead to start reminding** (a week by default). The pet then reminds you once a day while the window is open, and tells you how many days are left.
 
@@ -289,7 +289,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 
 ### 2. Add a contact
 - Go to **Contacts → New Contact**, fill in a name and relationship, pick or upload an avatar;
-- In the contact detail page you can keep adding likes, taboos, gifts, and important dates.
+- The contact detail page has a tab bar: **概览 / 喜好 / 忌讳 / 礼物**. The overview carries the important dates and memory events — a contact's important dates and their reminders share one list, ordered by how soon each one comes up; each kind tab is where that contact's likes / taboos / gifts live — search them, add new ones, page through them, or delete a batch.
 
 ### 3. Write a diary entry
 - **Memory Events → New** → a diary page opens; write the title. The side panel on the right holds the paper style;

@@ -8,7 +8,7 @@
 // is.
 //
 // The forms are FIELD-FOR-FIELD the same as the main window's
-// (src/js/pages/attributes.js and src/js/pages/event_edit.js): the same
+// (src/js/pages/contact_detail.js and src/js/pages/event_edit.js): the same
 // fields, the same options, the same validation rules and the same
 // conditional-visibility behaviour. A record captured here is
 // indistinguishable from one captured in the main window.
@@ -197,14 +197,14 @@ function renderPicker() {
 // ---- Per-kind forms ----------------------------------------------------
 //
 // Every form below mirrors the corresponding main-window form field for
-// field (src/js/pages/attributes.js, src/js/pages/event_edit.js):
+// field (src/js/pages/contact_detail.js, src/js/pages/event_edit.js):
 // the same labels, the same options, the same defaults, and the same
 // conditional visibility.
 
 // 喜好 / 忌讳 / 礼物 — all three are contact_attributes rows, differing only
 // in their `kind` column. One form serves all three.
 //
-// Main window (src/js/pages/attributes.js renderForm): 描述* / 事件（记录时间）/
+// Main window (src/js/pages/contact_detail.js add form): 描述* / 事件（记录时间）/
 // 联系人*.
 function attributeForm(kindId) {
   const k = KINDS[kindId];

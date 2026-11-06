@@ -1,14 +1,17 @@
 // src/js/pages/attribute_detail.js — view + edit + delete a single
-// likes/taboos/gifts entry. Reached via `#/attributes/:id` from any list
-// (global /likes /taboos /gifts pages or the per-contact sub-section in
-// contact_detail). The list pages only render rows; all mutations live here
-// so the row UI stays uncluttered.
+// likes/taboos/gifts entry. Reached via `#/attributes/:id` from one of the
+// per-contact tabs (喜好 / 忌讳 / 礼物) on the contact detail page. The
+// list pages only render rows; all mutations live here so the row UI stays
+// uncluttered.
 
 import { api, escapeHtml, displayName, fmtDate, todayYmd, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, wireDateInputs } from '../api.js';
 import { iconSVG, suggestIconKind } from '../icons.js';
 import { register, navigate, getReferrerPath } from '../router.js';
 
 const TITLE_BY_KIND = { like: '喜好', taboo: '忌讳', gift: '礼物' };
+
+// URL segment of the contact tab each kind lives in.
+const TAB_SEGMENT = { like: 'likes', taboo: 'taboos', gift: 'gifts' };
 
 // "Back" always goes to the URL the user was on right before opening this
 // detail page. We read it fresh on every render() call so re-entering the
@@ -18,10 +21,11 @@ const TITLE_BY_KIND = { like: '喜好', taboo: '忌讳', gift: '礼物' };
 // router.js guarantees that lastPath is updated only AFTER the handler
 // resolves, so calling getReferrerPath() at the top of render() returns the
 // previous page's path — never our own URL.
-
-function pickBackPath(kind) {
-  const fallback = `/${kind === 'like' ? 'likes' : kind === 'taboo' ? 'taboos' : 'gifts'}`;
-  return getReferrerPath() || fallback;
+//
+// Fallback (direct URL entry, no referrer): the contact's own tab, since
+// that is where every attribute row is managed from.
+function pickBackPath(kind, contactId) {
+  return getReferrerPath() || `/contacts/${contactId}/${TAB_SEGMENT[kind] || 'likes'}`;
 }
 
 async function render(args) {
@@ -46,9 +50,7 @@ async function render(args) {
   if (!row) {
     app.innerHTML = `<div class="empty">条目不存在${errors.length ? ' · ' + escapeHtml(errors.join('; ')) : ''}</div>
       <div class="row" style="gap:8px; justify-content:center;">
-        <a class="inline-link" href="#/likes">返回喜好</a> ·
-        <a class="inline-link" href="#/taboos">返回忌讳</a> ·
-        <a class="inline-link" href="#/gifts">返回礼物</a>
+        <a class="inline-link" href="#/contacts">返回联系人</a>
       </div>`;
     return;
   }
@@ -58,15 +60,15 @@ async function render(args) {
   // tick as the rest of the page.
   if (c.custom_avatar_path) fetchAvatarDataUrl(c.id);
   const titleText = TITLE_BY_KIND[kind] || '条目';
-  const backPath = pickBackPath(kind);
+  const backPath = pickBackPath(kind, row.contact_id);
   const backHash = '#' + backPath;
-  // Label follows the entry page shape: a per-contact sub-page says
-  // "返回联系人详情"; a global list page says "返回喜好 / 忌讳 / 礼物".
-  const backLabel = /^\/contacts\/[^/]+\/(likes|taboos|gifts)$/.test(backPath) ? '返回联系人详情'
-                  : backPath === '/taboos' ? '返回忌讳'
-                  : backPath === '/gifts'  ? '返回礼物'
-                  : /^(\/contacts\/[^/]+)/.test(backPath) ? '返回联系人详情'
-                  : '返回喜好';
+  // Label follows the page the user came from: the contact's own tab says
+  // "返回喜好 / 忌讳 / 礼物"; the contact overview says "返回联系人详情".
+  const tabMatch = /^\/contacts\/[^/]+\/(likes|taboos|gifts)$/.exec(backPath);
+  const backLabel = tabMatch
+    ? ({ likes: '返回喜好', taboos: '返回忌讳', gifts: '返回礼物' }[tabMatch[1]])
+    : /^\/contacts\/[^/]+/.test(backPath) ? '返回联系人详情'
+    : '返回联系人';
   const avatarUrl = c.custom_avatar_path ? getCachedAvatarDataUrl(c.id) : '';
 
   app.innerHTML = `

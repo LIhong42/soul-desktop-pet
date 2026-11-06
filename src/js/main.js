@@ -6,8 +6,6 @@ import { clearBackground } from './pages/today.js';
 import './pages/contacts_list.js';
 import './pages/contact_detail.js';
 import './pages/contact_edit.js';
-import './pages/contact_list_edit.js';
-import './pages/attributes.js';
 import './pages/attribute_detail.js';
 import './pages/important_date_detail.js';
 import './pages/events.js';

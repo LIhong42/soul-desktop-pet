@@ -15,6 +15,7 @@
     "verify:diary": "node scripts/verify-diary-db.js && node scripts/run-electron.js scripts/test-diary-editor.js",
     "verify:today-background": "node scripts/run-electron.js scripts/test-today-background.js",
     "verify:today-design": "node scripts/run-electron.js scripts/test-today-design.js",
+    "verify:contact-tabs": "node scripts/run-electron.js scripts/test-contact-tabs.js",
     "verify:anniversary": "node scripts/verify-anniversary-carousel.js && node scripts/verify-anniversary-db.js && node scripts/run-electron.js scripts/shot-anniversary.js",
     "verify:pet-stats": "node scripts/verify-pet-stats.js",
     "shot:today": "node scripts/run-electron.js scripts/shot-today.js",

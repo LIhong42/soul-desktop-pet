@@ -1,58 +1,92 @@
-// src/js/pages/contact_detail.js — view a single contact + their dates + events
-import { api, escapeHtml, firstChar, displayName, eventKindAttr, contactColorIndex, fmtDate, fmtDateTime, formatRelative, countdownTo, categoryIcon, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, wireDateInputs, repeatLabel, eventDisplayTitle } from '../api.js';
+// src/js/pages/contact_detail.js — one contact, one page, one tab per kind.
+//
+// The 喜好 / 忌讳 / 礼物 data used to live in two places at once: a global
+// top-level page per kind (/#/likes, /#/taboos, /#/gifts) AND a preview
+// section at the bottom of the contact detail page whose "管理 →" link
+// jumped to yet another per-contact page. Three surfaces for the same rows
+// meant the same "奶奶喜欢抹茶" could be edited from any of them.
+//
+// Now every attribute row belongs to exactly one contact, and the contact
+// detail page owns all of it:
+//
+//   #/contacts/:id            → 概览 tab (统计 + 重要日期 + 回忆事件)
+//   #/contacts/:id/likes      → 喜好 tab   (search / filter / 新增 / 批量删除)
+//   #/contacts/:id/taboos     → 忌讳 tab
+//   #/contacts/:id/gifts      → 礼物 tab
+//
+// The overview used to carry a 事件 section of its own, next to 重要日期.
+// Both hold dated reminders for the same contact — a birthday saved as an
+// event and a birthday saved as an important date were two different-looking
+// rows in two different blocks — so they share one 重要日期 list now.
+//
+// The tab bar sits right under the contact header, so switching kind never
+// leaves the contact. The global /likes /#/taboos /#/gifts pages are gone.
+//
+// Per-tab view state (search query, event filter, page, bulk selection) is
+// keyed by "contactId:kind" in a module-level Map, so flipping to another
+// tab and back keeps whatever the user had typed.
+
+import { api, escapeHtml, displayName, eventKindAttr, contactColorIndex, fmtDate, formatRelative, countdownTo, categoryIcon, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, wireDateInputs, repeatLabel, eventDisplayTitle, todayYmd } from '../api.js';
 import { iconSVG, suggestIconKind } from '../icons.js';
 import { register, navigate } from '../router.js';
 import {
-  bulkEnterLinkHtml, bulkToolbarHtml,
-  wireBulkEnter, wireBulkToolbar,
+  bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
+  wireBulkEnter, wireBulkToolbar, wireBulkRowChecks,
 } from '../bulk_delete.js';
 import { memorialKindLabel } from '../diary_kinds.js';
 
-// Render the avatar block for the detail-page header. Mirrors the rule used
-// in contacts_list.js: prefer the user's uploaded photo (resolved to a data
-// URL via the avatar cache), otherwise a Lucide glyph picked from
-// `icon_kind` or auto-suggested from `relationship`.
-function detailAvatarHTML(c) {
-  const url = c.custom_avatar_path ? getCachedAvatarDataUrl(c.id) : '';
-  if (url) return `<img src="${escapeHtml(url)}" alt=""/>`;
-  const name = c.icon_kind && c.icon_kind !== 'user'
-    ? c.icon_kind
-    : suggestIconKind(c.relationship);
-  return iconSVG(name, { title: displayName(c), size: 32 });
-}
-
-// --- List section with search + event filter + pagination -----------------
-//
-// Each of the likes / taboos / gifts sections behaves identically:
-//   * Header with title + count badge, plus a "管理 →" link that opens the
-//     per-section edit page (#/contacts/:id/:kind)
-//   * Two independent filters:
-//       - "section-search"    : keyword in `description` (case-insensitive)
-//       - "section-event-filter": dropdown over distinct years/months observed
-//         in the items' `event` values. Adds "不限" and "未填事件" entries.
-//     They compose: search ∩ eventFilter, in either order; both empty = all.
-//   * Search hits are surfaced in (event date desc, original order) so
-//     recent events rise to the top.
-//   * When the visible result set exceeds PAGE_SIZE, pagination controls
-//     (上一页 / 第 X / Y 页 / 下一页) appear under the list.
-
+// How many rows one page of a kind's list holds.
 const PAGE_SIZE = 5;
 
 // Internal short kind ("like" / "taboo" / "gift") ↔ URL long kind
-// ("likes" / "taboos" / "gifts"). The contact-detail UI talks in the short
-// form; sub-page routes use the long form.
-const kindMap = { like: 'likes', taboo: 'taboos', gift: 'gifts' };
-const kindTitle = { like: '喜好', taboo: '忌讳', gift: '礼物参考' };
+// ("likes" / "taboos" / "gifts"). The tab bar and the route table talk in
+// the short form; the URL uses the long form.
+const KIND_META = {
+  like:  { title: '喜好', url: 'likes',  attrKind: 'like'  },
+  taboo: { title: '忌讳', url: 'taboos', attrKind: 'taboo' },
+  gift:  { title: '礼物', url: 'gifts',  attrKind: 'gift'  },
+};
 
-// Pure filter on description — case-insensitive substring match. Empty
-// query means "do not filter by description".
+// --- Per-contact / per-kind view state ---------------------------------
+//
+// Keyed by "contactId:kind". Holds the search query, the event filter, the
+// current page, whether the add-form is open, and the bulk-delete
+// selection (a Set so toggling a checkbox is O(1)).
+const viewStates = new Map();
+
+function viewState(contactId, kind) {
+  const key = contactId + ':' + kind;
+  let s = viewStates.get(key);
+  if (!s) {
+    s = {
+      query: '', eventFilter: '', page: 0,
+      formOpen: false,
+      selectModeActive: false, selected: new Set(),
+      // Called by the bulk toolbar whenever the selection changes, so the
+      // page can refresh the "删除选中 (N)" counter without a full repaint.
+      onChange: () => {},
+    };
+    viewStates.set(key, s);
+  }
+  return s;
+}
+
+// --- Pure filters -------------------------------------------------------
+//
+// The list carries two independent filters that compose (search ∩ event):
+//   * "搜索描述…"    : case-insensitive substring of `description`
+//   * event dropdown : the year / year-month the row's `event` falls in,
+//                     plus "不限" and "未填事件"
+// When either is active the rows are re-sorted so date-anchored entries
+// rise to the top.
+
 function matchesQuery(item, q) {
   if (!q) return true;
   const desc = (item && item.description) || '';
   return desc.toLowerCase().includes(q);
 }
 
-// Pure filter on event date. `filterValue` is one of:
+// `filterValue` is one of:
 //   ''           — do not filter by event (show everything)
 //   '__none__'   — show only items without an event
 //   'YYYY'       — show items whose event starts with YYYY
@@ -64,9 +98,13 @@ function matchesEvent(item, filterValue) {
   return ev.startsWith(filterValue);
 }
 
-// Build the dropdown options from the items currently visible. Includes
+function matchesEither(item, q, evFilter) {
+  return matchesQuery(item, q) && matchesEvent(item, evFilter);
+}
+
+// Build the dropdown options from the items of one contact. Includes
 // "不限" + "未填事件" + every distinct (year, year-month) tuple observed,
-// sorted descending so most-recent years/months appear first.
+// sorted descending so the most-recent years/months appear first.
 function buildEventFilterOptions(items) {
   const yearMonths = new Map(); // year → Set of "MM"
   for (const it of items || []) {
@@ -88,10 +126,6 @@ function buildEventFilterOptions(items) {
   return opts;
 }
 
-function matchesEither(item, q, evFilter) {
-  return matchesQuery(item, q) && matchesEvent(item, evFilter);
-}
-
 // Sort helper: items with an event come first by date desc, then items
 // without an event retain their original order at the tail.
 function sortByEventDesc(items) {
@@ -110,6 +144,8 @@ function sortByEventDesc(items) {
   return indexed.map((x) => x.it);
 }
 
+// A single row. Clicking it opens the shared attribute detail page
+// (#/attributes/:id), where the row can be edited or deleted.
 function renderItemRow(it) {
   return `
     <div class="row between attribute-clickable" data-id="${escapeHtml(it.id)}" style="cursor:pointer;">
@@ -117,372 +153,24 @@ function renderItemRow(it) {
         <div class="lr-title-main">${escapeHtml(it.description || '')}</div>
         ${it.event ? `<div class="meta">${escapeHtml(fmtDate(it.event))}</div>` : ''}
       </div>
+      <span class="cd-row-go">编辑</span>
     </div>
   `;
 }
 
-// Inline editor row is no longer used: each row click navigates to the
-// dedicated `/attributes/:id` detail page where edits happen. Kept the
-// `editingId` field in state for backward-compat no-op behaviour.
+// --- Header + tab bar ---------------------------------------------------
 
-function renderPager(state, totalPages) {
-  if (totalPages <= 1) return '';
-  const cur = state.page + 1; // 1-based for display
-  const prevDisabled = state.page <= 0;
-  const nextDisabled = state.page >= totalPages - 1;
+function detailAvatarHTML(c) {
+  const url = c.custom_avatar_path ? getCachedAvatarDataUrl(c.id) : '';
+  if (url) return `<img src="${escapeHtml(url)}" alt=""/>`;
+  const name = c.icon_kind && c.icon_kind !== 'user'
+    ? c.icon_kind
+    : suggestIconKind(c.relationship);
+  return iconSVG(name, { title: displayName(c), size: 32 });
+}
+
+function headerHTML(c) {
   return `
-    <div class="row between" style="margin-top:8px">
-      <button type="button" class="btn secondary section-page" data-kind="${escapeHtml(state.kind)}" data-action="prev" ${prevDisabled ? 'disabled' : ''}>← 上一页</button>
-      <div class="meta">第 ${cur} / ${totalPages} 页</div>
-      <button type="button" class="btn secondary section-page" data-kind="${escapeHtml(state.kind)}" data-action="next" ${nextDisabled ? 'disabled' : ''}>下一页 →</button>
-    </div>
-  `;
-}
-
-function renderListSection(title, items, state, kind, c) {
-  const all = items || [];
-  const q = state.query.trim().toLowerCase();
-
-  // Apply description search and event filter independently; both must match.
-  const filtered = all.filter((it) => matchesEither(it, q, state.eventFilter));
-  // When *something* filters, surface date-anchored items first.
-  const ordered = (q || state.eventFilter) ? sortByEventDesc(filtered) : filtered;
-
-  // Clamp page into the new bounds (handles e.g. deleting a row on the last page).
-  const totalPages = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
-  if (state.page >= totalPages) state.page = totalPages - 1;
-  if (state.page < 0) state.page = 0;
-
-  const start = state.page * PAGE_SIZE;
-  const visible = ordered.slice(start, start + PAGE_SIZE);
-
-  const filtersActive = !!(q || state.eventFilter);
-  const selectActive = !!state.selectModeActive;
-  // When a row is being inline-edited, render the edit form in place of its
-  // normal row. All other rows render as before. In bulk-select mode we
-  // additionally prefix each row with a checkbox.
-  const rowsHtml = visible.map((it) => {
-    const inner = renderItemRow(it);
-    if (selectActive) {
-      return `
-        <div class="row" style="gap:10px; padding:6px 0;">
-          <input type="checkbox" class="section-bulk-check" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(it.id)}" ${state.selected.has(it.id) ? 'checked' : ''}/>
-          <div style="flex:1; min-width:0;">${inner}</div>
-        </div>
-      `;
-    }
-    return inner;
-  }).join('');
-  const listHtml = visible.length
-    ? `<div class="card" data-kind="${escapeHtml(kind)}">${rowsHtml}</div>`
-    : (filtersActive
-        ? `<div class="empty">没有匹配的${title}</div>`
-        : `<div class="empty">还没有${title}</div>`);
-
-  const countBadge = all.length ? `<span class="meta">${all.length}</span>` : '';
-  const searchInput = `
-    <input type="text" class="section-search" data-kind="${escapeHtml(kind)}"
-           placeholder="搜索描述…" value="${escapeHtml(state.query)}"/>
-  `;
-  const opts = buildEventFilterOptions(all);
-  const eventFilterHtml = `
-    <select class="section-event-filter" data-kind="${escapeHtml(kind)}">
-      ${opts.map((o) => `<option value="${escapeHtml(o.value)}" ${o.value === state.eventFilter ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
-    </select>
-  `;
-  // In idle mode the right side of the header carries a "管理 →" link
-  // (per-section manage page) PLUS a "批量删除" link when there's at least
-  // one row to pick from. In select mode the header just shows the count
-  // badge — the toolbar below takes over the action area.
-  const editLink = c && !selectActive
-    ? `<a class="inline-link section-manage" href="#/contacts/${escapeHtml(c.id)}/${escapeHtml(kindMap[kind])}">管理 →</a>`
-    : '';
-  const enterBulkLink = (!selectActive && ordered.length > 0 && c)
-    ? bulkEnterLinkHtml().replace('data-bulk-enter', `data-bulk-enter data-kind="${escapeHtml(kind)}"`)
-    : '';
-
-  const matchFooter = filtersActive
-    ? `<div class="meta" style="padding:6px 0">匹配 ${ordered.length} 条${q ? ' · 关键词：' + escapeHtml(state.query) : ''}${state.eventFilter ? ' · 事件：' + escapeHtml(state.eventFilter === '__none__' ? '未填事件' : state.eventFilter) : ''}</div>`
-    : '';
-
-  const toolbarHtml = selectActive ? bulkToolbarHtml({
-    count: state.selected.size,
-    total: ordered.length,
-    kindLabel: '条' + title,
-  }) : '';
-
-  return `
-    <div class="section-header">
-      <h2>${title} ${countBadge} ${enterBulkLink}</h2>
-      ${editLink}
-    </div>
-    <div class="filter-row">
-      ${searchInput}
-      ${eventFilterHtml}
-    </div>
-    ${toolbarHtml}
-    ${listHtml}
-    ${matchFooter}
-    ${renderPager(state, totalPages)}
-  `;
-}
-
-async function render(args) {
-  const app = document.getElementById('app');
-  app.innerHTML = `<div class="empty">载入中…</div>`;
-  const c = await api.contacts.get(args.id);
-  // Warm the avatar data URL cache so the header photo paints on the same
-  // tick as the rest of the page (the first IPC populates the cache; the
-  // second paint uses the cached value).
-  if (c.custom_avatar_path) fetchAvatarDataUrl(c.id);
-  const [dates, events, memorial, likes, taboos, gifts] = await Promise.all([
-    api.importantDates.list(args.id),
-    api.events.list({ contact_id: args.id }),
-    api.memorialEvents.list({ contact_id: args.id }),
-    api.attributes.list('like',  { contact_id: args.id }),
-    api.attributes.list('taboo', { contact_id: args.id }),
-    api.attributes.list('gift',  { contact_id: args.id }),
-  ]);
-  // Per-kind item list, sourced from the new contact_attributes table.
-  // `id` is the contact's own id (used for refresh after a per-item mutation).
-  const itemsByKind = {
-    like:  likes,
-    taboo: taboos,
-    gift:  gifts,
-  };
-
-  // Per-section UI state. Owned by this render() invocation; the inputs
-  // and pager buttons read/mutate this directly via closures.
-  //
-  // selectModeActive + selected drive the bulk-delete UI. `selected` is a
-  // Set<id> so toggling a checkbox is O(1) and the count shown in the
-  // toolbar is always in sync.
-  const sectionState = {
-    like:  { kind: 'like',  query: '', eventFilter: '', page: 0, editingId: null,
-             selectModeActive: false, selected: new Set() },
-    taboo: { kind: 'taboo', query: '', eventFilter: '', page: 0, editingId: null,
-             selectModeActive: false, selected: new Set() },
-    gift:  { kind: 'gift',  query: '', eventFilter: '', page: 0, editingId: null,
-             selectModeActive: false, selected: new Set() },
-  };
-
-  // Refresh a single kind's items from the API and re-render only that
-  // section. Avoids a full-page re-render after a row edit/delete.
-  async function refreshKind(kind) {
-    const attrKind = kind;
-    itemsByKind[kind] = await api.attributes.list(attrKind, { contact_id: args.id });
-    const host = document.querySelector(`.list-host[data-kind="${kind}"]`);
-    if (!host) return;
-    host.innerHTML = renderListSection(kindTitle[kind], itemsByKind[kind], sectionState[kind], kind, c);
-    wireSection(kind);
-  }
-
-  function rerenderSections() {
-    for (const kind of ['like', 'taboo', 'gift']) {
-      const host = document.querySelector(`.list-host[data-kind="${kind}"]`);
-      if (!host) continue;
-      host.innerHTML = renderListSection(kindTitle[kind], itemsByKind[kind], sectionState[kind], kind, c);
-      wireSection(kind);
-    }
-  }
-
-  // Repaint only the rows + pager for one section, leaving the search
-  // <input> mounted. Used by the search handler - the live input must
-  // NEVER be replaced, or the Chinese IME composition context breaks
-  // (typing "汉" drops the intermediate pinyin strokes, and even backspace
-  // drops the caret until the user re-clicks the box).
-  function rerenderListOnly(kind) {
-    const all = itemsByKind[kind] || [];
-    const state = sectionState[kind];
-    const q = state.query.trim().toLowerCase();
-    const filtered = all.filter((it) => matchesEither(it, q, state.eventFilter));
-    const ordered = (q || state.eventFilter) ? sortByEventDesc(filtered) : filtered;
-    const totalPages = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
-    if (state.page >= totalPages) state.page = totalPages - 1;
-    if (state.page < 0) state.page = 0;
-    const start = state.page * PAGE_SIZE;
-    const visible = ordered.slice(start, start + PAGE_SIZE);
-    const filtersActive = !!(q || state.eventFilter);
-    const selectActive = !!state.selectModeActive;
-
-    const rowsHtml = visible.map((it) => {
-      const inner = renderItemRow(it);
-      if (selectActive) {
-        return `
-          <div class="row" style="gap:10px; padding:6px 0;">
-            <input type="checkbox" class="section-bulk-check" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(it.id)}" ${state.selected.has(it.id) ? 'checked' : ''}/>
-            <div style="flex:1; min-width:0;">${inner}</div>
-          </div>
-        `;
-      }
-      return inner;
-    }).join('');
-    const listHtml = visible.length
-      ? `<div class="card" data-kind="${escapeHtml(kind)}">${rowsHtml}</div>`
-      : (filtersActive
-          ? `<div class="empty">没有匹配的${kindTitle[kind]}</div>`
-          : `<div class="empty">还没有${kindTitle[kind]}</div>`);
-    const matchFooter = filtersActive
-      ? `<div class="meta" style="padding:6px 0">匹配 ${ordered.length} 条${q ? ' · 关键词：' + escapeHtml(state.query) : ''}${state.eventFilter ? ' · 事件：' + escapeHtml(state.eventFilter === '__none__' ? '未填事件' : state.eventFilter) : ''}</div>`
-      : '';
-    const pagerHtml = renderPager(state, totalPages);
-
-    const host = document.querySelector(`.list-host[data-kind="${kind}"]`);
-    if (!host) return;
-    // Preserve the live .filter-row <input>/<select>; replace everything
-    // after it. The input stays mounted and keeps its caret + IME state.
-    const filterRow = host.querySelector('.filter-row');
-    const tail = [listHtml, matchFooter, pagerHtml].filter(Boolean).join('');
-    if (filterRow) {
-      while (filterRow.nextSibling) filterRow.nextSibling.remove();
-      filterRow.insertAdjacentHTML('afterend', tail);
-    } else {
-      host.innerHTML = tail;
-    }
-    wirePager(kind);
-    wireBulkAfterSearch(kind);
-  }
-
-  function wireSection(kind) {
-    const input = document.querySelector(`.section-search[data-kind="${kind}"]`);
-    if (input) {
-      // The live <input> is NEVER replaced. We only repaint the rows /
-      // pager below it, so the IME composition context survives every
-      // keystroke (inputting "汉" no longer drops the intermediate pinyin
-      // strokes, and backspace works without re-clicking).
-      let settleTimer = null;
-      const apply = () => {
-        settleTimer = null;
-        sectionState[kind].query = input.value;
-        sectionState[kind].page = 0; // reset to first page on new filter
-        rerenderListOnly(kind);
-      };
-      input.addEventListener('input', () => {
-        // 120ms debounce collapses IME composition bursts into one
-        // repaint. The input itself is not touched.
-        if (settleTimer) clearTimeout(settleTimer);
-        settleTimer = setTimeout(apply, 120);
-      });
-      input.addEventListener('compositionend', () => {
-        if (settleTimer) clearTimeout(settleTimer);
-        apply();
-      });
-    }
-    const select = document.querySelector(`.section-event-filter[data-kind="${kind}"]`);
-    if (select) {
-      select.onchange = (e) => {
-        sectionState[kind].eventFilter = e.target.value;
-        sectionState[kind].page = 0;
-        rerenderListOnly(kind);
-      };
-    }
-    document.querySelectorAll(`.section-page[data-kind="${kind}"]`).forEach((btn) => {
-      btn.onclick = (e) => {
-        e.preventDefault();
-        const action = btn.dataset.action;
-        if (action === 'prev') sectionState[kind].page = Math.max(0, sectionState[kind].page - 1);
-        if (action === 'next') sectionState[kind].page = sectionState[kind].page + 1;
-        rerenderSections();
-      };
-    });
-    wireRowClicks(kind);
-    wireBulkEnter(kind);
-    if (sectionState[kind].selectModeActive) wireBulkInSection(kind);
-  }
-
-  // Wire pager buttons for a single section (used after rerenderListOnly).
-  function wirePager(kind) {
-    document.querySelectorAll(`.section-page[data-kind="${kind}"]`).forEach((btn) => {
-      btn.onclick = (e) => {
-        e.preventDefault();
-        const action = btn.dataset.action;
-        if (action === 'prev') sectionState[kind].page = Math.max(0, sectionState[kind].page - 1);
-        if (action === 'next') sectionState[kind].page = sectionState[kind].page + 1;
-        rerenderListOnly(kind);
-      };
-    });
-  }
-
-  // Wire row-click navigation for a single section.
-  function wireRowClicks(kind) {
-    if (sectionState[kind].selectModeActive) return;
-    document.querySelectorAll(`.list-host[data-kind="${kind}"] .attribute-clickable`).forEach((row) => {
-      row.onclick = () => navigate('/attributes/' + row.dataset.id);
-    });
-  }
-
-  // Wire the "进入批量删除" link in a section's header.
-  function wireBulkEnter(kind) {
-    const enterLink = document.querySelector(`.list-host[data-kind="${kind}"] [data-bulk-enter][data-kind="${kind}"]`);
-    if (!enterLink) return;
-    enterLink.onclick = (e) => {
-      e.preventDefault();
-      sectionState[kind].selectModeActive = true;
-      sectionState[kind].selected = new Set();
-      rerenderSections();
-    };
-  }
-
-  // Wire the bulk-select controls (toolbar + per-row checkboxes) for a
-  // section that's in select mode.
-  function wireBulkInSection(kind) {
-    const host = document.querySelector(`.list-host[data-kind="${kind}"]`);
-    if (!host) return;
-    const handlers = {
-      kindLabel: '条' + kindTitle[kind],
-      onDelete: async (ids) => {
-        const result = await api.attributes.deleteMany(ids);
-        sectionState[kind].selectModeActive = false;
-        sectionState[kind].selected = new Set();
-        toast(`已删除 ${result.deleted} 条${kindTitle[kind]}`);
-        await refreshKind(kind);
-        return result;
-      },
-      onExit: () => {
-        sectionState[kind].selectModeActive = false;
-        sectionState[kind].selected = new Set();
-        rerenderSections();
-      },
-    };
-    // Per-row checkbox flips — keep the Set in sync, then refresh the
-    // toolbar count without rebuilding the whole list (which would
-    // steal the user's focus).
-    host.querySelectorAll('.section-bulk-check').forEach((cb) => {
-      cb.onchange = () => {
-        const id = cb.dataset.id;
-        if (!id) return;
-        if (cb.checked) sectionState[kind].selected.add(id);
-        else sectionState[kind].selected.delete(id);
-        const t = host.querySelector('[data-bulk-toolbar]');
-        if (!t) return;
-        host.querySelectorAll('.section-bulk-check').forEach((rowCb) => {
-          const rid = rowCb.dataset.id;
-          if (!rid) return;
-          rowCb.checked = sectionState[kind].selected.has(rid);
-        });
-        const all = itemsByKind[kind] || [];
-        const qq = sectionState[kind].query.trim().toLowerCase();
-        const ef = sectionState[kind].eventFilter;
-        const total = all.filter((it) => matchesEither(it, qq, ef)).length;
-        t.outerHTML = bulkToolbarHtml({
-          count: sectionState[kind].selected.size,
-          total,
-          kindLabel: '条' + kindTitle[kind],
-        });
-        wireBulkToolbar(host, sectionState[kind], handlers);
-      };
-    });
-    wireBulkToolbar(host, sectionState[kind], handlers);
-  }
-
-  // After rerenderListOnly: re-wire pager + bulk UI. Search input is NOT
-  // re-wired — it stays mounted and keeps its caret + IME state.
-  function wireBulkAfterSearch(kind) {
-    wirePager(kind);
-    if (sectionState[kind].selectModeActive) wireBulkInSection(kind);
-  }
-
-  app.innerHTML = `
     <div class="contact-header">
       <div class="contact-avatar contact-avatar-lg"
            style="color: var(--contact-${contactColorIndex(c.name)})">
@@ -498,43 +186,135 @@ async function render(args) {
         </div>
       </div>
     </div>
-    <div class="card" data-contact-color="${contactColorIndex(c.name)}">
-      <div class="row" style="gap:24px">
-        <div><div class="meta">条目统计</div>${likes.length} 喜好 / ${taboos.length} 忌讳 / ${gifts.length} 礼物</div>
+  `;
+}
+
+// The tab bar. Each tab is a real hash link, so the browser's back button
+// and the "复制链接" affordance keep working, and the active tab is a
+// server-rendered `is-active` class rather than a JS toggle.
+function tabBarHTML(c, active, counts) {
+  const tabs = [
+    { key: 'overview', label: '概览', href: `#/contacts/${escapeHtml(c.id)}` },
+    { key: 'like',  label: KIND_META.like.title,  href: `#/contacts/${escapeHtml(c.id)}/${KIND_META.like.url}`,  count: counts.like },
+    { key: 'taboo', label: KIND_META.taboo.title, href: `#/contacts/${escapeHtml(c.id)}/${KIND_META.taboo.url}`, count: counts.taboo },
+    { key: 'gift',  label: KIND_META.gift.title,  href: `#/contacts/${escapeHtml(c.id)}/${KIND_META.gift.url}`,  count: counts.gift },
+  ];
+  return `
+    <nav class="cd-tabs" role="tablist">
+      ${tabs.map((t) => `
+        <a class="cd-tab${t.key === active ? ' is-active' : ''}"
+           role="tab" aria-selected="${t.key === active}"
+           href="${t.href}">
+          ${escapeHtml(t.label)}${t.count === undefined ? '' : `<span class="cd-tab-count">${t.count}</span>`}
+        </a>
+      `).join('')}
+    </nav>
+  `;
+}
+
+// --- 概览 tab -----------------------------------------------------------
+
+// Timestamp of the next occurrence of an annual date (month/day). Used to
+// order the merged 重要日期 list by "how soon it comes up".
+function nextAnnualTs(month, day) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  let ts = new Date(now.getFullYear(), month - 1, day).getTime();
+  if (ts < today) ts = new Date(now.getFullYear() + 1, month - 1, day).getTime();
+  return ts;
+}
+
+// Timestamp of an event's next firing. An event without any date has no
+// place in the ordering, so it sinks to the bottom of the list.
+function nextEventTs(e) {
+  const s = e.next_fire_at || e.remind_date || '';
+  if (!s) return Number.MAX_SAFE_INTEGER;
+  const t = Date.parse(String(s).slice(0, 10) + 'T00:00:00');
+  return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+}
+
+// One row of the 重要日期 section — a row from the `important_dates` table.
+function importantDateRow(d) {
+  const kindTone = d.kind === 'birthday' ? 'birthday'
+                 : d.kind === 'anniversary' ? 'anniversary'
+                 : 'important';
+  const icon = d.kind === 'birthday' ? '🎂'
+             : d.kind === 'anniversary' ? '💝'
+             : '📅';
+  return `
+    <div class="card list-row clickable" data-kind="important" data-important="${escapeHtml(d.id)}">
+      <div class="lr-id">
+        <span class="cat-icon" data-tone="${kindTone}">${icon}</span>
+      </div>
+      <div class="lr-main">
+        <div class="lr-title">${escapeHtml(d.label)} <span class="tag" style="margin-left:6px">${escapeHtml(kindLabel(d.kind))}</span></div>
+        <div class="lr-meta">每年 ${d.month}/${d.day}${d.year ? ' · ' + d.year + '年生' : ''} · 提醒 ${escapeHtml(d.remind_time || '09:00')}${d.remind_enabled === 0 ? ' · 已关闭' : ''}${d.remind_enabled !== 0 && d.advance_days > 0 ? ` · 提前 ${d.advance_days} 天` : ''}</div>
+      </div>
+      <div class="lr-side">
+        <div class="time-chip"><span class="chip-dot"></span>每年 ${d.month}-${d.day}</div>
       </div>
     </div>
+  `;
+}
 
-    <div class="list-host" data-kind="like"></div>
-    <div class="list-host" data-kind="taboo"></div>
-    <div class="list-host" data-kind="gift"></div>
+// One row of the same section — a row from the `events` table (a birthday
+// or anniversary the user created as an event, or any dated reminder).
+function eventRow(e) {
+  const kind = eventKindAttr(e);
+  const rel = formatRelative(e.next_fire_at || e.remind_date);
+  const cd = countdownTo(e.next_fire_at || e.remind_date);
+  return `
+    <div class="card list-row clickable" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(e.id)}" data-category="${escapeHtml(e.category || 'general')}">
+      <div class="lr-id">
+        <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>
+      </div>
+      <div class="lr-main">
+        <div class="lr-title">${escapeHtml(eventDisplayTitle(e) || '(无标题)')}</div>
+        <div class="lr-meta">${escapeHtml(repeatLabel(e))}${e.active ? '' : ' · 已结束'}</div>
+      </div>
+      <div class="lr-side">
+        <div class="time-chip ${cd ? 'urgent' : ''}"><span class="chip-dot"></span>${escapeHtml(rel)}</div>
+        ${cd ? `<div class="time-chip muted">${escapeHtml(cd)}</div>` : ''}
+      </div>
+    </div>
+  `;
+}
 
+async function renderOverview(c) {
+  const body = document.getElementById('cd-body');
+  body.innerHTML = `<div class="empty">载入中…</div>`;
+  const [dates, events, memorial] = await Promise.all([
+    api.importantDates.list(c.id),
+    api.events.list({ contact_id: c.id }),
+    api.memorialEvents.list({ contact_id: c.id }),
+  ]);
+
+  // 重要日期 and 事件 used to be two separate blocks on this page. Both
+  // hold dated reminders for this contact, and a birthday saved as an
+  // event looked nothing like a birthday saved as an important date — so
+  // one block sat empty while the other was full. They now share a single
+  // list, ordered by how soon each row comes up.
+  const dated = [
+    ...dates.map((d) => ({ source: 'date', row: d, at: nextAnnualTs(d.month, d.day) })),
+    ...events.map((e) => ({ source: 'event', row: e, at: nextEventTs(e) })),
+  ].sort((a, b) => (a.at - b.at)
+    || (a.source === b.source ? 0 : a.source === 'date' ? -1 : 1));
+
+  const datedRows = dated.map((item) => item.source === 'date'
+    ? importantDateRow(item.row)
+    : eventRow(item.row)).join('');
+
+  body.innerHTML = `
     <div class="section-header">
       <h2>重要日期</h2>
-      <button class="btn secondary" id="add-date">+ 新增</button>
+      <div class="row" style="gap:8px;">
+        <button class="btn" id="add-date">+ 重要日期</button>
+        <button class="btn secondary" id="add-event">+ 事件</button>
+      </div>
     </div>
-    ${dates.length === 0
-      ? `<div class="empty">还没有重要日期</div>`
-      : dates.map((d) => {
-        const kindTone = d.kind === 'birthday' ? 'birthday'
-                       : d.kind === 'anniversary' ? 'anniversary'
-                       : 'important';
-        const icon = d.kind === 'birthday' ? '🎂'
-                   : d.kind === 'anniversary' ? '💝'
-                   : '📅';
-        return `
-        <div class="card list-row clickable" data-kind="important" data-important="${escapeHtml(d.id)}">
-          <div class="lr-id">
-            <span class="cat-icon" data-tone="${kindTone}">${icon}</span>
-          </div>
-          <div class="lr-main">
-            <div class="lr-title">${escapeHtml(d.label)} <span class="tag" style="margin-left:6px">${escapeHtml(kindLabel(d.kind))}</span></div>
-            <div class="lr-meta">每年 ${d.month}/${d.day}${d.year ? ' · ' + d.year + '年生' : ''} · 提醒 ${escapeHtml(d.remind_time || '09:00')}${d.remind_enabled === 0 ? ' · 已关闭' : ''}${d.remind_enabled !== 0 && d.advance_days > 0 ? ` · 提前 ${d.advance_days} 天` : ''}</div>
-          </div>
-          <div class="lr-side">
-            <div class="time-chip"><span class="chip-dot"></span>每年 ${d.month}-${d.day}</div>
-          </div>
-        </div>
-      `}).join('')}
+    ${datedRows
+      ? datedRows
+      : `<div class="empty">还没有重要日期</div>`}
 
     <div class="section-header">
       <h2>回忆事件</h2>
@@ -556,41 +336,13 @@ async function render(args) {
           </div>
         </div>
       `).join('')}
-
-    <div class="section-header">
-      <h2>事件</h2>
-      <button class="btn secondary" id="add-event">+ 新增</button>
-    </div>
-    ${events.length === 0
-      ? `<div class="empty">还没有事件</div>`
-      : events.map((e) => {
-        const kind = eventKindAttr(e);
-        const rel = formatRelative(e.next_fire_at || e.remind_date);
-        const cd  = countdownTo(e.next_fire_at || e.remind_date);
-        return `
-        <div class="card list-row clickable" data-kind="${escapeHtml(kind)}" data-id="${escapeHtml(e.id)}" data-category="${escapeHtml(e.category || 'general')}">
-          <div class="lr-id">
-            <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>
-          </div>
-          <div class="lr-main">
-            <div class="lr-title">${escapeHtml(eventDisplayTitle(e) || '(无标题)')}</div>
-            <div class="lr-meta">${escapeHtml(repeatLabel(e))}${e.active ? '' : ' · 已结束'}</div>
-          </div>
-          <div class="lr-side">
-            <div class="time-chip ${cd ? 'urgent' : ''}"><span class="chip-dot"></span>${escapeHtml(rel)}</div>
-            ${cd ? `<div class="time-chip muted">${escapeHtml(cd)}</div>` : ''}
-          </div>
-        </div>
-      `}).join('')}
   `;
 
-  rerenderSections();
-
-  document.getElementById('add-date').onclick = () => showDateDialog(args.id);
-  document.getElementById('add-event').onclick = () => navigate('/events/new?category=general&contact_id=' + args.id);
+  document.getElementById('add-date').onclick = () => showDateDialog(c.id);
+  document.getElementById('add-event').onclick = () => navigate('/events/new?category=general&contact_id=' + c.id);
   const addMemorial = document.getElementById('add-memorial');
-  if (addMemorial) addMemorial.onclick = () => navigate('/diary/new?contact_id=' + encodeURIComponent(args.id));
-  app.querySelectorAll('.card.clickable').forEach((el) => {
+  if (addMemorial) addMemorial.onclick = () => navigate('/diary/new?contact_id=' + encodeURIComponent(c.id));
+  body.querySelectorAll('.card.clickable').forEach((el) => {
     el.onclick = () => {
       if (el.dataset.important) {
         navigate('/important-dates/' + el.dataset.important);
@@ -601,6 +353,359 @@ async function render(args) {
       }
     };
   });
+}
+
+// --- 喜好 / 忌讳 / 礼物 tab ---------------------------------------------
+
+// The collapsible "新增条目" form. It lives at the top of the tab, above
+// the list, so adding a row never needs a separate page.
+function addFormHTML(kind, st) {
+  return `
+    <div class="card cd-add-card${st.formOpen ? '' : ' hidden'}" id="cd-add-card">
+      <div class="section-header"><h2>新增${KIND_META[kind].title}条目</h2></div>
+      <div class="field">
+        <label>描述 *</label>
+        <input type="text" id="cd-add-desc" placeholder="例如：抹茶甜点"/>
+      </div>
+      <div class="field">
+        <label>事件（记录时间）</label>
+        <input type="date" id="cd-add-event" value="${escapeHtml(todayYmd())}"/>
+      </div>
+      <div class="row" style="margin-top:14px; gap:8px;">
+        <button type="button" class="btn" id="cd-add-save">添加</button>
+        <button type="button" class="btn secondary" id="cd-add-cancel">取消</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderKindTab(c, kind, itemsByKind) {
+  const meta = KIND_META[kind];
+  const st = viewState(c.id, kind);
+  const body = document.getElementById('cd-body');
+
+  const all = itemsByKind[kind] || [];
+  const count = all.length;
+
+  body.innerHTML = `
+    <div class="section-header">
+      <h2>${meta.title}<span class="cd-count">${count}</span></h2>
+      <div class="row" style="gap:10px; align-items:center;">
+        ${bulkEnterLinkHtml()}
+        <button type="button" class="btn" id="cd-add-toggle">+ 新增条目</button>
+      </div>
+    </div>
+
+    ${addFormHTML(kind, st)}
+
+    <div class="list-host" data-kind="${escapeHtml(kind)}">
+      <div class="filter-row">
+        <input type="text" class="section-search" data-kind="${escapeHtml(kind)}"
+               placeholder="搜索描述…" value="${escapeHtml(st.query)}"/>
+        <select class="section-event-filter" data-kind="${escapeHtml(kind)}">
+          ${buildEventFilterOptions(all).map((o) => `<option value="${escapeHtml(o.value)}" ${o.value === st.eventFilter ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="list-tail" data-kind="${escapeHtml(kind)}"></div>
+    </div>
+  `;
+
+  // The list tail is repainted on every filter / page / bulk change; the
+  // filter row above it is never touched, so the search input keeps its
+  // caret and its IME composition context across keystrokes.
+  const tail = body.querySelector('.list-tail');
+
+  function visibleItems() {
+    const items = itemsByKind[kind] || [];
+    const q = st.query.trim().toLowerCase();
+    const filtered = items.filter((it) => matchesEither(it, q, st.eventFilter));
+    const ordered = (q || st.eventFilter) ? sortByEventDesc(filtered) : filtered;
+    return { q, filtered, ordered };
+  }
+
+  function paintTail() {
+    const { q, ordered } = visibleItems();
+    const totalPages = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
+    if (st.page >= totalPages) st.page = totalPages - 1;
+    if (st.page < 0) st.page = 0;
+    const start = st.page * PAGE_SIZE;
+    const visible = ordered.slice(start, start + PAGE_SIZE);
+    const filtersActive = !!(q || st.eventFilter);
+    const selectActive = !!st.selectModeActive;
+
+    const rowsHtml = visible.map((it) => {
+      const inner = renderItemRow(it);
+      if (selectActive) {
+        // Select mode renders every row as its own bulk-row card. The
+        // shared helper's markup is what the toolbar's "全选" scans for,
+        // so it has to be used verbatim here.
+        return bulkSelectableRowHtml(inner, it.id, st.selected.has(it.id), kind);
+      }
+      return inner;
+    }).join('');
+
+    const listHtml = visible.length
+      ? (selectActive
+          ? rowsHtml
+          : `<div class="card" data-kind="${escapeHtml(kind)}">${rowsHtml}</div>`)
+      : (filtersActive
+          ? `<div class="empty">没有匹配的${meta.title}</div>`
+          : `<div class="empty">还没有${meta.title}条目 · 点右上「+ 新增条目」添加</div>`);
+
+    const matchFooter = filtersActive
+      ? `<div class="meta" style="padding:6px 0">匹配 ${ordered.length} 条${q ? ' · 关键词：' + escapeHtml(st.query) : ''}${st.eventFilter ? ' · 事件：' + escapeHtml(st.eventFilter === '__none__' ? '未填事件' : st.eventFilter) : ''}</div>`
+      : '';
+
+    const toolbarHtml = selectActive ? bulkToolbarHtml({
+      count: st.selected.size,
+      total: ordered.length,
+      kindLabel: '条' + meta.title,
+    }) : '';
+
+    tail.innerHTML = `
+      ${toolbarHtml}
+      ${listHtml}
+      ${matchFooter}
+      ${renderPager(st, totalPages)}
+    `;
+
+    // In select mode the toolbar takes over the action area, so the
+    // "批量删除" entry link steps aside.
+    const enterLink = body.querySelector('[data-bulk-enter]');
+    if (enterLink) enterLink.classList.toggle('hidden', selectActive);
+
+    wireRows();
+    wirePager();
+    if (selectActive) wireBulkInSection();
+  }
+
+  function renderPager(state, totalPages) {
+    if (totalPages <= 1) return '';
+    const cur = state.page + 1; // 1-based for display
+    const prevDisabled = state.page <= 0;
+    const nextDisabled = state.page >= totalPages - 1;
+    return `
+      <div class="row between" style="margin-top:8px">
+        <button type="button" class="btn secondary section-page" data-kind="${escapeHtml(kind)}" data-action="prev" ${prevDisabled ? 'disabled' : ''}>← 上一页</button>
+        <div class="meta">第 ${cur} / ${totalPages} 页</div>
+        <button type="button" class="btn secondary section-page" data-kind="${escapeHtml(kind)}" data-action="next" ${nextDisabled ? 'disabled' : ''}>下一页 →</button>
+      </div>
+    `;
+  }
+
+  function wireRows() {
+    if (st.selectModeActive) return;
+    tail.querySelectorAll('.attribute-clickable').forEach((row) => {
+      row.onclick = () => navigate('/attributes/' + row.dataset.id);
+    });
+  }
+
+  function wirePager() {
+    tail.querySelectorAll('.section-page').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.preventDefault();
+        const action = btn.dataset.action;
+        if (action === 'prev') st.page = Math.max(0, st.page - 1);
+        if (action === 'next') st.page = st.page + 1;
+        paintTail();
+      };
+    });
+  }
+
+  function wireBulkInSection() {
+    const handlers = {
+      kindLabel: '条' + meta.title,
+      onDelete: async (ids) => {
+        const result = await api.attributes.deleteMany(ids);
+        st.selectModeActive = false;
+        st.selected = new Set();
+        // A full page reload: the tab bar counters, the section title
+        // count and the list all have to agree afterwards.
+        await reload();
+        return result;
+      },
+      onExit: () => {
+        st.selectModeActive = false;
+        st.selected = new Set();
+        paintTail();
+      },
+    };
+    // The bulk toolbar calls this whenever the selection changes (e.g.
+    // "全选"). Refresh the "删除选中 (N)" counter without rebuilding the
+    // whole list — a rebuild would steal focus from the checkbox.
+    st.onChange = () => {
+      const t = tail.querySelector('[data-bulk-toolbar]');
+      if (!t) return;
+      tail.querySelectorAll('.bulk-row-check').forEach((cb) => {
+        const id = cb.dataset.bulkId;
+        if (!id) return;
+        cb.checked = st.selected.has(id);
+      });
+      const { ordered } = visibleItems();
+      t.outerHTML = bulkToolbarHtml({
+        count: st.selected.size,
+        total: ordered.length,
+        kindLabel: '条' + meta.title,
+      });
+      wireBulkToolbar(tail, st, handlers);
+    };
+    // Per-row checkbox flips — keep the Set in sync, then refresh the
+    // toolbar count.
+    wireBulkRowChecks(tail, st);
+    wireBulkToolbar(tail, st, handlers);
+  }
+
+  // Re-render the whole page for this contact + tab. Used after a
+  // mutation (add / delete) so every counter on screen is re-derived from
+  // the DB.
+  async function reload() {
+    await render({ id: c.id }, kind);
+  }
+
+  // --- wiring -----------------------------------------------------------
+
+  const search = body.querySelector('.section-search');
+  if (search) {
+    // The live <input> is NEVER replaced — only the list tail below it is
+    // repainted, so the IME composition context survives every keystroke
+    // (typing "汉" no longer drops the intermediate pinyin strokes, and
+    // backspace works without re-clicking).
+    let settleTimer = null;
+    const apply = () => {
+      settleTimer = null;
+      st.query = search.value;
+      st.page = 0; // a new filter always starts at page 1
+      paintTail();
+    };
+    search.addEventListener('input', () => {
+      // 120ms debounce collapses IME composition bursts into one repaint.
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(apply, 120);
+    });
+    search.addEventListener('compositionend', () => {
+      if (settleTimer) clearTimeout(settleTimer);
+      apply();
+    });
+  }
+
+  const eventFilter = body.querySelector('.section-event-filter');
+  if (eventFilter) {
+    eventFilter.onchange = (e) => {
+      st.eventFilter = e.target.value;
+      st.page = 0;
+      paintTail();
+    };
+  }
+
+  // "批量删除" entry link in the section header.
+  wireBulkEnter(body, () => {
+    // Nothing to pick from — entering select mode would only show an
+    // empty list with a toolbar on top.
+    if (!itemsByKind[kind] || !itemsByKind[kind].length) return;
+    st.selectModeActive = true;
+    st.selected = new Set();
+    paintTail();
+  });
+
+  // "+ 新增条目" toggle + the add form itself.
+  const addToggle = body.querySelector('#cd-add-toggle');
+  if (addToggle) {
+    addToggle.onclick = () => {
+      st.formOpen = !st.formOpen;
+      // Adding a row and picking rows to delete are different modes —
+      // opening the form leaves select mode behind.
+      if (st.formOpen && st.selectModeActive) {
+        st.selectModeActive = false;
+        st.selected = new Set();
+        paintTail();
+      }
+      const card = body.querySelector('#cd-add-card');
+      if (card) card.classList.toggle('hidden', !st.formOpen);
+      if (st.formOpen) {
+        const desc = body.querySelector('#cd-add-desc');
+        if (desc) desc.focus();
+      }
+    };
+  }
+
+  const addSave = body.querySelector('#cd-add-save');
+  if (addSave) {
+    addSave.onclick = async () => {
+      const descEl = body.querySelector('#cd-add-desc');
+      const evEl = body.querySelector('#cd-add-event');
+      const description = (descEl.value || '').trim();
+      if (!description) { toast('请填写描述'); descEl.focus(); return; }
+      // Empty event → today (local), matching the rest of the app.
+      const event = evEl.value || todayYmd();
+      try {
+        await api.attributes.create({
+          contact_id: c.id,
+          kind: meta.attrKind,
+          description,
+          event,
+        });
+        toast('已添加');
+      } catch (e) {
+        toast('操作失败：' + (e.message || e));
+        return;
+      }
+      st.formOpen = false;
+      const card = body.querySelector('#cd-add-card');
+      if (card) card.classList.add('hidden');
+      await reload();
+    };
+  }
+
+  const addCancel = body.querySelector('#cd-add-cancel');
+  if (addCancel) {
+    addCancel.onclick = () => {
+      st.formOpen = false;
+      const card = body.querySelector('#cd-add-card');
+      if (card) card.classList.add('hidden');
+    };
+  }
+
+  // Click anywhere on the date input to open the calendar picker.
+  wireDateInputs(body);
+
+  paintTail();
+}
+
+// --- Page entry ---------------------------------------------------------
+
+async function render(args, tab) {
+  const app = document.getElementById('app');
+  app.innerHTML = `<div class="empty">载入中…</div>`;
+
+  const c = await api.contacts.get(args.id);
+  if (!c) {
+    app.innerHTML = `<div class="empty">联系人不存在</div>`;
+    return;
+  }
+  // Warm the avatar data URL cache so the header photo paints on the same
+  // tick as the rest of the page (the first IPC populates the cache; the
+  // second paint uses the cached value).
+  if (c.custom_avatar_path) fetchAvatarDataUrl(c.id);
+
+  const [likes, taboos, gifts] = await Promise.all([
+    api.attributes.list('like',  { contact_id: c.id }),
+    api.attributes.list('taboo', { contact_id: c.id }),
+    api.attributes.list('gift',  { contact_id: c.id }),
+  ]);
+  const itemsByKind = { like: likes, taboo: taboos, gift: gifts };
+  const counts = { like: likes.length, taboo: taboos.length, gift: gifts.length };
+
+  app.innerHTML = `
+    ${headerHTML(c)}
+    ${tabBarHTML(c, tab, counts)}
+    <div id="cd-body"></div>
+  `;
+
+  if (tab === 'overview') {
+    await renderOverview(c);
+  } else {
+    renderKindTab(c, tab, itemsByKind);
+  }
 }
 
 // Label for an important-date row's `kind` column. (The event repeat
@@ -679,8 +784,18 @@ function showDateDialog(contactId) {
     await api.importantDates.create(contactId, input);
     modal.remove();
     toast('已添加');
-    render({ id: contactId });
+    // Re-render in place: the hash is unchanged, so a navigate() would be
+    // a no-op (no hashchange → no re-render) and the new date would not
+    // show up.
+    await render({ id: contactId }, 'overview');
   };
 }
 
-register('/contacts/:id', render);
+// --- Routes -------------------------------------------------------------
+//
+// The three kind routes replaced the old "#/contacts/:id/:kind" manage
+// pages (contact_list_edit.js) — the tab body IS the manage page now.
+register('/contacts/:id',        (args) => render(args, 'overview'));
+register('/contacts/:id/likes',  (args) => render(args, 'like'));
+register('/contacts/:id/taboos', (args) => render(args, 'taboo'));
+register('/contacts/:id/gifts',  (args) => render(args, 'gift'));
