@@ -24,6 +24,13 @@
   /* The 「返回」 chevron, kept as a mask so it can be painted with the
      link's own color (currentColor) instead of shipping an SVG per page. */
   --icon-arrow-left: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 5l-7 7 7 7'/%3E%3C/svg%3E");
+  /* The 回忆事件 toolbar's icons, same mask technique as the chevron
+     above: painted from a mask so they take the color of whatever
+     carries them (currentColor) instead of shipping an SVG per color.
+     They are stroked in black here and recolored by the mask. */
+  --icon-search: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.6-3.6'/%3E%3C/svg%3E");
+  --icon-funnel: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 5h18l-7 8v6l-4 2v-8z'/%3E%3C/svg%3E");
+  --icon-chevron-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   /* Single source for the font stack so we can tweak it without hunting
      through every selector that hard-codes it. */
   --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
@@ -3633,33 +3640,256 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   align-items: start;
 }
 
-/* The filter bar on the 回忆事件 page: three dropdowns (时间 / 联系人 /
-   类型) and a 重置筛选 button, sitting between the search box and the
-   card grid.
+/* ---------------------------------------------------------------------------
+   回忆事件 toolbar — the header, the search pill and the filter card
+   ---------------------------------------------------------------------------
+   The three controls at the top of the 回忆事件 page are painted as ONE
+   warm panel: a soft peach card that holds the title, the two action
+   buttons, the rounded search field and the filter strip. They read as a
+   single "control surface" rather than as four unrelated widgets stacked
+   on the page background.
 
-   The row sits BELOW the search box rather than beside it: the search
-   input takes the full width of its row (it is the thing the user types
-   into, and it must never be squeezed), while the dropdowns are narrow
-   and work well in a row of their own. On a narrow window they wrap onto
-   a second line. */
+   The panel is a wrapper (`#memorial-toolbar`) rather than a background on
+   the scroll container, because the card grid below must keep the plain
+   app surface — the cards ARE diary pages, and a panel behind them would
+   put a frame around every one of them.
+
+   Colors come from the app's own warm palette (--accent / --accent-soft),
+   so the toolbar sits in the same family as the theme and the diary
+   pages, without introducing a second accent hue. */
+.memorial-toolbar {
+  --memorial-panel: #fdf2ea;
+  --memorial-panel-edge: #f7e4d6;
+  --memorial-ink: #4a3f38;
+  --memorial-ink-soft: #9c8c80;
+  position: relative;
+  background: var(--memorial-panel);
+  border: 1px solid var(--memorial-panel-edge);
+  border-radius: 18px;
+  padding: 16px 18px 14px;
+  margin: 0 0 16px;
+  box-shadow: 0 2px 10px rgba(190, 140, 105, 0.06);
+}
+
+/* ---- the title row ------------------------------------------------------- */
+.memorial-toolbar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+/* The title carries the hand-drawn heart + squiggle from the design. It is
+   an inline SVG in the app's accent color, so it scales with the title
+   and picks up the theme without a second asset.
+
+   The wordmark, the doodle and the 批量删除 link are three separate
+   flex children, so their spacing is explicit: the doodle hugs the
+   title text, and the link stands off at the far end of the group. */
+.memorial-title {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--memorial-ink);
+  letter-spacing: 0.01em;
+}
+/* The 批量删除 entry link sits beside the title, but it must not be
+   swallowed by the title's flex row — it keeps its own spacing, and it
+   stays out of the title's own type size. */
+.memorial-title .inline-link {
+  margin-left: 14px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--memorial-ink-soft);
+  white-space: nowrap;
+}
+.memorial-title .inline-link:hover { color: var(--accent); }
+/* The heart + the two flourishes that trail it. The strokes are thin and
+   the heart small, so the mark reads as a doodle next to the title
+   rather than as an icon competing with it. */
+.memorial-title-art {
+  flex: none;
+  width: 74px;
+  height: 26px;
+  margin-left: 12px;
+  color: var(--accent);
+}
+/* The action buttons: 导出回忆 is a soft white pill, 新建 is the accent
+   one. The "+" is drawn as a glyph inside the button rather than baked
+   into the label, so the two buttons keep the same baseline. */
+.memorial-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+.memorial-toolbar-actions .btn {
+  border-radius: 999px;
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.memorial-btn-export {
+  background: #fff;
+  color: var(--memorial-ink);
+  border: 1px solid var(--memorial-panel-edge);
+}
+.memorial-btn-export:hover { background: #fffaf6; border-color: #e8cdb8; }
+.memorial-btn-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(217, 119, 87, 0.28);
+}
+.memorial-btn-new:hover { background: #c5684a; }
+.memorial-btn-new .memorial-plus {
+  font-size: 15px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+/* ---- the search pill ----------------------------------------------------- */
+.memorial-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+/* The field is a white pill: the search icon rides inside it on the left
+   and the clear button on the right, so the whole control reads as one
+   rounded object rather than as an input flanked by two buttons. */
+.memorial-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  border: 1px solid var(--memorial-panel-edge);
+  border-radius: 999px;
+  padding: 0 14px;
+  transition: border-color 120ms ease, box-shadow 180ms ease;
+}
+.memorial-search-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.14);
+}
+.memorial-search-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--memorial-ink-soft);
+  background-color: currentColor;
+  -webkit-mask-image: var(--icon-search);
+  mask-image: var(--icon-search);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+.memorial-search input.page-search-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  padding: 11px 10px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13.5px;
+  color: var(--memorial-ink);
+}
+.memorial-search input.page-search-input:focus {
+  outline: none;
+  box-shadow: none;
+  border-color: transparent;
+}
+.memorial-search input.page-search-input::placeholder {
+  color: var(--memorial-ink-soft);
+  opacity: 1;
+}
+/* The clear button is a small round × inside the pill. The native
+   WebKit search-cancel button is suppressed, so this is the only one. */
+.memorial-search input.page-search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.memorial-search-clear {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #efe7e0;
+  color: #8c7f74;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.memorial-search-clear:hover { background: #e3d8cf; color: #6c5f55; }
+/* The match counter sits OUTSIDE the pill, so the field itself stays a
+   clean single object. */
+.memorial-search .page-search-meta {
+  flex: 0 0 auto;
+  color: var(--memorial-ink-soft);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  padding-left: 0;
+}
+
+/* ---- the filter card ----------------------------------------------------- */
 .memorial-filters {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 12px;
+  gap: 14px;
   flex-wrap: wrap;
+  background: #fff;
+  border: 1px solid var(--memorial-panel-edge);
+  border-radius: 12px;
+  padding: 9px 14px;
 }
-/* Each dropdown is a labelled pair: the label sits to the left of the
-   <select>, so the row reads as three named filters rather than as three
+/* The funnel icon + 筛选条件 label lead the strip. */
+.memorial-filter-lead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  color: var(--memorial-ink);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.memorial-filter-funnel {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--memorial-ink-soft);
+  background-color: currentColor;
+  -webkit-mask-image: var(--icon-funnel);
+  mask-image: var(--icon-funnel);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+/* Each dropdown is a labelled pair: 时间 sits to the left of its
+   <select>, so the row reads as three NAMED filters rather than as three
    anonymous dropdowns. */
 .memorial-filter {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
 }
 .memorial-filter-label {
-  color: #8a8580;
-  font-size: 12px;
+  color: var(--memorial-ink-soft);
+  font-size: 13px;
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
@@ -3667,17 +3897,59 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
    rule sets width:100%, which would stretch it to fill the row. */
 .memorial-filter-select {
   width: auto;
-  min-width: 108px;
-  padding: 7px 10px;
+  min-width: 104px;
+  max-width: 190px;
+  padding: 6px 10px;
   font-size: 13px;
+  color: var(--memorial-ink);
+  background-color: transparent;
+  border-color: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
+.memorial-filter-select:hover {
+  background-color: var(--accent-soft);
+  border-color: var(--memorial-panel-edge);
+}
+/* The native dropdown arrow is replaced with the app's own chevron, so
+   the control matches the rest of the UI instead of the platform's. */
+.memorial-filter-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 24px;
+  background-image: var(--icon-chevron-down);
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 10px;
+}
+/* The dropdowns are separated by hairlines, so the strip reads as three
+   groups rather than as six loose words. The divider is a pseudo-element
+   on the group, so it never has to be a real element in the markup. */
+.memorial-filter + .memorial-filter::before {
+  content: "";
+  align-self: stretch;
+  width: 1px;
+  margin: 1px 2px;
+  background: var(--memorial-panel-edge);
+}
+/* 重置筛选 is pushed to the far right of the strip — the destructive-ish
+   action, out of the way of the filters themselves. */
 .memorial-filter-reset {
-  flex: 0 0 auto;
+  flex: none;
+  margin-left: auto;
+  background: transparent;
+  color: var(--accent);
+  border: none;
+  padding: 6px 4px;
+  font-size: 13px;
+  border-radius: 6px;
 }
+.memorial-filter-reset:hover { background: var(--accent-soft); }
 /* The counter beside the dropdowns: how many entries survive the
    dropdowns alone (the search box is counted separately). */
 .memorial-filter-meta {
-  color: #8a8580;
+  color: var(--memorial-ink-soft);
   font-size: 12px;
   letter-spacing: 0.02em;
 }

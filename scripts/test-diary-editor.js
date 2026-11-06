@@ -1568,6 +1568,177 @@ app.whenReady().then(async () => {
     /没有符合筛选条件/.test(filterResult.emptyText));
   check('an empty result shows no cards', filterResult.emptyCount, 0);
 
+  // ---- 14. The toolbar ---------------------------------------------------
+  //
+  // The header, the search pill and the filter strip are one warm panel.
+  // The test pins the SHAPE of that panel — the group that holds the
+  // three controls, the pill around the search field, the icon slots and
+  // the hairline dividers — so a later change that quietly drops one of
+  // them shows up here rather than as a surprise screenshot.
+  console.log('\n== 回忆事件工具栏 ==');
+  const toolbarResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testRows.seed('tb-1', {
+      id: 'tb-1', kind: 'first_time', title: '一条回忆',
+      occurred_at: '2026-05-01 10:00:00', background: 'light',
+      contact_ids: ['c1'], contact_names: ['小明'], photo_count: 0,
+      notes: '正文',
+    });
+    await window.__list.render([], {});
+    await new Promise(r => setTimeout(r, 150));
+
+    const q = (sel) => document.querySelector(sel);
+    const cs = (sel, prop) => {
+      const el = q(sel);
+      return el ? getComputedStyle(el)[prop] : null;
+    };
+
+    // The panel holds all three controls.
+    const panel = q('#memorial-toolbar');
+    const panelBox = panel.getBoundingClientRect();
+    const head = q('.memorial-toolbar-head').getBoundingClientRect();
+    const search = q('.memorial-search').getBoundingClientRect();
+    const strip = q('.memorial-filters').getBoundingClientRect();
+
+    // The search field is a pill with the icon inside it, not an input
+    // flanked by two buttons.
+    const field = q('.memorial-search-field');
+    const fieldBox = field.getBoundingClientRect();
+    const iconBox = q('.memorial-search-icon').getBoundingClientRect();
+    const inputBox = q('#memorial-q').getBoundingClientRect();
+
+    // The three dropdown groups are separated by hairlines.
+    const groups = Array.from(document.querySelectorAll('.memorial-filter'));
+
+    // The clear button is hidden while the search is empty, so type
+    // something first and let the list repaint — a hidden button has no
+    // box to measure.
+    const input = q('#memorial-q');
+    input.value = '一条';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 250));
+    const clearRect = q('#memorial-clear').getBoundingClientRect();
+
+    return {
+      hasPanel: !!panel,
+      panelBg: cs('#memorial-toolbar', 'backgroundColor'),
+      panelRadius: cs('#memorial-toolbar', 'borderRadius'),
+      // The three controls stack down the panel, in order.
+      stacked: head.bottom <= search.top + 1 && search.bottom <= strip.top + 1,
+      // And they all live INSIDE the panel.
+      inside: head.top >= panelBox.top - 1
+        && strip.bottom <= panelBox.bottom + 1,
+
+      fieldRadius: cs('.memorial-search-field', 'borderRadius'),
+      fieldBg: cs('.memorial-search-field', 'backgroundColor'),
+      hasIcon: !!q('.memorial-search-icon'),
+      // The icon sits inside the field, to the left of the input.
+      iconInside: iconBox.left >= fieldBox.left - 1
+        && iconBox.right <= inputBox.left + 1,
+      // The clear button is inside the pill too.
+      clearInside: clearRect.left >= fieldBox.left - 1
+        && clearRect.right <= fieldBox.right + 1,
+      // The native WebKit cancel button is suppressed, so the pill has
+      // exactly one clear affordance.
+      clearIsRound: cs('#memorial-clear', 'borderRadius'),
+
+      hasFunnel: !!q('.memorial-filter-funnel'),
+      leadText: q('.memorial-filter-lead')
+        ? q('.memorial-filter-lead').textContent.trim() : '',
+      groupCount: groups.length,
+      // Every group but the first carries the hairline divider.
+      dividers: groups.slice(1).map(g =>
+        getComputedStyle(g, '::before').width),
+
+      // The title carries its doodle.
+      hasArt: !!q('.memorial-title-art'),
+      artWidth: q('.memorial-title-art')
+        ? Math.round(q('.memorial-title-art').getBoundingClientRect().width) : 0,
+      titleText: q('.memorial-title')
+        ? q('.memorial-title').textContent.trim() : '',
+    };
+  `);
+
+  checkTrue('the toolbar panel is on the page', toolbarResult.hasPanel);
+  checkTrue('the panel is painted in the warm peach tone',
+    /rgb\(253, 242, 234\)/.test(toolbarResult.panelBg));
+  check('the panel is a rounded card', toolbarResult.panelRadius, '18px');
+  checkTrue('the three controls stack in order', toolbarResult.stacked);
+  checkTrue('all three controls live inside the panel', toolbarResult.inside);
+
+  check('the search field is a pill', toolbarResult.fieldRadius, '999px');
+  checkTrue('the search field is white', toolbarResult.fieldBg.includes('255, 255, 255'));
+  checkTrue('the search field carries its magnifier', toolbarResult.hasIcon);
+  checkTrue('the magnifier rides inside the field', toolbarResult.iconInside);
+  checkTrue('the clear button rides inside the field', toolbarResult.clearInside);
+  checkTrue('the clear button is a round chip',
+    toolbarResult.clearIsRound === '50%');
+
+  checkTrue('the filter strip carries its funnel', toolbarResult.hasFunnel);
+  check('the strip leads with 筛选条件', toolbarResult.leadText, '筛选条件');
+  check('the strip carries three filter groups', toolbarResult.groupCount, 3);
+  checkTrue('the groups are divided by hairlines',
+    toolbarResult.dividers.every((w) => w === '1px'));
+
+  checkTrue('the title carries its doodle', toolbarResult.hasArt);
+  checkTrue('the doodle has width', toolbarResult.artWidth > 40);
+  checkTrue('the title still reads 回忆事件',
+    /回忆事件/.test(toolbarResult.titleText));
+
+  // ---- 15. The bulk-select round trip ------------------------------------
+  //
+  // Entering select mode repaints the list subtree, and the bulk toolbar
+  // is part of that subtree — so the 「退出选择」 button the user clicks is
+  // a NEW node, with none of the handlers the old one had. Binding the
+  // toolbar only at mount time left the button dead.
+  //
+  // This walks the whole round trip and checks that select mode can
+  // actually be entered AND left.
+  console.log('\n== 回忆事件批量选择 ==');
+  const bulkResult = await evalIn(win, `
+    const q = (sel) => document.querySelector(sel);
+    const state = { };
+
+    // Enter select mode through the 「批量删除」 link.
+    q('[data-bulk-enter]').click();
+    await new Promise(r => setTimeout(r, 250));
+    state.toolbarShown = !!q('[data-bulk-toolbar]');
+    state.checkboxShown = !!q('.bulk-row-check');
+
+    // The exit button must be LIVE — a bound handler, not just a node.
+    const exit = q('[data-bulk-exit]');
+    state.exitExists = !!exit;
+    state.exitHasHandler = !!(exit && exit.onclick);
+
+    // ...and clicking it must actually leave select mode.
+    if (exit) exit.click();
+    await new Promise(r => setTimeout(r, 250));
+    state.toolbarGone = !q('[data-bulk-toolbar]');
+    state.checkboxGone = !q('.bulk-row-check');
+    // The title row must come back intact.
+    state.artBack = !!q('.memorial-title-art');
+    state.exportBack = !!q('#open-export');
+    state.newBack = !!q('#new-event');
+    state.bulkLinkBack = !!q('[data-bulk-enter]');
+    state.headClass = q('#page-header') ? q('#page-header').className : '';
+    state.cards = document.querySelectorAll('.memorial-card').length;
+    return state;
+  `);
+
+  checkTrue('select mode shows the bulk toolbar', bulkResult.toolbarShown);
+  checkTrue('select mode puts a checkbox on each card', bulkResult.checkboxShown);
+  checkTrue('the exit button is on the page', bulkResult.exitExists);
+  checkTrue('the exit button is wired to a handler', bulkResult.exitHasHandler);
+  checkTrue('leaving select mode takes the toolbar away', bulkResult.toolbarGone);
+  checkTrue('leaving select mode takes the checkboxes away', bulkResult.checkboxGone);
+  checkTrue('the title doodle comes back', bulkResult.artBack);
+  checkTrue('the export button comes back', bulkResult.exportBack);
+  checkTrue('the new button comes back', bulkResult.newBack);
+  checkTrue('the bulk entry link comes back', bulkResult.bulkLinkBack);
+  check('the title row keeps its class', bulkResult.headClass,
+    'memorial-toolbar-head');
+  check('the cards survive the round trip', bulkResult.cards, 1);
+
   console.log(`\n== ${pass} passed, ${fail} failed ==\n`);
   cleanup(win, fail === 0 ? 0 : 1);
 }).catch((e) => {

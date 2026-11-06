@@ -128,6 +128,11 @@ function rerenderList() {
 
   if (pageState.selectMode.active) {
     wireBulkRowChecks(host, pageState.selectMode);
+    // The toolbar is part of the subtree we just rewrote, so the button
+    // the user is about to click is a NEW node — it needs its handlers
+    // bound again. Without this, 「退出选择」 and 「删除选中」 are dead
+    // after any redraw.
+    wireBulkToolbar(host, pageState.selectMode, bulkHandlers);
   }
 }
 
@@ -193,65 +198,77 @@ function applyPhotos() { /* no-op */ }
 // Bulk-select wiring. The toolbar / "Enter bulk-delete" link live inside
 // rewritten subtrees, so re-bind them every time the list redraws and
 // once on initial mount for the header row's link.
-function wireBulk() {
-  const handlers = {
-    onDelete: async (ids) => {
-      const result = await api.events.deleteMany(ids);
-      // 仅在删除后重新拉取数据；URL 与 pageState.q 保持不变。
-      const params = { q: pageState.q, contact_id: undefined };
-      await reloadAndRender(params);
-      return result;
-    },
-    onExit: () => {
-      pageState.selectMode.active = false;
-      pageState.selectMode.selected = new Set();
-      rerenderList();
-      // 重新挂上页面头部的「批量删除」入口链接（和当前选中行数无关 — 只看
-      // 是否有可批量操作的事件）。只有当列表非空时才显示入口，避免空状态
-      // 下出现无用按钮。
-      const header = document.getElementById('page-header');
-      if (header) {
-        const enterLink = pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : '';
-        const newHeader = document.createElement('div');
-        newHeader.id = 'page-header';
-        newHeader.className = 'row between';
-        newHeader.innerHTML = `
-          <h1>工作事件 ${enterLink}</h1>
-          <button class="btn" id="new-event">+ 新建</button>
-        `;
-        header.replaceWith(newHeader);
-        document.getElementById('new-event').onclick = () => navigate('/events/new?category=work');
-        wireBulkEnter(newHeader, () => {
-          pageState.selectMode.active = true;
-          pageState.selectMode.selected = new Set();
-          rerenderList();
-        });
-      }
-    },
-  };
+//
+// The handlers live at MODULE scope, not inside wireBulk(), because the
+// list redraw (rerenderList) has to re-bind the toolbar's buttons every
+// time it paints: the toolbar is part of the rewritten subtree, so a
+// fresh toolbar arrives without any handlers on it. Binding it only
+// once — at mount time — left 「退出选择」 dead, because the button the
+// user clicks is a different node from the one that was bound.
+const bulkHandlers = {
+  onDelete: async (ids) => {
+    const result = await api.events.deleteMany(ids);
+    // 仅在删除后重新拉取数据；URL 与 pageState.q 保持不变。
+    const params = { q: pageState.q, contact_id: undefined };
+    await reloadAndRender(params);
+    return result;
+  },
+  onExit: () => {
+    pageState.selectMode.active = false;
+    pageState.selectMode.selected = new Set();
+    rerenderList();
+    // 重新挂上页面头部的「批量删除」入口链接（和当前选中行数无关 — 只看
+    // 是否有可批量操作的事件）。只有当列表非空时才显示入口，避免空状态
+    // 下出现无用按钮。
+    const header = document.getElementById('page-header');
+    if (header) {
+      const enterLink = pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : '';
+      const newHeader = document.createElement('div');
+      newHeader.id = 'page-header';
+      newHeader.className = 'row between';
+      newHeader.innerHTML = `
+        <h1>工作事件 ${enterLink}</h1>
+        <button class="btn" id="new-event">+ 新建</button>
+      `;
+      header.replaceWith(newHeader);
+      document.getElementById('new-event').onclick = () => navigate('/events/new?category=work');
+      wireBulkEnter(newHeader, () => {
+        pageState.selectMode.active = true;
+        pageState.selectMode.selected = new Set();
+        rerenderList();
+      });
+    }
+  },
+};
 
+// The bulk toolbar's own counter. Refreshes the "删除选中 (N)" label
+// without rebuilding the list — a rebuild would steal focus from the
+// checkbox the user just ticked.
+function bulkOnChange() {
+  const t = document.querySelector('[data-bulk-toolbar]');
+  if (!t) return;
+  document.querySelectorAll('.bulk-row-check').forEach((cb) => {
+    const id = cb.dataset.bulkId;
+    if (!id) return;
+    cb.checked = pageState.selectMode.selected.has(id);
+  });
+  const count = pageState.selectMode.selected.size;
+  const total = pageState.allEvents.filter((e) =>
+    pageState.q ? matchesWorkQuery(e, pageState.cById, pageState.q) : true
+  ).length;
+  t.outerHTML = bulkToolbarHtml({
+    count,
+    total,
+    kindLabel: '个工作事件',
+  });
+  wireBulkToolbar(document.getElementById('app'), pageState.selectMode, bulkHandlers);
+}
+
+function wireBulk() {
+  pageState.selectMode.onChange = bulkOnChange;
   if (pageState.selectMode.active) {
-    pageState.selectMode.onChange = () => {
-      const t = document.querySelector('[data-bulk-toolbar]');
-      if (!t) return;
-      document.querySelectorAll('.bulk-row-check').forEach((cb) => {
-        const id = cb.dataset.bulkId;
-        if (!id) return;
-        cb.checked = pageState.selectMode.selected.has(id);
-      });
-      const count = pageState.selectMode.selected.size;
-      const total = pageState.allEvents.filter((e) =>
-        pageState.q ? matchesWorkQuery(e, pageState.cById, pageState.q) : true
-      ).length;
-      t.outerHTML = bulkToolbarHtml({
-        count,
-        total,
-        kindLabel: '个工作事件',
-      });
-      wireBulkToolbar(document.getElementById('app'), pageState.selectMode, handlers);
-    };
     wireBulkRowChecks(document.getElementById('app'), pageState.selectMode);
-    wireBulkToolbar(document.getElementById('app'), pageState.selectMode, handlers);
+    wireBulkToolbar(document.getElementById('app'), pageState.selectMode, bulkHandlers);
   }
   wireBulkEnter(document.getElementById('app'), () => {
     pageState.selectMode.active = true;

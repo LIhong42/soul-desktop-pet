@@ -100,25 +100,39 @@ export async function render(args, params) {
   // Same static-shell-plus-replaceable-subtree pattern as the work page
   // and the gift page: the search input lives OUTSIDE the rewritten list,
   // so typing IME Chinese candidates never tears down the live input.
+  //
+  // The header, the search pill and the filter strip live inside one
+  // warm panel (#memorial-toolbar) — they are one control surface, and
+  // the card grid below keeps the plain app surface so the diary pages
+  // stand on their own.
   const initialQ = pageState.q;
   app.innerHTML = `
-    <div id="page-header" class="row between">
-      <h1>回忆事件 ${!pageState.selectMode.active && pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
-      <div class="row" style="gap:8px;">
-        <button class="btn secondary" id="open-export" style="${pageState.allEvents.length > 0 ? '' : 'display:none;'}">导出回忆</button>
-        <button class="btn" id="new-event">+ 新建</button>
+    <div class="memorial-toolbar" id="memorial-toolbar">
+      <div class="memorial-toolbar-head" id="page-header">
+        <h1 class="memorial-title">
+          回忆事件
+          ${titleArtHtml()}
+          ${!pageState.selectMode.active && pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : ''}
+        </h1>
+        <div class="memorial-toolbar-actions">
+          <button class="btn memorial-btn-export" id="open-export" style="${pageState.allEvents.length > 0 ? '' : 'display:none;'}">导出回忆</button>
+          <button class="btn memorial-btn-new" id="new-event"><span class="memorial-plus">+</span>新建</button>
+        </div>
       </div>
-    </div>
-    <div class="page-search">
-      <input type="search" id="memorial-q" class="page-search-input"
-             placeholder="在回忆事件中搜索…" autocomplete="off" />
-      <button class="btn secondary page-search-clear" id="memorial-clear" type="button"
-              style="${initialQ ? '' : 'display:none;'}">清除</button>
-      <span class="meta page-search-meta" style="${initialQ ? '' : 'display:none;'}"></span>
-    </div>
-    <div class="memorial-filters" id="memorial-filters">
-      ${filterBarHtml()}
-      <span class="meta memorial-filter-meta" id="memorial-filter-meta"></span>
+      <div class="memorial-search">
+        <div class="memorial-search-field">
+          <span class="memorial-search-icon" aria-hidden="true"></span>
+          <input type="search" id="memorial-q" class="page-search-input"
+                 placeholder="搜索回忆事件、关键词或联系人…" autocomplete="off" />
+          <button class="memorial-search-clear" id="memorial-clear" type="button"
+                  title="清除搜索" style="${initialQ ? '' : 'display:none;'}">×</button>
+        </div>
+        <span class="meta page-search-meta" style="${initialQ ? '' : 'display:none;'}"></span>
+      </div>
+      <div class="memorial-filters" id="memorial-filters">
+        ${filterBarHtml()}
+        <span class="meta memorial-filter-meta" id="memorial-filter-meta"></span>
+      </div>
     </div>
     <div id="memorial-list"></div>
   `;
@@ -202,6 +216,11 @@ function rerenderList() {
   }
   if (pageState.selectMode.active) {
     wireBulkRowChecks(host, pageState.selectMode);
+    // The toolbar is part of the subtree we just rewrote, so the button
+    // the user is about to click is a NEW node — it needs its handlers
+    // bound again. Without this, 「退出选择」 and 「删除选中」 are dead
+    // after any redraw.
+    wireBulkToolbar(host, pageState.selectMode, bulkHandlers);
   }
 }
 
@@ -267,6 +286,24 @@ function wireSearchInput() {
   }
 }
 
+// The hand-drawn heart + squiggle that trails the page title.
+//
+// It is an inline SVG rather than an image file: it scales with the
+// title, recolors itself from the accent color via `currentColor`, and
+// adds nothing to the bundle. The strokes are deliberately uneven — the
+// point is that it reads as something drawn by hand, not as an icon.
+function titleArtHtml() {
+  return `
+    <svg class="memorial-title-art" viewBox="0 0 148 52" fill="none"
+         stroke="currentColor" stroke-width="3" stroke-linecap="round"
+         stroke-linejoin="round" aria-hidden="true">
+      <path d="M74 40c-3.4-3-12-9.2-12-16.4 0-4.4 3.4-7.6 7.4-7.6 2.7 0 4.6 1.4 5.8 3.4 1.2-2 3.1-3.4 5.8-3.4 4 0 7.4 3.2 7.4 7.6 0 7.2-8.6 13.4-12 16.4z"/>
+      <path d="M56 42c-8 .8-19-1-30-4.6"/>
+      <path d="M92 42c8 .8 19-1 30-4.6"/>
+    </svg>
+  `;
+}
+
 // The filter bar: three dropdowns — 时间 / 联系人 / 类型 — plus a
 // 「重置筛选」button that appears only while a filter is active.
 //
@@ -287,6 +324,9 @@ function filterBarHtml() {
     `<option value="${escapeHtml(k.value)}" ${k.value === f.kind ? 'selected' : ''}>${escapeHtml(k.label)}</option>`).join('');
   const active = !!(f.time || f.contact || f.kind);
   return `
+    <span class="memorial-filter-lead">
+      <span class="memorial-filter-funnel" aria-hidden="true"></span>筛选条件
+    </span>
     <label class="memorial-filter">
       <span class="memorial-filter-label">时间</span>
       <select id="memorial-filter-time" class="memorial-filter-select">${timeOpts}</select>
@@ -299,7 +339,7 @@ function filterBarHtml() {
       <span class="memorial-filter-label">类型</span>
       <select id="memorial-filter-kind" class="memorial-filter-select">${kindOpts}</select>
     </label>
-    <button class="btn secondary memorial-filter-reset" id="memorial-filter-reset" type="button"
+    <button class="btn memorial-filter-reset" id="memorial-filter-reset" type="button"
             style="${active ? '' : 'display:none;'}">重置筛选</button>
   `;
 }
@@ -419,83 +459,103 @@ function warmPhotos(e) {
 
 // Bulk-select wiring. Lives outside the rewritten subtree so it can
 // re-bind on every list redraw without double-firing.
-function wireBulk() {
-  const handlers = {
-    onDelete: async (ids) => {
-      const result = await api.memorialEvents.deleteMany(ids);
-      // 删除后重新拉取数据；保留输入框的当前值和筛选条件。
+//
+// The handlers live at MODULE scope, not inside wireBulk(), because the
+// list redraw (rerenderList) has to re-bind the toolbar's buttons every
+// time it paints: the toolbar is part of the rewritten subtree, so a
+// fresh toolbar arrives without any handlers on it. Binding it only
+// once — at mount time — left 「退出选择」 dead, because the button the
+// user clicks is a different node from the one that was bound.
+const bulkHandlers = {
+  onDelete: async (ids) => {
+    const result = await api.memorialEvents.deleteMany(ids);
+    // 删除后重新拉取数据；保留输入框的当前值和筛选条件。
+    const base = new URLSearchParams(pageState.basePath.split('?')[1] || '');
+    await reloadAndRender({
+      q: pageState.q,
+      contact_id: base.get('contact_id') || undefined,
+      time: pageState.filter.time || undefined,
+      contact: pageState.filter.contact || undefined,
+      kind: pageState.filter.kind || undefined,
+    });
+    return result;
+  },
+  onExit: () => {
+    pageState.selectMode.active = false;
+    pageState.selectMode.selected = new Set();
+    rerenderList();
+    // 重新挂上「批量删除」入口链接 — 仅当列表非空时显示，否则删除按钮
+    // 会指向无内容的列表，对用户无意义。
+    //
+    // The title row is rebuilt wholesale (it carries the title art and
+    // the two action buttons), so the markup here has to match the one
+    // render() writes — see the header block above.
+    const header = document.getElementById('page-header');
+    if (pageState.allEvents.length === 0) return;
+    if (header) {
       const base = new URLSearchParams(pageState.basePath.split('?')[1] || '');
-      await reloadAndRender({
-        q: pageState.q,
-        contact_id: base.get('contact_id') || undefined,
-        time: pageState.filter.time || undefined,
-        contact: pageState.filter.contact || undefined,
-        kind: pageState.filter.kind || undefined,
+      const contactQp = base.get('contact_id')
+        ? '?contact_id=' + encodeURIComponent(base.get('contact_id'))
+        : '';
+      const newHeader = document.createElement('div');
+      newHeader.id = 'page-header';
+      newHeader.className = 'memorial-toolbar-head';
+      newHeader.innerHTML = `
+        <h1 class="memorial-title">
+          回忆事件
+          ${titleArtHtml()}
+          ${bulkEnterLinkHtml()}
+        </h1>
+        <div class="memorial-toolbar-actions">
+          <button class="btn memorial-btn-export" id="open-export">导出回忆</button>
+          <button class="btn memorial-btn-new" id="new-event"><span class="memorial-plus">+</span>新建</button>
+        </div>
+      `;
+      header.replaceWith(newHeader);
+      document.getElementById('new-event').onclick = () =>
+        navigate('/diary/new' + contactQp);
+      const eb = document.getElementById('open-export');
+      if (eb) eb.onclick = () => navigate('/export');
+      wireBulkEnter(newHeader, () => {
+        pageState.selectMode.active = true;
+        pageState.selectMode.selected = new Set();
+        rerenderList();
       });
-      return result;
-    },
-    onExit: () => {
-      pageState.selectMode.active = false;
-      pageState.selectMode.selected = new Set();
-      rerenderList();
-      // 重新挂上「批量删除」入口链接 — 仅当列表非空时显示，否则删除按钮
-      // 会指向无内容的列表，对用户无意义。
-      const header = document.getElementById('page-header');
-      if (pageState.allEvents.length === 0) return;
-      if (header) {
-        const base = new URLSearchParams(pageState.basePath.split('?')[1] || '');
-        const contactQp = base.get('contact_id')
-          ? '?contact_id=' + encodeURIComponent(base.get('contact_id'))
-          : '';
-        const newHeader = document.createElement('div');
-        newHeader.id = 'page-header';
-        newHeader.className = 'row between';
-        newHeader.innerHTML = `
-          <h1>回忆事件 ${bulkEnterLinkHtml()}</h1>
-          <div class="row" style="gap:8px;">
-            <button class="btn secondary" id="open-export">导出回忆</button>
-            <button class="btn" id="new-event">+ 新建</button>
-          </div>
-        `;
-        header.replaceWith(newHeader);
-        document.getElementById('new-event').onclick = () =>
-          navigate('/diary/new' + contactQp);
-        const eb = document.getElementById('open-export');
-        if (eb) eb.onclick = () => navigate('/export');
-        wireBulkEnter(newHeader, () => {
-          pageState.selectMode.active = true;
-          pageState.selectMode.selected = new Set();
-          rerenderList();
-        });
-      }
-    },
-  };
+    }
+  },
+};
 
+// The bulk toolbar's own counter. Refreshes the "删除选中 (N)" label
+// without rebuilding the list — a rebuild would steal focus from the
+// checkbox the user just ticked.
+function bulkOnChange() {
+  const t = document.querySelector('[data-bulk-toolbar]');
+  if (!t) return;
+  document.querySelectorAll('.bulk-row-check').forEach((cb) => {
+    const id = cb.dataset.bulkId;
+    if (!id) return;
+    cb.checked = pageState.selectMode.selected.has(id);
+  });
+  const count = pageState.selectMode.selected.size;
+  // The toolbar's total must count what the list actually shows —
+  // search AND the three dropdown filters.
+  const total = pageState.allEvents.filter((e) =>
+    (!pageState.q || matchesMemorialQuery(e, pageState.q)) &&
+    matchesFilter(e, pageState.filter)
+  ).length;
+  t.outerHTML = bulkToolbarHtml({
+    count,
+    total,
+    kindLabel: '个回忆事件',
+  });
+  wireBulkToolbar(document.getElementById('app'), pageState.selectMode, bulkHandlers);
+}
+
+function wireBulk() {
+  pageState.selectMode.onChange = bulkOnChange;
   if (pageState.selectMode.active) {
-    pageState.selectMode.onChange = () => {
-      const t = document.querySelector('[data-bulk-toolbar]');
-      if (!t) return;
-      document.querySelectorAll('.bulk-row-check').forEach((cb) => {
-        const id = cb.dataset.bulkId;
-        if (!id) return;
-        cb.checked = pageState.selectMode.selected.has(id);
-      });
-      const count = pageState.selectMode.selected.size;
-      // The toolbar's total must count what the list actually shows —
-      // search AND the three dropdown filters.
-      const total = pageState.allEvents.filter((e) =>
-        (!pageState.q || matchesMemorialQuery(e, pageState.q)) &&
-        matchesFilter(e, pageState.filter)
-      ).length;
-      t.outerHTML = bulkToolbarHtml({
-        count,
-        total,
-        kindLabel: '个回忆事件',
-      });
-      wireBulkToolbar(document.getElementById('app'), pageState.selectMode, handlers);
-    };
     wireBulkRowChecks(document.getElementById('app'), pageState.selectMode);
-    wireBulkToolbar(document.getElementById('app'), pageState.selectMode, handlers);
+    wireBulkToolbar(document.getElementById('app'), pageState.selectMode, bulkHandlers);
   }
   wireBulkEnter(document.getElementById('app'), () => {
     pageState.selectMode.active = true;

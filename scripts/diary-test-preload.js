@@ -59,8 +59,33 @@ const CONTACTS = [
   { id: 'c2', name: '小红' },
 ];
 
+// The reminder-event table. The 工作事件 page reads from here (the
+// 回忆事件 page has its own table — see `memorialEvents` above). Kept
+// separate so a test that seeds one table cannot leak into the other.
+const eventRows = {};
+
+const events = {
+  list: async () => Object.values(eventRows),
+  get: async (id) => eventRows[id] || null,
+  create: async (payload) => {
+    const id = 'v' + (nextId++);
+    eventRows[id] = Object.assign({ id }, payload);
+    return eventRows[id];
+  },
+  update: async (id, payload) => {
+    eventRows[id] = Object.assign({}, eventRows[id], payload);
+    return eventRows[id];
+  },
+  delete: async (id) => { delete eventRows[id]; return true; },
+  deleteMany: async () => ({ deleted: 0 }),
+  listToday: async () => [],
+  listFestivals: async () => [],
+  debugFireDueNow: async () => null,
+};
+
 contextBridge.exposeInMainWorld('mp', {
   memorialEvents: mem,
+  events,
   contacts: {
     list: async () => CONTACTS,
     get: async (id) => CONTACTS.find((c) => c.id === id) || null,
@@ -77,6 +102,14 @@ contextBridge.exposeInMainWorld('__testRows', {
   all: () => Object.assign({}, rows),
   seed: (id, row) => { rows[id] = row; return true; },
   clear: () => { for (const k of Object.keys(rows)) delete rows[k]; },
+});
+
+// The reminder-event table, reached the same way. The 工作事件 page's
+// bulk-select round trip is checked against this one.
+contextBridge.exposeInMainWorld('__testEventRows', {
+  all: () => Object.assign({}, eventRows),
+  seed: (id, row) => { eventRows[id] = row; return true; },
+  clear: () => { for (const k of Object.keys(eventRows)) delete eventRows[k]; },
 });
 
 // The photos that were uploaded, in the order they were uploaded. The
