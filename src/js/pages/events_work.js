@@ -1,6 +1,7 @@
 // src/js/pages/events_work.js — 工作事件 list (category='work')
 import { api, escapeHtml, firstChar, displayName, fmtDateTime, formatRelative, countdownTo, categoryIcon, contactColorIndex, toast, repeatLabel } from '../api.js';
 import { register, navigate } from '../router.js';
+import { applyBackground } from '../page_background.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
   wireBulkEnter, wireBulkToolbar, wireBulkRowChecks,
@@ -21,6 +22,10 @@ const pageState = {
 async function render(args, params) {
   const app = document.getElementById('app');
   app.innerHTML = `<div class="empty">载入中…</div>`;
+
+  // The page wears the shared background artwork. It's applied before the
+  // list loads so the page doesn't flash the plain app surface first.
+  await applyBackground();
 
   // First time (or after a category change), reload data. Subsequent
   // re-renders triggered by search / bulk-select reuse the cache — this
@@ -45,18 +50,20 @@ async function render(args, params) {
   // down the live input (the bug the previous full-rerender design had).
   const initialQ = pageState.q;
   app.innerHTML = `
-    <div id="page-header" class="row between">
-      <h1>工作事件 ${!pageState.selectMode.active && pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
-      <button class="btn" id="new-event">+ 新建</button>
+    <div class="bg-page">
+      <div id="page-header" class="row between">
+        <h1>工作事件 ${!pageState.selectMode.active && pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : ''}</h1>
+        <button class="btn" id="new-event">+ 新建</button>
+      </div>
+      <div class="page-search">
+        <input type="search" id="work-q" class="page-search-input"
+               placeholder="在工作事件中搜索…" autocomplete="off" />
+        <button class="btn secondary page-search-clear" id="work-clear" type="button"
+                style="${initialQ ? '' : 'display:none;'}">清除</button>
+        <span class="meta page-search-meta" style="${initialQ ? '' : 'display:none;'}"></span>
+      </div>
+      <div id="work-list"></div>
     </div>
-    <div class="page-search">
-      <input type="search" id="work-q" class="page-search-input"
-             placeholder="在工作事件中搜索…" autocomplete="off" />
-      <button class="btn secondary page-search-clear" id="work-clear" type="button"
-              style="${initialQ ? '' : 'display:none;'}">清除</button>
-      <span class="meta page-search-meta" style="${initialQ ? '' : 'display:none;'}"></span>
-    </div>
-    <div id="work-list"></div>
   `;
 
   // Set initial query value on the freshly-mounted input, but only this

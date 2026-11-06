@@ -94,13 +94,18 @@
    edge is where the window frame and the brightest sky are, and the header
    sits there — so the top gets a slightly heavier scrim for legibility,
    fading downward into the warm centre of the painting. A flat scrim
-   either under-protects the top or flattens the whole picture. */
-.content.today-bg {
-  --today-bg-scrim: rgba(255, 246, 236, 0.62);
-  --today-bg-scrim-bottom: rgba(255, 246, 236, 0.42);
+   either under-protects the top or flattens the whole picture.
+
+   The artwork is shared with the 联系人 / 提醒日期 / 工作事件 pages (see
+   src/js/page_background.js), but the scrim is this page's own: its cards
+   are translucent sheets, so it wants a lighter wash than the list pages,
+   whose cards are opaque and carry their own contrast. */
+.content.page-bg {
+  --page-bg-scrim: rgba(255, 246, 236, 0.62);
+  --page-bg-scrim-bottom: rgba(255, 246, 236, 0.42);
   background-image:
-    var(--today-bg-image),
-    linear-gradient(var(--today-bg-scrim), var(--today-bg-scrim-bottom));
+    var(--page-bg-image),
+    linear-gradient(var(--page-bg-scrim), var(--page-bg-scrim-bottom));
 }
 
 /* ---- Page header --------------------------------------------------------

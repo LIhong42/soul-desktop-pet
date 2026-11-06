@@ -36,9 +36,10 @@ const { createInputProbe } = require('./pet_input_probe');
 const { relaunchApp } = require('./app_relaunch');
 // 文本框 catalog (resources/text_boxes) — scanned, not hard-coded.
 const petTextBoxes = require('./pet_text_boxes');
-// 今日页背景 catalog (resources/ui) — scanned, not hard-coded.
-const todayBackground = require('./today_background');
-// resources/ui 里所有页面共用的插画目录（今日页背景 + 联系人详情页头图）。
+// 页面背景 catalog (resources/ui) — scanned, not hard-coded.
+// 「今日」「联系人」「提醒日期」「工作事件」四个页面共用同一张底图。
+const pageBackground = require('./page_background');
+// resources/ui 里所有页面共用的插画目录（页面背景 + 联系人详情页头图）。
 const uiArtwork = require('./ui_artwork');
 const videoFrameSplit = require('./video_frame_split');
 // 快速记录窗口（桌宠右键菜单 → 📝 记录）。独立于 PIN 门禁的主窗口。
@@ -1525,41 +1526,44 @@ function normFreeText(s) {
   ipcMain.handle('settings:get', (_e, key) => db.getSetting(key));
   ipcMain.handle('settings:set', (_e, key, value) => { db.setSetting(key, value); return true; });
 
-  // ---- 今日页背景 ----
+  // ---- 页面背景 ----
   //
-  // The 今日 page paints a background image behind its content. The artwork
-  // lives in `resources/ui/`, is catalogued by main/today_background.js, and
-  // reaches the renderer as a `file://` URL — the renderer can't read the
-  // filesystem, and the main window's CSP allows `file:` in `img-src`.
+  // The 今日 / 联系人 / 提醒日期 / 工作事件 pages paint a background image
+  // behind their content. The artwork lives in `resources/ui/`, is catalogued
+  // by main/page_background.js, and reaches the renderer as a `file://` URL —
+  // the renderer can't read the filesystem, and the main window's CSP allows
+  // `file:` in `img-src`.
   //
   // One call serves both the page and the settings picker:
-  //   { list: [{id, file, url, label}], chosen, current: {id, url} | null, noneId }
+  //   { list: [{id, file, url, label}], chosen, current: {id, url} | null,
+  //     noneId, routes: [...] }
   //
   // `chosen` is the id the user picked (null when they've never chosen);
   // `current` is what actually gets painted — the chosen image, or the folder
-  // default when there's no usable choice.
-  ipcMain.handle('today_background:get', () => todayBackground.active(null, db));
+  // default when there's no usable choice. `routes` is the list of routes
+  // that wear the artwork.
+  ipcMain.handle('page_background:get', () => pageBackground.active(null, db));
 
   // The user's choice. An empty id clears the setting (back to "跟随默认"),
-  // and `todayBackground.NONE` means "explicitly no background" — the two are
+  // and `pageBackground.NONE` means "explicitly no background" — the two are
   // different states, so the picker's "跟随默认" and "无背景" are distinct.
-  ipcMain.handle('today_background:set', (_e, id) => {
+  ipcMain.handle('page_background:set', (_e, id) => {
     const s = String(id == null ? '' : id).trim();
     if (!s) {
       // Clearing the row is what "never chose anything" looks like. The
       // settings table has no delete helper, so an empty value stands in for
       // "absent" — `active()` treats a blank value as "follow the default"
       // the same way it treats a missing row.
-      db.setSetting(todayBackground.SETTING_KEY, '');
-      return todayBackground.active(null, db);
+      db.setSetting(pageBackground.SETTING_KEY, '');
+      return pageBackground.active(null, db);
     }
     // An id that isn't in the catalog (a stale value from another machine, or
     // a typo) is stored anyway: it's decoration, and the fallback in
-    // `today_background.active` degrades to the default rather than to a
+    // `page_background.active` degrades to the default rather than to a
     // broken image. Storing it verbatim also means the choice survives the
     // user copying the file over later.
-    db.setSetting(todayBackground.SETTING_KEY, s);
-    return todayBackground.active(null, db);
+    db.setSetting(pageBackground.SETTING_KEY, s);
+    return pageBackground.active(null, db);
   });
 
   // ---- 联系人详情页头图 ----

@@ -142,13 +142,14 @@ contextBridge.exposeInMainWorld('mp', {
     get: (k) => ipcRenderer.invoke('settings:get', k),
     set: (k, v) => ipcRenderer.invoke('settings:set', k, v),
   },
-  // 今日页背景（resources/ui 里的图片）。主进程扫描目录并把图片解析成
+  // 页面背景（resources/ui 里的图片）。主进程扫描目录并把图片解析成
   // file:// URL —— 渲染进程读不了文件系统，只能这样拿到本地图片。
-  //   get()     → { list, chosen, current: {id,url}|null, noneId }
+  // 「今日」「联系人」「提醒日期」「工作事件」四个页面共用同一张底图。
+  //   get()     → { list, chosen, current: {id,url}|null, noneId, routes }
   //   set(id)   → 同 get()，并把 id 存进 settings
-  todayBackground: {
-    get: ()    => ipcRenderer.invoke('today_background:get'),
-    set: (id) => ipcRenderer.invoke('today_background:set', id),
+  pageBackground: {
+    get: ()    => ipcRenderer.invoke('page_background:get'),
+    set: (id) => ipcRenderer.invoke('page_background:set', id),
   },
   // 联系人详情页头图（resources/ui 里的固定插画）。主进程解析成 file:// URL
   // 交给渲染进程；返回 null 表示这张图没装，页面会退回到纯色横幅。

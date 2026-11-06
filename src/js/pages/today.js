@@ -8,6 +8,7 @@
 // per group instead of eight separate IPC calls.
 import { api, escapeHtml, eventKindAttr, categoryIcon } from '../api.js';
 import { register, navigate } from '../router.js';
+import { applyBackground } from '../page_background.js';
 
 export async function render() {
   const app = document.getElementById('app');
@@ -881,49 +882,9 @@ function moodNote(mood) {
 // ---- 背景 (background artwork) --------------------------------------------
 //
 // The 今日 page paints the artwork from `resources/ui/` behind its content.
-// The image is chosen in the main process (main/today_background.js) and
-// arrives as a `file://` URL, because the renderer can't read the filesystem
-// and the main window's CSP only allows `file:` in `img-src`.
-//
-// The artwork is decoration, so every failure path here degrades to "no
-// artwork" rather than to a broken page: a missing IPC bridge, an install
-// with no `resources/ui` folder, or a stored id naming a file this machine
-// doesn't have all end the same way.
-
-const contentEl = () => document.querySelector('.content');
-
-// Paint the background onto the scroll container. `background-image` takes
-// the URL, and the `no-art` class is dropped so the artwork shows again
-// after the user turned it off and back on.
-export async function applyBackground() {
-  const el = contentEl();
-  if (!el) return;
-  try {
-    const info = await api.todayBackground.get();
-    const current = info && info.current;
-    if (current && current.url) {
-      el.style.setProperty('--today-bg-image', `url("${current.url}")`);
-      el.classList.add('today-bg');
-      el.classList.remove('no-art');
-    } else {
-      // The user turned the background off, or this install has no artwork.
-      el.classList.add('today-bg', 'no-art');
-      el.style.removeProperty('--today-bg-image');
-    }
-  } catch (e) {
-    console.warn('[today] could not load the page background:', e);
-    el.classList.add('today-bg', 'no-art');
-    el.style.removeProperty('--today-bg-image');
-  }
-}
-
-// Remove the background again when the user navigates to another page —
-// only the 今日 page has one.
-export function clearBackground() {
-  const el = contentEl();
-  if (!el) return;
-  el.classList.remove('today-bg', 'no-art');
-  el.style.removeProperty('--today-bg-image');
-}
+// The picture is shared with the 联系人 / 提醒日期 / 工作事件 pages, so the
+// painting itself lives in src/js/page_background.js — this page only asks
+// for it. See that module for why the failure paths all degrade to "no
+// artwork".
 
 register('/today', render);

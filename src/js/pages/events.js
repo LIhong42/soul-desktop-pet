@@ -8,6 +8,7 @@
 // bookmarked / shared. Changing either triggers a re-fetch via events:list.
 import { api, escapeHtml, displayName, eventKindAttr, formatRelative, countdownTo, categoryIcon, repeatLabel, eventDisplayTitle } from '../api.js';
 import { register, navigate } from '../router.js';
+import { applyBackground } from '../page_background.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
   wireBulkEnter, wireBulkToolbar, wireBulkRowChecks,
@@ -29,6 +30,10 @@ const pageState = { selectMode: { active: false, selected: new Set() } };
 async function render(args, params) {
   const app = document.getElementById('app');
   app.innerHTML = `<div class="empty">载入中…</div>`;
+
+  // The page wears the shared background artwork. It's applied before the
+  // list loads so the page doesn't flash the plain app surface first.
+  await applyBackground();
 
   // Filters: tag_kind + contact_id. Both come from the URL hash so they
   // survive page reloads and can be shared as a URL.
@@ -62,42 +67,44 @@ async function render(args, params) {
   });
 
   app.innerHTML = `
-    <div class="row between">
-      <h1>提醒日期 ${pageState.selectMode.active ? '' : (filteredEvents.length > 0 ? bulkEnterLinkHtml() : '')}</h1>
-      <button class="btn" id="new-event">+ 新建</button>
-    </div>
-    <div class="card">
-      <div class="form-row">
-        <div class="field">
-          <label>类型</label>
-          <select id="filter-tag-kind">
-            ${TAG_KIND_FILTER_OPTIONS.map((o) =>
-              `<option value="${escapeHtml(o.value)}" ${tagKindFilter === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`
-            ).join('')}
-          </select>
-        </div>
-        <div class="field">
-          <label>关联联系人</label>
-          <select id="filter-contact">
-            <option value="">全部</option>
-            <option value="__standalone__" ${contactFilter === '__standalone__' ? 'selected' : ''}>(独立事件)</option>
-            ${contacts.map((c) =>
-              `<option value="${escapeHtml(c.id)}" ${contactFilter === c.id ? 'selected' : ''}>${escapeHtml(displayName(c))}</option>`
-            ).join('')}
-          </select>
+    <div class="bg-page">
+      <div class="row between">
+        <h1>提醒日期 ${pageState.selectMode.active ? '' : (filteredEvents.length > 0 ? bulkEnterLinkHtml() : '')}</h1>
+        <button class="btn" id="new-event">+ 新建</button>
+      </div>
+      <div class="card">
+        <div class="form-row">
+          <div class="field">
+            <label>类型</label>
+            <select id="filter-tag-kind">
+              ${TAG_KIND_FILTER_OPTIONS.map((o) =>
+                `<option value="${escapeHtml(o.value)}" ${tagKindFilter === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`
+              ).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>关联联系人</label>
+            <select id="filter-contact">
+              <option value="">全部</option>
+              <option value="__standalone__" ${contactFilter === '__standalone__' ? 'selected' : ''}>(独立事件)</option>
+              ${contacts.map((c) =>
+                `<option value="${escapeHtml(c.id)}" ${contactFilter === c.id ? 'selected' : ''}>${escapeHtml(displayName(c))}</option>`
+              ).join('')}
+            </select>
+          </div>
         </div>
       </div>
+      ${pageState.selectMode.active ? bulkToolbarHtml({
+          count: pageState.selectMode.selected.size,
+          total: filteredEvents.length,
+          kindLabel: '个提醒日期',
+        }) : ''}
+      ${filteredEvents.length === 0
+        ? `<div class="empty">没有匹配的提醒日期</div>`
+        : filteredEvents.map((e) => pageState.selectMode.active
+            ? bulkSelectableRowHtml(rowInner(e, cById, festByCode), e.id, pageState.selectMode.selected.has(e.id), eventKindAttr(e))
+            : renderRow(e, cById, festByCode)).join('')}
     </div>
-    ${pageState.selectMode.active ? bulkToolbarHtml({
-        count: pageState.selectMode.selected.size,
-        total: filteredEvents.length,
-        kindLabel: '个提醒日期',
-      }) : ''}
-    ${filteredEvents.length === 0
-      ? `<div class="empty">没有匹配的提醒日期</div>`
-      : filteredEvents.map((e) => pageState.selectMode.active
-          ? bulkSelectableRowHtml(rowInner(e, cById, festByCode), e.id, pageState.selectMode.selected.has(e.id), eventKindAttr(e))
-          : renderRow(e, cById, festByCode)).join('')}
   `;
 
   if (!pageState.selectMode.active) {

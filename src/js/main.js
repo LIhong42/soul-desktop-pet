@@ -2,7 +2,8 @@
 import { api, escapeHtml, fmtDateTime, toast } from './api.js';
 import { register, onChange, navigate, start } from './router.js';
 import { start as startAuth, registerLockedEventHandlers } from './auth.js';
-import { clearBackground } from './pages/today.js';
+import { applyBackgroundForRoute } from './page_background.js';
+import './pages/today.js';
 import './pages/contacts_list.js';
 import './pages/contact_detail.js';
 import './pages/contact_edit.js';
@@ -20,18 +21,23 @@ import './pages/tool_batch_resize.js';
 import './pages/settings.js';
 import './pages/export.js';
 
-function updateActiveLink(path) {
+async function updateActiveLink(path) {
   document.querySelectorAll('.nav a').forEach((a) => {
     const r = a.getAttribute('data-route') || '';
     const match = (path === '/' && r === '/') ||
                   (path.startsWith(r) && r !== '/');
     a.classList.toggle('active', match);
   });
-  // Only the 今日 page has a background. The router fires onChange *before*
-  // the page's own render() runs, so the artwork is cleared here on the way
-  // out and re-applied by today.js's render() on the way in. Leaving it up
-  // would paint the artwork behind every other page too.
-  if (path !== '/today') clearBackground();
+  // Only some pages wear the background artwork (今日 / 联系人 / 提醒日期 /
+  // 工作事件). The router fires onChange *before* the page's own render()
+  // runs, so the artwork is cleared here on the way out and re-applied by
+  // the page's render() on the way in. Leaving it up would paint the
+  // artwork behind every other page too.
+  //
+  // The router awaits this hook, so the artwork is settled before the page
+  // renders — otherwise the two would race and the page could end up
+  // half-painted.
+  await applyBackgroundForRoute(path);
 }
 
 function updatePetPill(state) {

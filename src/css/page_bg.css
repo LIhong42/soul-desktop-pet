@@ -1,0 +1,295 @@
+/* ===========================================================================
+   src/css/page_bg.css — the list pages that wear the background artwork
+   ===========================================================================
+   The 联系人 / 提醒日期 / 工作事件 pages share one picture behind their
+   content (src/js/page_background.js). This file is the *other half* of that
+   feature: it makes the pages' own contents read well *over* the picture.
+
+   Loaded after styles.css and after today.css (see src/index.html) so it can
+   override the global `.card` / `.list-row` primitives for its own scope
+   only — the same arrangement the 今日 page and the contact detail page
+   already use for their own design systems.
+
+   ---------------------------------------------------------------------------
+   The problem this solves
+   ---------------------------------------------------------------------------
+   The app's global `.card` is an *opaque* white rectangle with a hard 1px
+   border and a small drop shadow. On the plain app surface that reads as a
+   card, which is what it was designed for. Over a pastel painting it reads
+   as something else entirely: a row of bright white rectangles pasted on
+   top of a soft image, with the artwork cut into hard-edged slabs. The page
+   stops being one material and becomes a picture with stickers on it.
+
+   So the cards here are rebuilt as *sheets of translucent paper*: a warm
+   near-white at low alpha, a generous blur behind them so what comes
+   through is the shape and colour of the painting rather than its detail,
+   and a soft edge instead of a hard border. The result is the same trick
+   the 今日 page already plays with its own translucent cards, at a density
+   suited to a list of small text.
+
+   ---------------------------------------------------------------------------
+   Why the scrim on the page is lighter here than on the 今日 page
+   ---------------------------------------------------------------------------
+   The 今日 page's cards are large and carry big type, so its artwork can
+   afford to sit under a light wash. These pages are *lists* — dense rows of
+   12–14px text — so the artwork is pushed further back: a stronger page
+   scrim plus the cards' own translucency. The picture stays visible as a
+   warm field around the rows, which is the point of wearing it, but it
+   never competes with the text.
+
+   ---------------------------------------------------------------------------
+   Scope
+   ---------------------------------------------------------------------------
+   Every rule is scoped under `.bg-page`, a class the three page renderers
+   put on the content wrapper. Nothing in here may leak onto another page —
+   the 今日 page and the contact detail page have their own design systems
+   and must be left alone. */
+
+/* ---- Page shell --------------------------------------------------------- */
+.bg-page {
+  /* The card surface is a translucent sheet of paper laid over the artwork
+     rather than an opaque rectangle pasted on top of it.
+
+     The alpha is low on purpose: the artwork behind the page should read
+     through the rows as a soft, hazy wash — a hint of the picture's colour,
+     not its detail. The blur is what buys the legibility back: it turns
+     the busy parts of the painting (the bookshelf, the window frame, the
+     leaf shadows) into smooth gradients that the text can sit on without
+     fighting anything.
+
+     The colour is warm rather than the app's neutral white: the artwork is
+     a warm cream, and a neutral-white sheet over it would read as a cooler,
+     greyer rectangle — a visible mismatch that says "pasted on" again. */
+  --bg-paper: rgba(255, 251, 246, 0.52);
+  /* The list rows carry small text over the artwork, so they sit on a
+     denser sheet than the page-level furniture (the header row, the search
+     bar) — the same split the 今日 page makes between its status cards and
+     its reminder list. */
+  --bg-paper-list: rgba(255, 251, 246, 0.72);
+  --bg-paper-hover: rgba(255, 253, 249, 0.88);
+  --bg-ink: #3d3128;
+  --bg-ink-soft: #8c7d70;
+  --bg-line: rgba(196, 160, 132, 0.28);
+  --bg-line-strong: rgba(196, 160, 132, 0.46);
+  --bg-shadow: 0 2px 14px rgba(150, 105, 75, 0.10);
+  --bg-shadow-lift: 0 10px 26px rgba(150, 105, 75, 0.16);
+  --bg-radius: 18px;
+
+  color: var(--bg-ink);
+  /* The page is a *list*, so it wants a reading column rather than the
+     full window width: a row stretched across a 2000px monitor puts the
+     title and the date chip a metre apart, and the rows stop reading as a
+     list at all. */
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+/* ---- Cards --------------------------------------------------------------
+   The translucent sheet. `backdrop-filter` is what makes the translucency
+   work: it softens the artwork directly behind the card so the text never
+   has to compete with a busy part of the painting. `saturate()` keeps the
+   colours from going muddy through the white veil.
+
+   The `-webkit-` prefix is kept for the same reason Electron's Chromium
+   needs it in older builds; harmless where unsupported. */
+.bg-page .card {
+  background: var(--bg-paper);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  backdrop-filter: blur(20px) saturate(125%);
+  border: 1px solid var(--bg-line);
+  border-radius: var(--bg-radius);
+  box-shadow: var(--bg-shadow);
+  padding: 14px 18px;
+  margin-bottom: 12px;
+  color: var(--bg-ink);
+  transition: transform 200ms ease, box-shadow 200ms ease,
+              border-color 200ms ease, background 200ms ease;
+}
+.bg-page .card.clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--bg-shadow-lift);
+  border-color: var(--bg-line-strong);
+  /* The hover state lifts the sheet a little further off the artwork, so
+     the row under the pointer separates from its neighbours instead of
+     merely brightening. */
+  background: var(--bg-paper-hover);
+}
+
+/* ---- The list rows ------------------------------------------------------
+   The rows are the page's real content, so they sit on a denser sheet than
+   the page's furniture. A row is a line of small text; a row that lets the
+   artwork's darker corners show through is a row the user has to squint at.
+
+   The separation between rows is a hairline rather than a gap: the rows
+   read as one list rather than as a stack of separate floating cards, which
+   is what a list of dates should look like. */
+.bg-page .list-row {
+  background: var(--bg-paper-list);
+  -webkit-backdrop-filter: blur(24px) saturate(125%);
+  backdrop-filter: blur(24px) saturate(125%);
+  border: 1px solid var(--bg-line);
+  border-radius: var(--bg-radius);
+  box-shadow: var(--bg-shadow);
+  padding: 13px 18px;
+  margin-bottom: 10px;
+  transition: transform 200ms ease, box-shadow 200ms ease,
+              border-color 200ms ease, background 200ms ease;
+}
+.bg-page .list-row.clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--bg-shadow-lift);
+  border-color: var(--bg-line-strong);
+  background: var(--bg-paper-hover);
+}
+/* A list row that already sits on its own card must not double up: the
+   `.card` rule above and this one would stack two sheets, and the row
+   would end up more opaque than the page around it. */
+.bg-page .card.list-row {
+  background: var(--bg-paper-list);
+  padding: 13px 18px;
+  margin-bottom: 10px;
+}
+.bg-page .card.list-row.clickable:hover {
+  background: var(--bg-paper-hover);
+}
+
+/* The category colour strip stays, but it becomes a soft inner accent
+   rather than a hard 4px bar: on a rounded paper sheet a saturated left
+   edge reads as a UI element from a different design language. */
+.bg-page .card[data-kind] {
+  border-left: 1px solid var(--bg-line);
+  padding-left: 18px;
+  position: relative;
+}
+.bg-page .card[data-kind]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 14px;
+  bottom: 14px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--cat-general);
+}
+.bg-page .card[data-kind="birthday"]::before    { background: var(--cat-birthday); }
+.bg-page .card[data-kind="anniversary"]::before { background: var(--cat-anniversary); }
+.bg-page .card[data-kind="festival"]::before    { background: var(--cat-festival); }
+.bg-page .card[data-kind="memorial"]::before    { background: var(--cat-memorial); }
+.bg-page .card[data-kind="work"]::before        { background: var(--cat-work); }
+.bg-page .card[data-kind="important"]::before   { background: var(--cat-birthday); }
+.bg-page .card[data-kind="reminder"]::before    { background: var(--accent); }
+
+/* ---- Row content --------------------------------------------------------
+   The ink is the page's own warm near-black rather than the app's neutral
+   #2a2a2a: over a warm cream artwork the neutral reads as a grey sticker
+   pasted onto a painting, while the warm variant reads as printed ink on
+   the paper. The secondary line is the same warm brown, softened. */
+.bg-page .list-row .lr-title {
+  color: var(--bg-ink);
+  font-weight: 600;
+}
+.bg-page .list-row .lr-meta {
+  color: var(--bg-ink-soft);
+}
+.bg-page .list-row .lr-title .relationship {
+  color: var(--bg-ink-soft);
+}
+
+/* ---- Time chip ----------------------------------------------------------
+   The chip is the one piece of the row that sits *on* the text line's right
+   edge, so it needs its own sheet: on the app's neutral `--bg` it would be
+   a cold grey pill on a warm row. The warm version reads as part of the
+   same paper. */
+.bg-page .time-chip {
+  background: rgba(255, 253, 249, 0.72);
+  color: var(--bg-ink-soft);
+  border-color: var(--bg-line);
+}
+.bg-page .time-chip.urgent {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* ---- Category glyph -----------------------------------------------------
+   The tinted tile keeps its tint, but the tint is deepened a little so the
+   emoji inside it still reads against the blurred artwork rather than
+   dissolving into it. */
+.bg-page .cat-icon {
+  box-shadow: 0 1px 4px rgba(150, 105, 75, 0.08);
+}
+
+/* ---- Page furniture -----------------------------------------------------
+   The header, the filter bar and the search bar sit on the artwork too,
+   but they are furniture rather than content, so they get the lighter
+   sheet and a slightly larger blur — enough to keep the labels readable
+   without adding a hard panel edge to the top of the page. */
+.bg-page h1 {
+  color: var(--bg-ink);
+  font-weight: 700;
+}
+.bg-page .meta,
+.bg-page .page-search .page-search-meta {
+  color: var(--bg-ink-soft);
+}
+.bg-page .page-search input.page-search-input {
+  /* The search field is the one piece of furniture that has to carry typed
+     text, so it gets a *denser* sheet than the rest of the page and a
+     visible border. A light sheet over a light artwork makes the field's
+     own edge disappear — the user sees a placeholder floating in the
+     picture with nothing to click. */
+  background: var(--bg-paper-hover);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  backdrop-filter: blur(20px) saturate(125%);
+  border: 1px solid var(--bg-line-strong);
+  color: var(--bg-ink);
+  /* The field is a box the user aims at, so it keeps the app's focus ring
+     rather than the page's soft hairline. */
+  box-shadow: 0 1px 6px rgba(150, 105, 75, 0.08);
+}
+.bg-page .page-search input.page-search-input::placeholder {
+  color: var(--bg-ink-soft);
+}
+.bg-page .page-search input.page-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* The filter dropdowns on 提醒日期 sit inside a card, and the global `select`
+   rule paints them opaque white — a bright rectangle on the artwork. They get
+   the same warm sheet as the search field so the whole row of controls reads
+   as one set of paper rather than a card with two stickers on it. */
+.bg-page select {
+  background: var(--bg-paper-hover);
+  border-color: var(--bg-line-strong);
+  color: var(--bg-ink);
+}
+/* The dropdown's own option list is drawn by the OS, not by the page, so it
+   stays opaque — that is correct, and a translucent option list would be
+   unreadable anyway. */
+.bg-page .field label {
+  color: var(--bg-ink-soft);
+}
+
+/* The empty state. A dashed border reads as "nothing here" on the plain
+   surface; over the artwork it would compete with the picture, so it gets
+   the same translucent sheet as the rows. */
+.bg-page .empty {
+  background: var(--bg-paper-list);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: blur(18px) saturate(125%);
+  border: 1px dashed var(--bg-line-strong);
+  border-radius: var(--bg-radius);
+  color: var(--bg-ink-soft);
+}
+
+/* ---- Bulk-select mode ---------------------------------------------------
+   The toolbar is a card like any other, so it picks up the translucent
+   sheet on its own. The per-row checkbox is the one element that has to
+   stay legible against a blurred sheet, so it gets a hairline of its own. */
+.bg-page .bulk-row {
+  background: var(--bg-paper-list);
+}
+.bg-page .bulk-row-check {
+  accent-color: var(--accent);
+}

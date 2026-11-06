@@ -63,7 +63,12 @@ export async function dispatch() {
     location.hash = '#/today';
     return;
   }
-  if (onChangeCb) onChangeCb(m.path);
+  // The onChange hook is awaited: it is where the background artwork is
+  // applied or torn down, and the page's own render() may ask for the same
+  // artwork. Letting the two run concurrently would let them interleave —
+  // one clears the background while the other is still fetching the URL —
+  // and the page would end up half-painted.
+  if (onChangeCb) await onChangeCb(m.path);
   try {
     await m.handler(m.args, m.params);
   } catch (e) {

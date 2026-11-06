@@ -32,7 +32,7 @@ const ROOT = path.join(__dirname, '..');
 const db = require(path.join(ROOT, 'main', 'db'));
 const scheduler = require(path.join(ROOT, 'main', 'scheduler'));
 const ipc = require(path.join(ROOT, 'main', 'ipc.js'));
-const todayBackground = require(path.join(ROOT, 'main', 'today_background.js'));
+const pageBackground = require(path.join(ROOT, 'main', 'page_background.js'));
 const { PetRegistry } = require(path.join(ROOT, 'main', 'pet_registry.js'));
 
 let passed = 0;
@@ -47,7 +47,7 @@ app.whenReady().then(async () => {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'soulpet-design-'));
   await db.open(path.join(dir, 'test.sqlite'));
-  todayBackground.invalidate();
+  pageBackground.invalidate();
 
   // The REAL pet registry, so the 今日 page's mood portrait shows the
   // user's actual pet sprite. A stub would make the portrait silently

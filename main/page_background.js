@@ -1,13 +1,23 @@
-// main/today_background.js — the 今日 page's background artwork catalog.
+// main/page_background.js — the shared background artwork for the pages
+// that wear one.
 //
 // ---------------------------------------------------------------------------
 // What this is
 // ---------------------------------------------------------------------------
-// The 今日 page paints one of the images in `resources/ui/` behind its
-// content, and the user picks which one in 设置. This module owns that
-// *choice*; the folder itself is catalogued by main/ui_artwork.js, which is
-// also where the other pages' artwork (the contact detail page's header
-// banner) is registered.
+// Several pages paint one of the images in `resources/ui/` behind their
+// content: the 今日 page, the 联系人 list, the 提醒日期 list and the 工作事件
+// list. They all wear the SAME picture, and the user picks that picture once
+// in 设置.
+//
+// This module owns that *choice*; the folder itself is catalogued by
+// main/ui_artwork.js, which is also where the other pages' artwork (the
+// contact detail page's header banner) is registered.
+//
+// It used to live under the 今日 page's name (main/today_background.js) and
+// to serve the 今日 page alone. The choice — "which picture, or none" — never
+// belonged to one page, so the module was renamed and widened: the artwork
+// catalog, the settings key and the "no background" sentinel are now shared
+// by every page that wears a background.
 //
 // ---------------------------------------------------------------------------
 // Why a module instead of reading the folder inline in ipc.js
@@ -22,9 +32,9 @@
 // ---------------------------------------------------------------------------
 // Resolution order
 // ---------------------------------------------------------------------------
-// `active()` reports the file the 今日 page should use as its background:
+// `active()` reports the file the pages should use as their background:
 //
-//   1. The user's choice, stored in settings as `today_background_id`.
+//   1. The user's choice, stored in settings as `page_background_id`.
 //   2. Otherwise the default — the first of the 今日 page's own artwork by sort
 //      order, which is what makes "just ship one and it works" true.
 //
@@ -36,7 +46,7 @@
 // another page (the contact detail page's banner) is that page's own
 // furniture and stays out of this picker — see main/ui_artwork.js.
 //
-// The 今日 page also has to be readable *over* the artwork, so the CSS puts a
+// The pages also have to be readable *over* the artwork, so the CSS puts a
 // translucent scrim between the image and the content — that's a styling
 // concern, not one of this module's.
 
@@ -47,7 +57,12 @@ const uiArtwork = require('./ui_artwork');
 const ACCEPTED_EXT = uiArtwork.ACCEPTED_EXT;
 
 // The settings key the user's choice is stored under.
-const SETTING_KEY = 'today_background_id';
+//
+// It is stored under ONE key for all the pages that wear a background, not
+// one key per page: the user picks a picture, not a picture per page, and
+// keeping the choice in a single row means adding a page to the set later
+// can't strand an older install with a stale per-page key.
+const SETTING_KEY = 'page_background_id';
 
 // The id used when the user has explicitly asked for no background.
 //
@@ -58,6 +73,25 @@ const SETTING_KEY = 'today_background_id';
 // able to turn it back on via the "跟随默认" option.
 const NONE = '__none__';
 
+// The routes that wear the background artwork.
+//
+// The list is a prefix match, so a detail page under a listed prefix would
+// inherit the artwork too — which is why the prefixes below are the *list*
+// pages themselves and not their parents. `/contacts` is a prefix of
+// `/contacts/:id`, so matching on the prefix alone would put the artwork
+// behind the contact DETAIL page as well; that page owns its own banner
+// (`user-detail-background.png`) and paints a full-bleed paper surface, so
+// the list artwork would only show through at its edges.
+//
+// The renderer asks for the background per route (see src/js/main.js), so
+// this list is the single place that decides which pages wear the artwork.
+const BACKGROUND_ROUTES = [
+  '/today',
+  '/contacts',
+  '/reminders',
+  '/events/work',
+];
+
 /**
  * Locate the ui directory. `appPath` is the app root (the parent of `main/`),
  * matching how pet_registry finds `resources/pets`.
@@ -67,7 +101,7 @@ function uiDir(appPath) {
 }
 
 /**
- * List the background images the 今日 page may use.
+ * List the background images the pages may use.
  *
  * Returns `[{ id, file, url, label }]`, sorted by id so the order is stable
  * across machines — `readdir` order is filesystem-dependent, and a list that
@@ -106,7 +140,7 @@ function resolve(appPath, id) {
 }
 
 /**
- * The background the 今日 page should paint, and the catalog the settings page
+ * The background the pages should paint, and the catalog the settings page
  * offers.
  *
  * `chosen` is the user's stored id; `current` is what actually gets used. They
@@ -161,10 +195,13 @@ function active(appPath, db) {
     // (or when they cleared the choice), so the picker can show "跟随默认"
     // as a distinct state.
     chosen: effective,
-    // What the 今日 page paints: `{ id, url }` or null for no artwork.
+    // What the pages paint: `{ id, url }` or null for no artwork.
     current,
     // The id that stands for "no background" in the picker.
     noneId: NONE,
+    // The routes that wear the artwork, so the renderer doesn't have to
+    // keep a second copy of the list.
+    routes: BACKGROUND_ROUTES,
   };
 }
 
@@ -172,6 +209,7 @@ module.exports = {
   ACCEPTED_EXT,
   SETTING_KEY,
   NONE,
+  BACKGROUND_ROUTES,
   uiDir,
   list,
   resolve,

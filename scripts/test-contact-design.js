@@ -42,7 +42,7 @@ const ROOT = path.join(__dirname, '..');
 const db = require(path.join(ROOT, 'main', 'db'));
 const scheduler = require(path.join(ROOT, 'main', 'scheduler'));
 const ipc = require(path.join(ROOT, 'main', 'ipc.js'));
-const todayBackground = require(path.join(ROOT, 'main', 'today_background.js'));
+const pageBackground = require(path.join(ROOT, 'main', 'page_background.js'));
 const uiArtwork = require(path.join(ROOT, 'main', 'ui_artwork.js'));
 const { PetRegistry } = require(path.join(ROOT, 'main', 'pet_registry.js'));
 
@@ -58,7 +58,7 @@ app.whenReady().then(async () => {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'soulpet-cd-design-'));
   await db.open(path.join(dir, 'test.sqlite'));
-  todayBackground.invalidate();
+  pageBackground.invalidate();
 
   const petRegistry = new PetRegistry();
   await petRegistry.init({ appPath: ROOT, userDataPath: path.join(dir, 'userdata') });
@@ -318,13 +318,13 @@ app.whenReady().then(async () => {
   check('the banner markup is gone on 今日', !other.banner);
   check('no banner artwork is left on 今日', !other.bannerVar, other.bannerVar || '(empty)');
 
-  // And the 今日 picker must not offer the contact banner — the artwork is
-  // CLAIMED by the contact-detail page.
-  const todayIds = todayBackground.list(null).map((b) => b.id);
-  check('the 今日 picker does not offer the contact banner',
+  // And the shared page-background picker must not offer the contact banner
+  // — the artwork is CLAIMED by the contact-detail page.
+  const todayIds = pageBackground.list(null).map((b) => b.id);
+  check('the background picker does not offer the contact banner',
     !todayIds.includes(uiArtwork.CONTACT_BANNER_ID),
     JSON.stringify(todayIds));
-  check('the 今日 picker still offers its own artwork',
+  check('the background picker still offers its own artwork',
     todayIds.length > 0, JSON.stringify(todayIds));
   // The catalog itself still knows about both pages.
   const all = uiArtwork.list(null).map((b) => b.id);
