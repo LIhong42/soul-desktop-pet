@@ -176,7 +176,13 @@ async function render() {
       ).join('')
     : '<option value="">(未找到桌宠)</option>';
 
+  // The whole page sits in a `.page-column` — the app's shared centred
+  // reading band — so on a wide window the settings cards keep the same
+  // side margin every other page has instead of running edge to edge.
+  // The wrapper is opened and closed around this one long template
+  // rather than re-indenting its 600 lines.
   app.innerHTML = `
+    <div class="page-column">
     <h1>设置</h1>
     <div class="card">
       <h2>桌面宠物形象</h2>
@@ -347,6 +353,7 @@ async function render() {
       <h2>应用</h2>
       <button class="btn danger" id="quit-app">退出 SoulDesktopPet</button>
       <p class="meta" style="margin-top:8px">点击后关闭整个应用，包括桌面宠物。</p>
+    </div>
     </div>
   `;
   document.getElementById('pet-species').onchange = async (e) => {

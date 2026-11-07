@@ -130,6 +130,7 @@ function render() {
   const tolOpt = currentToleranceOption();
 
   app.innerHTML = `
+    <div class="page-column">
     <a class="back-link" href="#/tools">‹ 返回工具列表</a>
     <h1>图片去背景</h1>
     <p class="meta">选择一张图片，自动把边界线以外的背景变透明，边界线以内的部分完整保留（包括与背景颜色相同的内部区域）。整个流程在本地运行，不会上传到任何服务器。</p>
@@ -182,6 +183,7 @@ function render() {
         <li>处理时间与图片尺寸相关；超大图片（约 2400 万像素以上）请先缩小。</li>
         <li>中途点击「取消」会立即终止处理。</li>
       </ul>
+    </div>
     </div>
   `;
 

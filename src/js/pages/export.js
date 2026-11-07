@@ -159,7 +159,11 @@ function render() {
   const exporting = state.exporting;
   const exportDisabled = !hasEvents || selectedCount === 0 || exporting;
 
+  // The page sits in a `.page-column` — the app's shared centred reading
+  // band — so the filter and export cards keep the same side margin every
+  // other page has instead of running edge to edge on a wide window.
   app.innerHTML = `
+    <div class="page-column">
     <h1>导出回忆</h1>
     <p class="meta">按联系人和时间段筛选已记录的回忆事件，导出为 PDF / Word 相册或 MP4 视频。素材仅来自「回忆事件」中已上传的事件与照片。</p>
 
@@ -220,6 +224,7 @@ function render() {
       </div>
       <p class="meta" style="margin-top:8px;">直接导出使用简单排版；Word 导出生成可编辑的图文文档（章节 + 内嵌照片）。「编辑并导出相册」可选择主题与版式、调整每页图文布局。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
       ${renderExportProgress()}
+    </div>
     </div>
   `;
 

@@ -21,6 +21,13 @@
      two files would silently break the moment either side changed. */
   --content-pad-y: 18px;
   --content-pad-x: 22px;
+  /* The width of the app's reading column — the centred band every page's
+     content sits in, so a wide window leaves breathing room on both sides
+     instead of stretching one card across the whole screen. The 联系人 /
+     提醒日期 / 工作事件 pages (`.bg-page`) and the 今日 page (`.today-page`)
+     hard-code the same number; this variable is the shared source for the
+     pages that use `.page-column`. */
+  --page-column-max: 1080px;
   /* The 「返回」 chevron, kept as a mask so it can be painted with the
      link's own color (currentColor) instead of shipping an SVG per page. */
   --icon-arrow-left: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 5l-7 7 7 7'/%3E%3C/svg%3E");
@@ -122,6 +129,29 @@ html, body {
 }
 
 /* ---------------------------------------------------------------------------
+   The reading column — the app's shared side margin
+   ---------------------------------------------------------------------------
+   On a wide window the scroll container is a full-bleed strip, and a page
+   that stretches its cards across it reads as a wall of panels rather than
+   as a page. Every list/detail page therefore wraps its content in a
+   centred column of at most `--page-column-max` so the same breathing room
+   appears on both sides of the content.
+
+   The 联系人 / 提醒日期 / 工作事件 pages get this for free from `.bg-page`
+   (which carries the same width in src/css/page_bg.css), and the 今日 page
+   from `.today-page`. This class is for the pages that wear neither — the
+   回忆事件 grid, the 具体事件 / 重要日期 / 属性 / 联系人 detail and edit
+   forms, 设置, 导出回忆 and the 工具 pages.
+
+   `margin: 0 auto` is what does the centring; the horizontal padding keeps
+   the content off the very edge of the window on a narrow one. */
+.page-column {
+  max-width: var(--page-column-max, 1080px);
+  margin: 0 auto;
+  padding: 0 4px;
+}
+
+/* ---------------------------------------------------------------------------
    页面背景 (page background artwork)
    ---------------------------------------------------------------------------
    The 今日 / 联系人 / 提醒日期 / 工作事件 pages paint the artwork from
@@ -134,9 +164,9 @@ html, body {
 
    - `background-size: cover` / `background-position: center` so the image
      fills the viewport however the window is resized, instead of tiling or
-     stretching. `background-attachment: local` keeps the image pinned to the
-     *content* rather than the viewport, so the artwork doesn't float away
-     from the text when the page scrolls.
+     stretching. `background-attachment: fixed` pins the image to the
+     VIEWPORT rather than the content — see the note on the attachment
+     below, this is the whole reason the pages share one composition.
    - A translucent white scrim between the artwork and the page content. The
      shipped image is a warm pastel that the dark body text would otherwise
      sit on top of at low contrast; the scrim lifts the page background back
@@ -160,7 +190,32 @@ html, body {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  background-attachment: local;
+  /* `fixed`, not `local`.
+
+     With `local` the image is positioned against the scroll container's
+     CONTENT box, whose height is the page's full content height — not the
+     visible height. `background-size: cover` then scales the image to
+     cover THAT box, so a longer page gets a MORE ZOOMED-IN picture, and
+     `background-position: center` crops the overflow evenly on both
+     sides.
+
+     The visible effect was that the same artwork showed a different
+     composition on each page: the 今日 page (898px of content) scaled the
+     picture to 0.95 and cropped 164px off each side, while 提醒日期
+     (1059px) scaled it to 1.13 and cropped 307px — enough to cut the
+     plant on the left out of the frame entirely, even though both pages
+     were using the identical file.
+
+     `fixed` measures the image against the VIEWPORT instead, so the
+     scale and the crop are the same on every page and every window
+     size: one artwork, one composition, everywhere.
+
+     The trade-off is that the picture no longer scrolls with the content.
+     That is the right trade here — the artwork is a room, and a room
+     does not slide up the wall as you scroll — and the pages that wear
+     it are short enough (and now paginated) that the fixed picture
+     barely moves relative to the content anyway. */
+  background-attachment: fixed;
 }
 /* Without artwork there's nothing to scrim — the page falls back to the plain
    app surface. The class is still applied (so the transition back is smooth)
@@ -3644,22 +3699,23 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
    回忆事件 toolbar — the header, the search pill and the filter card
    ---------------------------------------------------------------------------
    The three controls at the top of the 回忆事件 page are painted as ONE
-   warm panel: a soft peach card that holds the title, the two action
-   buttons, the rounded search field and the filter strip. They read as a
-   single "control surface" rather than as four unrelated widgets stacked
-   on the page background.
+   white panel: a card that holds the title, the two action buttons, the
+   rounded search field and the filter strip. They read as a single
+   "control surface" rather than as four unrelated widgets stacked on the
+   page background.
 
    The panel is a wrapper (`#memorial-toolbar`) rather than a background on
    the scroll container, because the card grid below must keep the plain
    app surface — the cards ARE diary pages, and a panel behind them would
    put a frame around every one of them.
 
-   Colors come from the app's own warm palette (--accent / --accent-soft),
-   so the toolbar sits in the same family as the theme and the diary
-   pages, without introducing a second accent hue. */
+   The panel is white so it does not compete with the diary pages below
+   it: the cards carry the warm paper colors, and a tinted panel on top
+   would pull the eye away from them. Only the accent-colored controls
+   (the "+" button, the heart doodle) keep the warm hue. */
 .memorial-toolbar {
-  --memorial-panel: #fdf2ea;
-  --memorial-panel-edge: #f7e4d6;
+  --memorial-panel: #fff;
+  --memorial-panel-edge: #f0e4da;
   --memorial-ink: #4a3f38;
   --memorial-ink-soft: #9c8c80;
   position: relative;
@@ -3732,12 +3788,15 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   font-size: 13px;
   font-weight: 500;
 }
+/* The export button is the quiet one: a bordered surface button that
+   sits beside the solid accent "+ 新建". Its own fill is tinted (not
+   pure white) so it still reads as a button against the white panel. */
 .memorial-btn-export {
-  background: #fff;
+  background: #fdfaf8;
   color: var(--memorial-ink);
   border: 1px solid var(--memorial-panel-edge);
 }
-.memorial-btn-export:hover { background: #fffaf6; border-color: #e8cdb8; }
+.memorial-btn-export:hover { background: #f8f1ea; border-color: #e8cdb8; }
 .memorial-btn-new {
   display: inline-flex;
   align-items: center;
@@ -3760,16 +3819,20 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   gap: 10px;
   margin-bottom: 12px;
 }
-/* The field is a white pill: the search icon rides inside it on the left
+/* The field is a pill: the search icon rides inside it on the left
    and the clear button on the right, so the whole control reads as one
-   rounded object rather than as an input flanked by two buttons. */
+   rounded object rather than as an input flanked by two buttons.
+
+   The panel behind it is white, so the pill gets the faintest warm tint
+   instead of pure white — otherwise the two would merge into one blank
+   area and the field would lose its shape. */
 .memorial-search-field {
   position: relative;
   display: flex;
   align-items: center;
   flex: 1;
   min-width: 0;
-  background: #fff;
+  background: #fdfaf8;
   border: 1px solid var(--memorial-panel-edge);
   border-radius: 999px;
   padding: 0 14px;
@@ -3849,7 +3912,7 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  background: #fff;
+  background: #fdfaf8;
   border: 1px solid var(--memorial-panel-edge);
   border-radius: 12px;
   padding: 9px 14px;

@@ -105,36 +105,43 @@ export async function render(args, params) {
   // warm panel (#memorial-toolbar) — they are one control surface, and
   // the card grid below keeps the plain app surface so the diary pages
   // stand on their own.
+  //
+  // The whole page sits in a `.page-column` — the app's shared centred
+  // reading band. Without it the grid would stretch across the whole
+  // window on a wide monitor and the diary pages would sit edge to edge;
+  // the column leaves the same side margin the 联系人 page has.
   const initialQ = pageState.q;
   app.innerHTML = `
-    <div class="memorial-toolbar" id="memorial-toolbar">
-      <div class="memorial-toolbar-head" id="page-header">
-        <h1 class="memorial-title">
-          回忆事件
-          ${titleArtHtml()}
-          ${!pageState.selectMode.active && pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : ''}
-        </h1>
-        <div class="memorial-toolbar-actions">
-          <button class="btn memorial-btn-export" id="open-export" style="${pageState.allEvents.length > 0 ? '' : 'display:none;'}">导出回忆</button>
-          <button class="btn memorial-btn-new" id="new-event"><span class="memorial-plus">+</span>新建</button>
+    <div class="page-column">
+      <div class="memorial-toolbar" id="memorial-toolbar">
+        <div class="memorial-toolbar-head" id="page-header">
+          <h1 class="memorial-title">
+            回忆事件
+            ${titleArtHtml()}
+            ${!pageState.selectMode.active && pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : ''}
+          </h1>
+          <div class="memorial-toolbar-actions">
+            <button class="btn memorial-btn-export" id="open-export" style="${pageState.allEvents.length > 0 ? '' : 'display:none;'}">导出回忆</button>
+            <button class="btn memorial-btn-new" id="new-event"><span class="memorial-plus">+</span>新建</button>
+          </div>
+        </div>
+        <div class="memorial-search">
+          <div class="memorial-search-field">
+            <span class="memorial-search-icon" aria-hidden="true"></span>
+            <input type="search" id="memorial-q" class="page-search-input"
+                   placeholder="搜索回忆事件、关键词或联系人…" autocomplete="off" />
+            <button class="memorial-search-clear" id="memorial-clear" type="button"
+                    title="清除搜索" style="${initialQ ? '' : 'display:none;'}">×</button>
+          </div>
+          <span class="meta page-search-meta" style="${initialQ ? '' : 'display:none;'}"></span>
+        </div>
+        <div class="memorial-filters" id="memorial-filters">
+          ${filterBarHtml()}
+          <span class="meta memorial-filter-meta" id="memorial-filter-meta"></span>
         </div>
       </div>
-      <div class="memorial-search">
-        <div class="memorial-search-field">
-          <span class="memorial-search-icon" aria-hidden="true"></span>
-          <input type="search" id="memorial-q" class="page-search-input"
-                 placeholder="搜索回忆事件、关键词或联系人…" autocomplete="off" />
-          <button class="memorial-search-clear" id="memorial-clear" type="button"
-                  title="清除搜索" style="${initialQ ? '' : 'display:none;'}">×</button>
-        </div>
-        <span class="meta page-search-meta" style="${initialQ ? '' : 'display:none;'}"></span>
-      </div>
-      <div class="memorial-filters" id="memorial-filters">
-        ${filterBarHtml()}
-        <span class="meta memorial-filter-meta" id="memorial-filter-meta"></span>
-      </div>
+      <div id="memorial-list"></div>
     </div>
-    <div id="memorial-list"></div>
   `;
 
   // Set initial query value on the freshly-mounted input only this once;

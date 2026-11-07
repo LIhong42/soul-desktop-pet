@@ -99,13 +99,19 @@
    The artwork is shared with the 联系人 / 提醒日期 / 工作事件 pages (see
    src/js/page_background.js), but the scrim is this page's own: its cards
    are translucent sheets, so it wants a lighter wash than the list pages,
-   whose cards are opaque and carry their own contrast. */
+   whose cards are opaque and carry their own contrast.
+
+   `background-attachment: fixed` here for the same reason as in styles.css:
+   the picture is measured against the viewport, so every page that wears it
+   shows the SAME composition of the same file. With `local` each page would
+   scale and crop the artwork by its own content height. */
 .content.page-bg {
   --page-bg-scrim: rgba(255, 246, 236, 0.62);
   --page-bg-scrim-bottom: rgba(255, 246, 236, 0.42);
   background-image:
     var(--page-bg-image),
     linear-gradient(var(--page-bg-scrim), var(--page-bg-scrim-bottom));
+  background-attachment: fixed;
 }
 
 /* ---- Page header --------------------------------------------------------

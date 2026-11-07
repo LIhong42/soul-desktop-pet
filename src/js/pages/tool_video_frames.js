@@ -101,6 +101,7 @@ function render() {
   // "返回工具列表" reuses the standard back-link style so the user can
   // recover the index even when they navigated straight to this URL.
   app.innerHTML = `
+    <div class="page-column">
     <a class="back-link" href="#/tools">‹ 返回工具列表</a>
     <h1>视频拆帧</h1>
     <p class="meta">上传一个本地视频，按指定帧率逐帧导出为图片，再打包为 zip 压缩包。整个流程在本地运行，不会上传到任何服务器。</p>
@@ -142,6 +143,7 @@ function render() {
         <li>处理时间取决于视频时长和帧率；超过几分钟的视频建议先做小批量测试。</li>
         <li>中途点击「取消」会立即终止 ffmpeg，并删除未完成的 zip。</li>
       </ul>
+    </div>
     </div>
   `;
 

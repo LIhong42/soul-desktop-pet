@@ -95,15 +95,17 @@ async function renderEdit(args, params) {
   });
 
   app.innerHTML = `
-    <div class="row between">
-      <h1>${isNew ? '新建' : '编辑'}${categoryTitle(category)}</h1>
-      <a class="back-link" href="${listHref}"><span class="icon-arrow-left"></span>返回列表</a>
-    </div>
-    <div class="card">
-      ${form.html}
-      <div class="row" style="margin-top:14px; gap:8px;">
-        <button class="btn" id="save">${isNew?'创建':'保存'}</button>
-        ${!isNew ? '<button class="btn danger" id="del">删除</button>' : ''}
+    <div class="page-column">
+      <div class="row between">
+        <h1>${isNew ? '新建' : '编辑'}${categoryTitle(category)}</h1>
+        <a class="back-link" href="${listHref}"><span class="icon-arrow-left"></span>返回列表</a>
+      </div>
+      <div class="card">
+        ${form.html}
+        <div class="row" style="margin-top:14px; gap:8px;">
+          <button class="btn" id="save">${isNew?'创建':'保存'}</button>
+          ${!isNew ? '<button class="btn danger" id="del">删除</button>' : ''}
+        </div>
       </div>
     </div>
   `;

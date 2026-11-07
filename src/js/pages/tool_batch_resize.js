@@ -138,6 +138,7 @@ function render() {
   const isCustom = state.factorMode === 'custom';
 
   app.innerHTML = `
+    <div class="page-column">
     <a class="back-link" href="#/tools">‹ 返回工具列表</a>
     <h1>图片批量缩小</h1>
     <p class="meta">把一个文件夹里的所有图片按指定倍数缩小，结果写入另一个文件夹。<b>原图不会被修改</b>。整个流程在本地运行，不会上传到任何服务器。</p>
@@ -197,6 +198,7 @@ function render() {
         <li>为防止误操作，输出文件夹<b>不能与源文件夹相同</b>，也不能位于源文件夹内部。</li>
         <li>处理时间与图片数量和尺寸相关；中途点击「取消」会立即终止（已生成的图片会保留）。</li>
       </ul>
+    </div>
     </div>
   `;
 

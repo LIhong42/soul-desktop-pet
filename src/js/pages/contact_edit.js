@@ -40,55 +40,57 @@ async function render(args) {
     : (c.icon_kind || suggestIconKind(c.relationship));
 
   app.innerHTML = `
-    <div class="row between">
-      <h1>${isNew ? '新建联系人' : '编辑联系人'}</h1>
-      <a class="pill-link" href="${isNew ? '#/contacts' : '#/contacts/' + c.id}">取消</a>
-    </div>
+    <div class="page-column">
+      <div class="row between">
+        <h1>${isNew ? '新建联系人' : '编辑联系人'}</h1>
+        <a class="pill-link" href="${isNew ? '#/contacts' : '#/contacts/' + c.id}">取消</a>
+      </div>
 
-    <div class="card">
-      <div class="section-header"><h2>基本信息</h2></div>
-      <div class="field">
-        <label>姓名 *</label>
-        <input type="text" id="f-name" value="${escapeHtml(c.name || '')}" autofocus/>
-      </div>
-      <div class="field">
-        <label>与本人的关系</label>
-        <input type="text" id="f-relationship" placeholder="家人 / 朋友 / 同事..."
-               value="${escapeHtml(c.relationship || '')}"/>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="section-header">
-        <h2>头像</h2>
-        <div class="meta" id="avatar-current-label"></div>
-      </div>
-      <div class="row" style="gap:14px; align-items:center;">
-        <div class="contact-avatar contact-avatar-preview"
-             id="avatar-preview"
-             style="color: var(--contact-${c.name ? defaultIndexFor(c.name) : 1})">
-          ${renderAvatarPreview(c, getCachedAvatarDataUrl(c.id))}
+      <div class="card">
+        <div class="section-header"><h2>基本信息</h2></div>
+        <div class="field">
+          <label>姓名 *</label>
+          <input type="text" id="f-name" value="${escapeHtml(c.name || '')}" autofocus/>
         </div>
-        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:8px;">
-          <input type="file" id="f-avatar-file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" hidden/>
-          <button type="button" class="btn secondary" id="f-avatar-pick">上传头像…</button>
-          <button type="button" class="btn secondary" id="f-avatar-clear" ${c.custom_avatar_path ? '' : 'disabled'}>清除头像</button>
-          <div class="meta">支持 JPG / PNG / GIF / WebP / BMP，单张 ≤ 5MB。${isNew ? '保存联系人后可上传头像。' : ''}</div>
+        <div class="field">
+          <label>与本人的关系</label>
+          <input type="text" id="f-relationship" placeholder="家人 / 朋友 / 同事..."
+                 value="${escapeHtml(c.relationship || '')}"/>
         </div>
       </div>
-      <div class="icon-grid" id="icon-grid"></div>
-    </div>
 
-    <div class="card">
-      <div class="section-header"><h2>喜好 / 忌讳 / 礼物</h2></div>
-      <div class="meta">${isNew
-        ? '保存联系人后，在联系人详情页的「喜好 / 忌讳 / 礼物」页签里逐条记录。'
-        : `在联系人详情页的「<a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/likes">喜好</a> / <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/taboos">忌讳</a> / <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/gifts">礼物</a>」页签里逐条记录。`}</div>
-    </div>
+      <div class="card">
+        <div class="section-header">
+          <h2>头像</h2>
+          <div class="meta" id="avatar-current-label"></div>
+        </div>
+        <div class="row" style="gap:14px; align-items:center;">
+          <div class="contact-avatar contact-avatar-preview"
+               id="avatar-preview"
+               style="color: var(--contact-${c.name ? defaultIndexFor(c.name) : 1})">
+            ${renderAvatarPreview(c, getCachedAvatarDataUrl(c.id))}
+          </div>
+          <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:8px;">
+            <input type="file" id="f-avatar-file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" hidden/>
+            <button type="button" class="btn secondary" id="f-avatar-pick">上传头像…</button>
+            <button type="button" class="btn secondary" id="f-avatar-clear" ${c.custom_avatar_path ? '' : 'disabled'}>清除头像</button>
+            <div class="meta">支持 JPG / PNG / GIF / WebP / BMP，单张 ≤ 5MB。${isNew ? '保存联系人后可上传头像。' : ''}</div>
+          </div>
+        </div>
+        <div class="icon-grid" id="icon-grid"></div>
+      </div>
 
-    <div class="row" style="margin-top:14px; gap:8px;">
-      <button class="btn" id="save">${isNew ? '创建' : '保存'}</button>
-      ${!isNew ? `<button class="btn danger" id="del">删除</button>` : ''}
+      <div class="card">
+        <div class="section-header"><h2>喜好 / 忌讳 / 礼物</h2></div>
+        <div class="meta">${isNew
+          ? '保存联系人后，在联系人详情页的「喜好 / 忌讳 / 礼物」页签里逐条记录。'
+          : `在联系人详情页的「<a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/likes">喜好</a> / <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/taboos">忌讳</a> / <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}/gifts">礼物</a>」页签里逐条记录。`}</div>
+      </div>
+
+      <div class="row" style="margin-top:14px; gap:8px;">
+        <button class="btn" id="save">${isNew ? '创建' : '保存'}</button>
+        ${!isNew ? `<button class="btn danger" id="del">删除</button>` : ''}
+      </div>
     </div>
   `;
 

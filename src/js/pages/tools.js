@@ -65,11 +65,13 @@ function render() {
   `).join('');
 
   app.innerHTML = `
-    <h1>工具</h1>
-    <p class="meta">这里收集一些常用工具。点开任意卡片即可使用。所有处理都在本地完成，不会上传到任何服务器。</p>
+    <div class="page-column">
+      <h1>工具</h1>
+      <p class="meta">这里收集一些常用工具。点开任意卡片即可使用。所有处理都在本地完成，不会上传到任何服务器。</p>
 
-    <div class="tool-list">
-      ${cards || `<div class="empty">还没有工具，敬请期待。</div>`}
+      <div class="tool-list">
+        ${cards || `<div class="empty">还没有工具，敬请期待。</div>`}
+      </div>
     </div>
   `;
 }

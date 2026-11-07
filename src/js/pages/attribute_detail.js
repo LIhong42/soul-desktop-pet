@@ -72,47 +72,49 @@ async function render(args) {
   const avatarUrl = c.custom_avatar_path ? getCachedAvatarDataUrl(c.id) : '';
 
   app.innerHTML = `
-    <div class="row between">
-      <h1>${escapeHtml(titleText)}详情</h1>
-      <a class="back-link" id="back-link" href="${escapeHtml(backHash)}"><span class="icon-arrow-left"></span>${escapeHtml(backLabel)}</a>
-    </div>
+    <div class="page-column">
+      <div class="row between">
+        <h1>${escapeHtml(titleText)}详情</h1>
+        <a class="back-link" id="back-link" href="${escapeHtml(backHash)}"><span class="icon-arrow-left"></span>${escapeHtml(backLabel)}</a>
+      </div>
 
-    <div class="card">
-      <div class="row" style="gap:12px; align-items:center;">
-        <div class="contact-avatar" style="color: var(--contact-${defaultIndexFor(c.name)})">
-          ${avatarUrl
-            ? `<img src="${escapeHtml(avatarUrl)}" alt=""/>`
-            : iconSVG(suggestIconKind(c.relationship), { title: displayName(c) })}
+      <div class="card">
+        <div class="row" style="gap:12px; align-items:center;">
+          <div class="contact-avatar" style="color: var(--contact-${defaultIndexFor(c.name)})">
+            ${avatarUrl
+              ? `<img src="${escapeHtml(avatarUrl)}" alt=""/>`
+              : iconSVG(suggestIconKind(c.relationship), { title: displayName(c) })}
+          </div>
+          <div style="flex:1; min-width:0;">
+            <div class="lr-title">${escapeHtml(displayName(c))}</div>
+            <div class="meta">${escapeHtml(c.relationship || '未填关系')}</div>
+          </div>
+          <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}">查看联系人</a>
         </div>
-        <div style="flex:1; min-width:0;">
-          <div class="lr-title">${escapeHtml(displayName(c))}</div>
-          <div class="meta">${escapeHtml(c.relationship || '未填关系')}</div>
+      </div>
+
+      <div class="card">
+        <div class="section-header"><h2>基本信息</h2></div>
+        <div class="field">
+          <label>描述 *</label>
+          <input type="text" id="attr-desc" value="${escapeHtml(row.description || '')}" autofocus/>
         </div>
-        <a class="inline-link" href="#/contacts/${escapeHtml(c.id)}">查看联系人</a>
+        <div class="field">
+          <label>事件（记录时间）</label>
+          <input type="date" id="attr-event" value="${escapeHtml(row.event || todayYmd())}"/>
+        </div>
+        <div class="row" style="margin-top:14px; gap:8px;">
+          <button class="btn" id="save">保存</button>
+          <button class="btn danger" id="del">删除</button>
+        </div>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="section-header"><h2>基本信息</h2></div>
-      <div class="field">
-        <label>描述 *</label>
-        <input type="text" id="attr-desc" value="${escapeHtml(row.description || '')}" autofocus/>
-      </div>
-      <div class="field">
-        <label>事件（记录时间）</label>
-        <input type="date" id="attr-event" value="${escapeHtml(row.event || todayYmd())}"/>
-      </div>
-      <div class="row" style="margin-top:14px; gap:8px;">
-        <button class="btn" id="save">保存</button>
-        <button class="btn danger" id="del">删除</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="section-header"><h2>元信息</h2></div>
-      <div class="row" style="gap:24px; flex-wrap:wrap;">
-        <div><div class="meta">创建时间</div>${escapeHtml(row.created_at || '未知')}</div>
-        <div><div class="meta">更新时间</div>${escapeHtml(row.updated_at || '未知')}</div>
+      <div class="card">
+        <div class="section-header"><h2>元信息</h2></div>
+        <div class="row" style="gap:24px; flex-wrap:wrap;">
+          <div><div class="meta">创建时间</div>${escapeHtml(row.created_at || '未知')}</div>
+          <div><div class="meta">更新时间</div>${escapeHtml(row.updated_at || '未知')}</div>
+        </div>
       </div>
     </div>
   `;

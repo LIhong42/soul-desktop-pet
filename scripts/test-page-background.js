@@ -70,6 +70,33 @@ app.whenReady().then(async () => {
   // the implementation can't disagree about which pages are covered.
   const BG_ROUTES = ['/today', '/contacts', '/reminders', '/events/work'];
 
+  // Seed enough work events and contacts for their lists to need more than
+  // one page. The reminders page already has rows (the auto-seeded
+  // festivals), but a fresh DB has no contacts and no work events — and an
+  // empty list legitimately has NO pager, so the pagination assertions
+  // would pass vacuously.
+  //
+  // The rows go straight into the DB (the test drives the REAL preload and
+  // the REAL IPC handlers, so the renderer sees them the way it sees the
+  // user's own data).
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const seedContacts = 20;
+  const seedWorkEvents = 20;
+  for (let i = 0; i < seedContacts; i++) {
+    db.run(
+      `INSERT INTO contacts(id, name, relationship, created_at, updated_at)
+       VALUES(?, ?, ?, ?, ?)`,
+      [`tc${i}`, `联系人${i}`, '朋友', now, now]);
+  }
+  for (let i = 0; i < seedWorkEvents; i++) {
+    db.run(
+      `INSERT INTO events(id, title, description, remind_kind, remind_date,
+                          next_fire_at, active, category, created_at, updated_at)
+       VALUES(?, ?, ?, 'one_time', ?, ?, 1, 'work', ?, ?)`,
+      [`tw${i}`, `工作事项${i}`, `第 ${i} 件事`,
+        '2026-12-01 10:00:00', '2026-12-01 10:00:00', now, now]);
+  }
+
   let winMain = null;
   const queue = new scheduler.ReminderQueue();
 
@@ -117,6 +144,20 @@ app.whenReady().then(async () => {
   await winMain.loadFile(path.join(ROOT, 'src', 'index.html'));
   await new Promise((r) => setTimeout(r, 700));
 
+  // The main window opens BEHIND the PIN lock, and body.locked hides #app
+  // with display:none. A display:none subtree has no layout box, so every
+  // height measurement below would read 0 — and the artwork's scale is
+  // exactly what depends on the page's height, so it could not be checked
+  // at all.
+  //
+  // The lock is a renderer-side class, so the test lifts it directly. This
+  // is a harness shortcut, not a change to the app's security: the real
+  // unlock path (api.app.verifyPin) is unaffected.
+  await winMain.webContents.executeJavaScript(`document.body.classList.remove('locked'); true`);
+  await new Promise((r) => setTimeout(r, 200));
+  const stillLocked = await winMain.webContents.executeJavaScript(`document.body.classList.contains('locked')`);
+  check('the app shell is laid out (the PIN lock is lifted)', stillLocked === false);
+
   // Read the background state off the scroll container. One helper for every
   // page, so each assertion below is about the same four facts.
   const readBg = () => winMain.webContents.executeJavaScript(`(() => {
@@ -126,6 +167,14 @@ app.whenReady().then(async () => {
       noArt: el.classList.contains('no-art'),
       image: el.style.getPropertyValue('--page-bg-image'),
       computed: getComputedStyle(el).backgroundImage,
+      attachment: getComputedStyle(el).backgroundAttachment,
+      // The CONTENT height is what used to scale the artwork differently on
+      // each page — the taller the content, the bigger the picture. This is
+      // the scrollHeight, not the container's own height: the container is
+      // a fixed viewport-tall box, so its height is the same everywhere,
+      // while the content behind it is what actually grew. See test 9.
+      contentHeight: el.scrollHeight,
+      containerHeight: el.getBoundingClientRect().height,
     };
   })()`);
 
@@ -315,6 +364,131 @@ app.whenReady().then(async () => {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Test 9 — every page shows the SAME composition of the artwork
+  // -------------------------------------------------------------------------
+  // The picture is scaled by background-size: cover, which measures against
+  // the background positioning area. With background-attachment: local that
+  // area is the scroll container's CONTENT box, whose height is the page's
+  // full content height — so a LONGER page scaled the artwork UP and cropped
+  // more of it away. The 提醒日期 page (1059px of content) zoomed the picture
+  // 18% more than the 今日 page (898px), and the plant on the left of the
+  // frame fell outside the crop entirely, even though both pages were using
+  // the identical file.
+  //
+  // fixed measures against the viewport instead, so the scale and the crop
+  // are the same everywhere: one artwork, one composition.
+  console.log('\n[9] every page shows the same composition of the artwork');
+  const heights = [];
+  for (const route of BG_ROUTES) {
+    await goto('#' + route, 800);
+    const bg = await readBg();
+    check(`${route} pins the artwork to the viewport`,
+      bg.attachment === 'fixed, fixed', bg.attachment);
+    heights.push({ route, height: bg.contentHeight });
+  }
+  // The pages really do have different heights — that is the condition that
+  // broke the old local behaviour, so the test would pass vacuously if they
+  // were all the same.
+  const distinct = new Set(heights.map((h) => h.height));
+  check('the pages have differing content heights (the condition that broke local)',
+    distinct.size > 1, JSON.stringify(heights));
+  check('every page has a measurable height', heights.every((h) => h.height > 0),
+    JSON.stringify(heights));
+
+  // -------------------------------------------------------------------------
+  // Test 10 — the list pages are paginated
+  // -------------------------------------------------------------------------
+  // The list shows a fixed number of rows per page, so a long list never
+  // runs past the bottom of the frame the artwork is painted in.
+  //
+  // Three pages share this behaviour — 提醒日期, 工作事件 and 联系人 — and
+  // all three get it from src/js/pager.js. The rows have to come from a
+  // subtree of their own, or turning a page would rebuild the filter bar
+  // above it.
+  console.log('\n[10] the list pages are paginated');
+  const PAGED_PAGES = [
+    { route: '/reminders', list: '#reminders-list', label: '提醒日期' },
+    { route: '/events/work', list: '#work-list', label: '工作事件' },
+    { route: '/contacts', list: '#contacts-list', label: '联系人' },
+  ];
+  for (const page of PAGED_PAGES) {
+    await goto('#' + page.route, 900);
+    const info = await winMain.webContents.executeJavaScript(`(() => {
+      const el = document.querySelector('${page.list}');
+      const p = el ? el.querySelector('.section-pager') : null;
+      return {
+        hasList: !!el,
+        rows: el ? el.querySelectorAll('.list-row').length : 0,
+        hasPager: !!p,
+        text: p ? p.querySelector('.meta').textContent.trim() : '',
+        prevDisabled: p ? p.querySelector('[data-action=prev]').disabled : null,
+        nextDisabled: p ? p.querySelector('[data-action=next]').disabled : null,
+        firstId: (el ? el.querySelector('.list-row') : null)?.dataset.id || '',
+      };
+    })()`);
+    check(`${page.label}: the list lives in its own subtree`, info.hasList);
+    check(`${page.label}: the list shows a bounded number of rows`,
+      info.rows <= 8, String(info.rows));
+    check(`${page.label}: the pager is present`, info.hasPager);
+    if (info.hasPager) {
+      check(`${page.label}: the pager counts the entries`,
+        /共 \d+ 条/.test(info.text), info.text);
+      check(`${page.label}: the previous button is disabled on the first page`,
+        info.prevDisabled === true);
+      check(`${page.label}: the next button is enabled on the first page`,
+        info.nextDisabled === false);
+
+      // Turning the page must actually swap the rows — a pager that
+      // renders but does nothing would pass every check above.
+      await winMain.webContents.executeJavaScript(`(() => {
+        const el = document.querySelector('${page.list}');
+        const btn = el.querySelector('.section-page[data-action=next]');
+        if (btn) btn.click();
+        return true;
+      })()`);
+      await new Promise((r) => setTimeout(r, 300));
+      const page2 = await winMain.webContents.executeJavaScript(`(() => {
+        const el = document.querySelector('${page.list}');
+        const p = el ? el.querySelector('.section-pager') : null;
+        return {
+          rows: el ? el.querySelectorAll('.list-row').length : 0,
+          text: p ? p.querySelector('.meta').textContent.trim() : '',
+          firstId: (el ? el.querySelector('.list-row') : null)?.dataset.id || '',
+          prevDisabled: p ? p.querySelector('[data-action=prev]').disabled : null,
+        };
+      })()`);
+      check(`${page.label}: the next page shows different rows`,
+        page2.firstId !== '' && page2.firstId !== info.firstId,
+        `page1=${info.firstId} page2=${page2.firstId}`);
+      check(`${page.label}: the counter moved to page 2`,
+        /^第 2 \//.test(page2.text), page2.text);
+      check(`${page.label}: the previous button is enabled on page 2`,
+        page2.prevDisabled === false);
+
+      // ...and back again.
+      await winMain.webContents.executeJavaScript(`(() => {
+        const el = document.querySelector('${page.list}');
+        const btn = el.querySelector('.section-page[data-action=prev]');
+        if (btn) btn.click();
+        return true;
+      })()`);
+      await new Promise((r) => setTimeout(r, 300));
+      const back = await winMain.webContents.executeJavaScript(`(() => {
+        const el = document.querySelector('${page.list}');
+        const p = el ? el.querySelector('.section-pager') : null;
+        return {
+          text: p ? p.querySelector('.meta').textContent.trim() : '',
+          firstId: (el ? el.querySelector('.list-row') : null)?.dataset.id || '',
+        };
+      })()`);
+      check(`${page.label}: the previous button returns to page 1`,
+        /^第 1 \//.test(back.text), back.text);
+      check(`${page.label}: going back restores the first rows`,
+        back.firstId === info.firstId,
+        `page1=${info.firstId} back=${back.firstId}`);
+    }
+  }
   // -------------------------------------------------------------------------
   // Report
   // -------------------------------------------------------------------------

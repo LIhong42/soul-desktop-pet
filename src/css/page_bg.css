@@ -293,3 +293,29 @@
 .bg-page .bulk-row-check {
   accent-color: var(--accent);
 }
+
+/* ---- The pager ----------------------------------------------------------
+   The pager sits under the list, on the artwork. It is furniture rather
+   than content, so it takes the lighter sheet — the same one the header
+   and the filter bar use. Its counter is the one thing the user reads to
+   know where they are, so it keeps the page's own ink. */
+.bg-page .section-pager {
+  margin-top: 14px;
+}
+.bg-page .section-pager .btn.secondary {
+  background: var(--bg-paper);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  backdrop-filter: blur(20px) saturate(125%);
+  border: 1px solid var(--bg-line);
+  color: var(--bg-ink);
+}
+.bg-page .section-pager .btn.secondary:hover:not(:disabled) {
+  background: var(--bg-paper-hover);
+  border-color: var(--bg-line-strong);
+}
+.bg-page .section-pager .btn.secondary:disabled {
+  opacity: 0.45;
+}
+.bg-page .section-pager .meta {
+  color: var(--bg-ink-soft);
+}

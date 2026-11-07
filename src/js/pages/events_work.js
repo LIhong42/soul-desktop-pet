@@ -2,6 +2,7 @@
 import { api, escapeHtml, firstChar, displayName, fmtDateTime, formatRelative, countdownTo, categoryIcon, contactColorIndex, toast, repeatLabel } from '../api.js';
 import { register, navigate } from '../router.js';
 import { applyBackground } from '../page_background.js';
+import { pageSlice, pagerHtml, wirePager } from '../pager.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
   wireBulkEnter, wireBulkToolbar, wireBulkRowChecks,
@@ -11,12 +12,19 @@ import {
 // the user's checkbox selections on re-render. `q` mirrors the current
 // search so the list subtree can be re-filtered without an IPC round-trip;
 // `allEvents` / `cById` cache the loaded data for the same reason.
+//
+// `page` is the current page index (0-based) of the paginated list. It is
+// NOT in the URL: the search query is (so a searched view can be shared),
+// but the page number is a transient view state, and putting it in the
+// hash would make every "next page" click a history entry. A search change
+// resets it to 0.
 const pageState = {
   selectMode: { active: false, selected: new Set() },
   q: '',
   allEvents: [],
   cById: {},
   basePath: '/events/work',
+  page: 0,
 };
 
 async function render(args, params) {
@@ -39,7 +47,12 @@ async function render(args, params) {
   ]);
   pageState.allEvents = events;
   pageState.cById = Object.fromEntries(contacts.map((c) => [c.id, c]));
-  pageState.q = ((params && params.q) || '').trim().toLowerCase();
+  const nextQ = ((params && params.q) || '').trim().toLowerCase();
+  // A different search is a different list — start it at the first page.
+  // The same search re-rendered (e.g. after a bulk delete) keeps its page,
+  // and pageSlice() clamps it if the list got shorter.
+  if (nextQ !== pageState.q) pageState.page = 0;
+  pageState.q = nextQ;
   // Preserve any other query params (e.g. contact_id) when syncing search
   // back to the URL.
   pageState.basePath = '/events/work' + (params.contact_id ? '?contact_id=' + encodeURIComponent(params.contact_id) : '');
@@ -105,6 +118,10 @@ function rerenderList() {
 
   const host = document.getElementById('work-list');
   if (!host) return;
+
+  // The list is paginated — only the current page's rows are painted.
+  const { total, totalPages, visible } = pageSlice(filtered, pageState);
+
   host.innerHTML = `
     ${pageState.selectMode.active ? bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
@@ -115,9 +132,10 @@ function rerenderList() {
       ? `<div class="empty">还没有工作事件 · 点 + 新建 创建一个</div>`
       : filtered.length === 0
         ? `<div class="empty">没有匹配「${escapeHtml(q)}」的工作事件 · 已隐藏 ${suppressed} 条</div>`
-        : filtered.map((e) => pageState.selectMode.active
+        : visible.map((e) => pageState.selectMode.active
             ? bulkSelectableRowHtml(rowInner(e, cById), e.id, pageState.selectMode.selected.has(e.id), 'work')
             : renderRow(e, cById)).join('')}
+    ${pagerHtml(pageState.page, totalPages, filtered.length)}
   `;
 
   if (!pageState.selectMode.active) {
@@ -125,6 +143,13 @@ function rerenderList() {
       el.onclick = () => navigate('/events/' + el.dataset.id + '?category=work');
     });
   }
+
+  wirePager(host, pageState, rerenderList, () => {
+    // Keep the user at the top of the new page — otherwise they land
+    // halfway down it, looking at rows they already saw.
+    const scroller = document.querySelector('.content');
+    if (scroller) scroller.scrollTop = 0;
+  });
 
   if (pageState.selectMode.active) {
     wireBulkRowChecks(host, pageState.selectMode);
@@ -154,6 +179,10 @@ function wireSearchInput() {
       const raw = input.value;
       const next = raw.trim().toLowerCase();
       pageState.q = next;
+      // A new search means a new list — start it at the first page. Without
+      // this, searching while on page 3 could land on a page that no longer
+      // exists (clamped to the last page, which is not what the user meant).
+      pageState.page = 0;
       const targetHash = next
         ? pageState.basePath + (pageState.basePath.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(next)
         : pageState.basePath;
@@ -181,6 +210,7 @@ function wireSearchInput() {
     clearBtn.onclick = () => {
       if (input.value) input.value = '';
       pageState.q = '';
+      pageState.page = 0;
       const targetHash = pageState.basePath;
       if (location.hash !== '#' + targetHash) {
         try { history.replaceState(null, '', '#' + targetHash); } catch (_) {}

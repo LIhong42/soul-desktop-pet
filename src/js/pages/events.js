@@ -9,6 +9,7 @@
 import { api, escapeHtml, displayName, eventKindAttr, formatRelative, countdownTo, categoryIcon, repeatLabel, eventDisplayTitle } from '../api.js';
 import { register, navigate } from '../router.js';
 import { applyBackground } from '../page_background.js';
+import { pageSlice, pagerHtml, wirePager } from '../pager.js';
 import {
   bulkEnterLinkHtml, bulkToolbarHtml, bulkSelectableRowHtml,
   wireBulkEnter, wireBulkToolbar, wireBulkRowChecks,
@@ -25,7 +26,15 @@ const TAG_KIND_FILTER_OPTIONS = [
 // selectMode is per-page-instance state. We attach it to a module-scoped
 // object so toggling bulk-delete mode doesn't lose the user's checkbox
 // selections on re-render.
-const pageState = { selectMode: { active: false, selected: new Set() } };
+//
+// `page` is the current page index (0-based). It is NOT in the URL: the
+// filters are (so a filtered view can be shared), but the page number is
+// a transient view state, and putting it in the hash would make every
+// "next page" click a history entry. A filter change resets it to 0.
+const pageState = {
+  selectMode: { active: false, selected: new Set() },
+  page: 0,
+};
 
 async function render(args, params) {
   const app = document.getElementById('app');
@@ -66,6 +75,10 @@ async function render(args, params) {
     return e.contact_id === contactFilter;
   });
 
+  // The list and the pager live in their OWN subtree (#reminders-list), so
+  // that turning the page repaints only that strip. The filter bar above
+  // it — and the `<select>` elements in it — are never rebuilt, so the
+  // dropdowns keep their open state and the page doesn't flash.
   app.innerHTML = `
     <div class="bg-page">
       <div class="row between">
@@ -94,24 +107,10 @@ async function render(args, params) {
           </div>
         </div>
       </div>
-      ${pageState.selectMode.active ? bulkToolbarHtml({
-          count: pageState.selectMode.selected.size,
-          total: filteredEvents.length,
-          kindLabel: '个提醒日期',
-        }) : ''}
-      ${filteredEvents.length === 0
-        ? `<div class="empty">没有匹配的提醒日期</div>`
-        : filteredEvents.map((e) => pageState.selectMode.active
-            ? bulkSelectableRowHtml(rowInner(e, cById, festByCode), e.id, pageState.selectMode.selected.has(e.id), eventKindAttr(e))
-            : renderRow(e, cById, festByCode)).join('')}
+      <div id="reminders-list"></div>
     </div>
   `;
 
-  if (!pageState.selectMode.active) {
-    document.querySelectorAll('.card.clickable').forEach((el) => {
-      el.onclick = () => navigate('/events/' + el.dataset.id + '?category=general');
-    });
-  }
   document.getElementById('new-event').onclick = () => navigate('/events/new?category=general');
 
   // Filter dropdowns — both navigate to a new hash with the filter values
@@ -124,47 +123,95 @@ async function render(args, params) {
     if (tk) q.set('tag_kind', tk);
     if (cf) q.set('contact_id', cf);
     const qs = q.toString();
+    // A new filter means a new list — start it at the first page.
+    pageState.page = 0;
     navigate('/reminders' + (qs ? '?' + qs : ''));
   }
   document.getElementById('filter-tag-kind').onchange = applyFilters;
   document.getElementById('filter-contact').onchange = applyFilters;
 
+  // The pager. Changing the page repaints ONLY the list subtree — the
+  // filter bar above it is left alone, so the dropdowns keep their state
+  // and the page doesn't flash. The URL is untouched: the page number is
+  // a view state, not part of the filtered view.
+  function paintList() {
+    const host = document.getElementById('reminders-list');
+    if (!host) return;
+
+    const { total, totalPages, visible } = pageSlice(filteredEvents, pageState);
+
+    host.innerHTML = `
+      ${pageState.selectMode.active ? bulkToolbarHtml({
+          count: pageState.selectMode.selected.size,
+          total: total,
+          kindLabel: '个提醒日期',
+        }) : ''}
+      ${total === 0
+        ? `<div class="empty">没有匹配的提醒日期</div>`
+        : visible.map((e) => pageState.selectMode.active
+            ? bulkSelectableRowHtml(rowInner(e, cById, festByCode), e.id, pageState.selectMode.selected.has(e.id), eventKindAttr(e))
+            : renderRow(e, cById, festByCode)).join('')}
+      ${pagerHtml(pageState.page, totalPages, total)}
+    `;
+
+    if (!pageState.selectMode.active) {
+      host.querySelectorAll('.card.clickable').forEach((el) => {
+        el.onclick = () => navigate('/events/' + el.dataset.id + '?category=general');
+      });
+    }
+
+    wirePager(host, pageState, paintList, () => {
+      // Keep the user at the top of the new page — otherwise they land
+      // halfway down it, looking at rows they already saw.
+      const scroller = document.querySelector('.content');
+      if (scroller) scroller.scrollTop = 0;
+    });
+
+    if (pageState.selectMode.active) {
+      wireBulkRowChecks(host, pageState.selectMode);
+      // The toolbar is part of the subtree we just rewrote, so the button
+      // the user is about to click is a NEW node — its handlers have to be
+      // bound again.
+      wireBulkToolbar(host, pageState.selectMode, bulkHandlers);
+    }
+  }
+
   // Bulk-select mode wiring.
+  const bulkHandlers = {
+    onDelete: async (ids) => {
+      const result = await api.events.deleteMany(ids);
+      // Refresh from DB so the list reflects the deletion. Re-render via
+      // navigate() to also re-fetch filtered events from the server.
+      const tk = document.getElementById('filter-tag-kind').value || '';
+      const cf = document.getElementById('filter-contact').value || '';
+      const q = new URLSearchParams();
+      if (tk) q.set('tag_kind', tk);
+      if (cf) q.set('contact_id', cf);
+      const qs = q.toString();
+      navigate('/reminders' + (qs ? '?' + qs : ''));
+      return result;
+    },
+    onExit: () => {
+      pageState.selectMode.active = false;
+      pageState.selectMode.selected = new Set();
+      // Re-navigate so we exit select mode and re-render in idle form.
+      const tk = document.getElementById('filter-tag-kind').value || '';
+      const cf = document.getElementById('filter-contact').value || '';
+      const q = new URLSearchParams();
+      if (tk) q.set('tag_kind', tk);
+      if (cf) q.set('contact_id', cf);
+      const qs = q.toString();
+      navigate('/reminders' + (qs ? '?' + qs : ''));
+    },
+  };
   if (pageState.selectMode.active) {
-    const handlers = {
-      onDelete: async (ids) => {
-        const result = await api.events.deleteMany(ids);
-        // Refresh from DB so the list reflects the deletion. Re-render via
-        // navigate() to also re-fetch filtered events from the server.
-        const tk = document.getElementById('filter-tag-kind').value || '';
-        const cf = document.getElementById('filter-contact').value || '';
-        const q = new URLSearchParams();
-        if (tk) q.set('tag_kind', tk);
-        if (cf) q.set('contact_id', cf);
-        const qs = q.toString();
-        navigate('/reminders' + (qs ? '?' + qs : ''));
-        return result;
-      },
-      onExit: () => {
-        pageState.selectMode.active = false;
-        pageState.selectMode.selected = new Set();
-        // Re-navigate so we exit select mode and re-render in idle form.
-        const tk = document.getElementById('filter-tag-kind').value || '';
-        const cf = document.getElementById('filter-contact').value || '';
-        const q = new URLSearchParams();
-        if (tk) q.set('tag_kind', tk);
-        if (cf) q.set('contact_id', cf);
-        const qs = q.toString();
-        navigate('/reminders' + (qs ? '?' + qs : ''));
-      },
-    };
     pageState.selectMode.onChange = () => {
-      const t = app.querySelector('[data-bulk-toolbar]');
+      const t = document.querySelector('[data-bulk-toolbar]');
       if (!t) return;
       // Sync every row checkbox with the current Set — otherwise hitting
       // "全选" in the toolbar only updates the counter; the per-row boxes
       // stay empty because they were rendered once at enter-time.
-      app.querySelectorAll('.bulk-row-check').forEach((cb) => {
+      document.querySelectorAll('.bulk-row-check').forEach((cb) => {
         const id = cb.dataset.bulkId;
         if (!id) return;
         cb.checked = pageState.selectMode.selected.has(id);
@@ -174,16 +221,17 @@ async function render(args, params) {
         total: filteredEvents.length,
         kindLabel: '个提醒日期',
       });
-      wireBulkToolbar(app, pageState.selectMode, handlers);
+      wireBulkToolbar(document.getElementById('reminders-list'), pageState.selectMode, bulkHandlers);
     };
-    wireBulkRowChecks(app, pageState.selectMode);
-    wireBulkToolbar(app, pageState.selectMode, handlers);
   }
   wireBulkEnter(app, () => {
     pageState.selectMode.active = true;
     pageState.selectMode.selected = new Set();
     render(args, params);
   });
+
+  // First paint of the list subtree.
+  paintList();
 }
 
 // Inner content for a single event row when wrapped in a bulk-selectable
