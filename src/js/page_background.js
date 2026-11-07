@@ -4,8 +4,8 @@
 // ---------------------------------------------------------------------------
 // What this is
 // ---------------------------------------------------------------------------
-// The 今日 / 联系人 / 提醒日期 / 工作事件 pages paint the artwork from
-// `resources/ui/` behind their content. The image is chosen in the main
+// The 今日 / 联系人 / 提醒日期 / 工作事件 / 抽卡人生 pages paint the artwork
+// from `resources/ui/` behind their content. The image is chosen in the main
 // process (main/page_background.js) and arrives as a `file://` URL, because
 // the renderer can't read the filesystem and the main window's CSP only
 // allows `file:` in `img-src`.
@@ -52,6 +52,7 @@ export const BACKGROUND_ROUTES = [
   '/contacts',
   '/reminders',
   '/events/work',
+  '/card-life',
 ];
 
 // The scroll container the artwork is painted onto.

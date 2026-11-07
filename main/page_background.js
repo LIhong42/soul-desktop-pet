@@ -5,9 +5,9 @@
 // What this is
 // ---------------------------------------------------------------------------
 // Several pages paint one of the images in `resources/ui/` behind their
-// content: the 今日 page, the 联系人 list, the 提醒日期 list and the 工作事件
-// list. They all wear the SAME picture, and the user picks that picture once
-// in 设置.
+// content: the 今日 page, the 联系人 list, the 提醒日期 list, the 工作事件
+// list and the 抽卡人生 page. They all wear the SAME picture, and the user
+// picks that picture once in 设置.
 //
 // This module owns that *choice*; the folder itself is catalogued by
 // main/ui_artwork.js, which is also where the other pages' artwork (the
@@ -75,21 +75,28 @@ const NONE = '__none__';
 
 // The routes that wear the background artwork.
 //
-// The list is a prefix match, so a detail page under a listed prefix would
-// inherit the artwork too — which is why the prefixes below are the *list*
+// The renderer matches this list EXACTLY (see routeHasBackground in
+// src/js/page_background.js), so a detail page under a listed route does
+// NOT inherit the artwork — which is why the entries below are the *list*
 // pages themselves and not their parents. `/contacts` is a prefix of
-// `/contacts/:id`, so matching on the prefix alone would put the artwork
-// behind the contact DETAIL page as well; that page owns its own banner
+// `/contacts/:id`, so a prefix match would put the artwork behind the
+// contact DETAIL page as well; that page owns its own banner
 // (`user-detail-background.png`) and paints a full-bleed paper surface, so
 // the list artwork would only show through at its edges.
 //
 // The renderer asks for the background per route (see src/js/main.js), so
 // this list is the single place that decides which pages wear the artwork.
+// The renderer keeps a copy of it (src/js/page_background.js →
+// BACKGROUND_ROUTES) to fall back on when the IPC bridge is unavailable,
+// and the 设置 page keeps a copy of the ROUTE NAMES (src/js/pages/settings.js
+// → PAGE_BG_ROUTE_LABELS) to label them for the user — so a route added
+// here needs adding there too.
 const BACKGROUND_ROUTES = [
   '/today',
   '/contacts',
   '/reminders',
   '/events/work',
+  '/card-life',
 ];
 
 /**

@@ -104,14 +104,22 @@
    `background-attachment: fixed` here for the same reason as in styles.css:
    the picture is measured against the viewport, so every page that wears it
    shows the SAME composition of the same file. With `local` each page would
-   scale and crop the artwork by its own content height. */
-.content.page-bg {
+   scale and crop the artwork by its own content height.
+
+   The rule is scoped to the 今日 page by `:has(.today-page)` rather than
+   being left unscoped. It used to be written as a bare `.content.page-bg`,
+   which meant it also won against the app default in styles.css for EVERY
+   page that wears the artwork — so the 联系人 / 提醒日期 / 工作事件 list
+   pages were painting the 今日 page's light wash instead of the denser one
+   styles.css intends for them. Scoping it lets each page's own stylesheet
+   choose its scrim, which is what the 抽卡人生 page now does too.
+
+   Only the two scrim variables are set here. The gradient itself is
+   built once, in styles.css, out of those variables — so a page that
+   wants a different wash sets two numbers and nothing else. */
+.content.page-bg:has(.today-page) {
   --page-bg-scrim: rgba(255, 246, 236, 0.62);
   --page-bg-scrim-bottom: rgba(255, 246, 236, 0.42);
-  background-image:
-    var(--page-bg-image),
-    linear-gradient(var(--page-bg-scrim), var(--page-bg-scrim-bottom));
-  background-attachment: fixed;
 }
 
 /* ---- Page header --------------------------------------------------------

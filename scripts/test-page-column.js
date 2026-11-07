@@ -53,16 +53,17 @@ const COLUMN_MAX = 1080;
 // the whole page on a hash change, so waiting for the right heading is
 // what distinguishes "landed" from "still showing the previous page".
 //
-// The class is the element that CARRIES the column. Three different
-// classes appear here, and that is deliberate: the app has three page
-// design systems (the plain one, the artwork one and the 今日 one), each
-// with its own width rule. What they share is the resulting width, not
-// the mechanism.
+// The class is the element that CARRIES the column. Four different
+// classes appear here, and that is deliberate: the app has four page
+// design systems (the plain one, the artwork one, the 今日 one and the
+// 抽卡人生 one), each with its own width rule. What they share is the
+// resulting width, not the mechanism.
 const PAGES = [
   { path: '/today',          label: '今日',     cls: '.today-page' },
   { path: '/contacts',       label: '联系人',   cls: '.bg-page' },
   { path: '/reminders',      label: '提醒日期', cls: '.bg-page' },
   { path: '/events/work',    label: '工作事件', cls: '.bg-page' },
+  { path: '/card-life',      label: '抽卡人生', cls: '.cl-page' },
   { path: '/events/memorial', label: '回忆事件', cls: '.page-column' },
   { path: '/events/new?category=general', label: '新建', cls: '.page-column' },
   { path: '/settings',       label: '设置',     cls: '.page-column' },
@@ -188,7 +189,7 @@ app.whenReady().then(async () => {
     const landed = await winMain.webContents.executeJavaScript(`(async () => {
       for (let i = 0; i < 80; i++) {
         const h1 = document.querySelector('#app h1');
-        const col = document.querySelector('.page-column, .bg-page, .today-page');
+        const col = document.querySelector('.page-column, .bg-page, .today-page, .cl-page');
         if ((h1 && h1.textContent.includes(${JSON.stringify(label)})) || col) {
           await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
           return true;

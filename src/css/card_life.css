@@ -17,41 +17,141 @@
    it lives on the 回忆事件 editor, which is a different page, and it is
    named after what it is rather than after the page it appears on.
 
+   ---------------------------------------------------------------------------
+   The paper
+   ---------------------------------------------------------------------------
+   The page wears the shared background artwork (`resources/ui/today-background.png`)
+   — the same warm pastel room the 今日 page wears — and its own cards are
+   *translucent sheets of paper* laid over it, exactly as the 今日 page's
+   are. The alternative (opaque cream rectangles) would read as a picture
+   with white stickers pasted on it, which is the failure mode the 今日
+   page's design system was written to avoid.
+
+   So the vocabulary is the 今日 page's: a low-alpha warm paper, a generous
+   `backdrop-filter` blur so the artwork comes through as a hazy wash of
+   colour rather than as recognizable detail, a warm hairline instead of a
+   hard border, and the same warm near-black ink. The 今日 page's
+   `--today-*` custom properties are the source of those values; this file
+   re-declares them under `.cl-page` rather than importing them, so the
+   two pages can drift apart later without one silently restyling the
+   other.
+
    Palette notes:
-     - The card is a playing card: warm paper, a rounded corner, and a
-       hairline border, so it reads as an object on the table rather than
-       as a form.
-     - The accent is the app's own warm orange (`--accent`), so the draw
+     - The accent is the app's own warm orange (`--cl-accent`), so the draw
        button belongs to the same family as every other action button.
+     - The ink is the 今日 page's warm near-black, not the app's neutral
+       #2a2a2a — over a warm painting the neutral reads as a grey sticker.
    =========================================================================== */
 
 .cl-page {
-  --cl-paper: #fffdf8;
-  --cl-paper-edge: #efe6d8;
-  --cl-ink: #3a3128;
-  --cl-ink-soft: #7b6d5d;
+  /* The card surface is a *translucent* sheet of paper laid over the
+     artwork, not an opaque rectangle pasted on top of it. The alpha is
+     low on purpose: the artwork should read through the cards as a soft,
+     hazy wash, not just at the edges but across the whole surface. */
+  --cl-paper: rgba(255, 253, 250, 0.34);
+  /* The rows and the form carry small text over whatever part of the
+     artwork happens to be behind them, so they need a denser sheet than
+     the big challenge card — the same split the 今日 page makes between
+     its status cards and its reminder list. */
+  --cl-paper-list: rgba(255, 253, 250, 0.62);
+  --cl-paper-solid: rgba(255, 253, 250, 0.86);
+  --cl-ink: #3d3128;
+  --cl-ink-soft: #8c7d70;
+  --cl-line: rgba(196, 160, 132, 0.28);
+  --cl-line-strong: rgba(196, 160, 132, 0.46);
   --cl-accent: #e08a4c;
-  /* Wide enough for the drawn card and the rules card to sit on one row
-     (460 + 24 + 400). Below that the row wraps and the rules card falls
-     under the drawn one. */
-  max-width: 900px;
+  --cl-accent-deep: #d97757;
+  --cl-blush: #ffe7de;
+  --cl-shadow: 0 2px 14px rgba(150, 105, 75, 0.10);
+  --cl-shadow-lift: 0 10px 26px rgba(150, 105, 75, 0.16);
+  --cl-radius: 22px;
+
+  color: var(--cl-ink);
+  /* The reading column. A page stretched across a 2000 px window puts a
+     metre of empty space between the challenge card and the rules card,
+     and the composition stops reading as a page.
+
+     The width is the app's shared `--page-column-max`, the same number the
+     今日 page and the list pages use — so every page in the app centres
+     its content on the same band. */
+  max-width: var(--page-column-max, 1080px);
   margin: 0 auto;
-  padding: 18px 0 40px;
+  padding-bottom: 28px;
+}
+
+/* The page scrim over the artwork.
+
+   A warm cream rather than the app's neutral --bg: a warm wash over a
+   warm painting keeps the page feeling like one material instead of a
+   photo with a grey wash on top.
+
+   It is a vertical gradient rather than a flat wash — the artwork's top
+   edge is where the header sits, so the top gets a slightly heavier
+   scrim for legibility, fading downward into the warm centre of the
+   painting. A flat scrim either under-protects the top or flattens the
+   whole picture.
+
+   `background-attachment: fixed` for the same reason as in styles.css: the
+   picture is measured against the viewport, so every page that wears it
+   shows the SAME composition of the same file. */
+.content.page-bg:has(.cl-page) {
+  --page-bg-scrim: rgba(255, 246, 236, 0.60);
+  --page-bg-scrim-bottom: rgba(255, 246, 236, 0.40);
+}
+
+/* ---- The header ---------------------------------------------------------
+   The title is the page's headline and it is set large and heavy, with a
+   hand-drawn underline flourish (the ::after curve) — the same "sketchbook
+   note" the 今日 page signs off its date with. */
+
+.cl-head {
+  margin: 4px 0 18px;
+}
+
+.cl-head h1 {
+  position: relative;
+  display: inline-block;
+  margin: 0;
+  /* The right padding leaves room for the heart flourish that hangs off
+     the title's edge (the ::after). */
+  padding: 0 48px 8px 4px;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
   color: var(--cl-ink);
 }
 
-/* ---- The header --------------------------------------------------------- */
+/* The heart flourish next to the title.
 
-.cl-head h1 {
-  margin: 0 0 4px;
-  font-size: 26px;
-  letter-spacing: 1px;
+   It is a mask rather than a background image, so it takes the accent
+   colour from `currentColor` — the same technique the app's other icons
+   use (see `--icon-plus` in styles.css). The stroke is drawn in the SVG
+   and left hollow, so the flourish reads as a pen mark rather than a
+   sticker.
+
+   It hangs off the title's right edge, so the title needs room for it —
+   hence the right padding on the h1 below. */
+.cl-head h1::after {
+  content: "";
+  position: absolute;
+  right: -36px;
+  top: 2px;
+  width: 30px;
+  height: 30px;
+  background: currentColor;
+  color: var(--cl-accent);
+  -webkit-mask: var(--icon-heart) center / contain no-repeat;
+  mask: var(--icon-heart) center / contain no-repeat;
+  opacity: 0.75;
+  pointer-events: none;
 }
 
 .cl-sub {
-  margin: 0 0 22px;
+  margin: 0;
   color: var(--cl-ink-soft);
-  font-size: 13px;
+  font-size: 13.5px;
+  letter-spacing: 0.02em;
 }
 
 /* ---- The error strip ---------------------------------------------------- */
@@ -59,24 +159,30 @@
 .cl-error {
   margin: 0 0 18px;
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fdeceb;
   color: #a5443c;
   font-size: 13px;
 }
 
-/* ---- The table (the card you drew, and the rules card beside it) ------- */
+/* ---- The two-column stage ----------------------------------------------
+   The challenge card and the rules card sit side by side. The row wraps
+   when the window is too narrow, so the rules card falls under the
+   challenge card instead of squeezing it.
 
-/* The two cards sit on one row: the card you drew on the left, the rules
-   card on the right. The row wraps when the window is too narrow, so the
-   rules card falls under the drawn card instead of squeezing it. */
+   The challenge card gets the wider track because it holds the big title
+   and the two buttons; the rules card is a list of short sentences. */
+
 .cl-table {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 24px;
-  margin-bottom: 26px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+  margin-bottom: 22px;
+}
+
+@media (max-width: 900px) {
+  .cl-table { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---- The stage (deck OR card) ------------------------------------------- */
@@ -84,20 +190,28 @@
 .cl-stage {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  flex: 0 1 460px;
+  align-items: stretch;
   min-width: 0;
-  min-height: 260px;
 }
 
-/* ---- The deck (nothing drawn yet) -------------------------------------- */
+/* ---- The deck (nothing drawn yet) --------------------------------------
+   The deck is shown as a fan of three cards on the table, with the draw
+   button under it. It has to look like a *stack* — three cards slightly
+   rotated against each other — so the user reads it as "there is a deck
+   here", not as "there is a picture of a card here". */
 
 .cl-deck {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding-top: 8px;
+  gap: 16px;
+  padding: 26px 24px 28px;
+  border-radius: var(--cl-radius);
+  background: var(--cl-paper);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  box-shadow: var(--cl-shadow);
 }
 
 .cl-deck-stack {
@@ -106,12 +220,15 @@
   height: 210px;
 }
 
+/* The deck's cards. They are *opaque* paper — the deck is an object on
+   the table, not a sheet laid over the artwork, so it does not take the
+   page's translucency. */
 .cl-deck-card {
   position: absolute;
   inset: 0;
   border-radius: 16px;
-  background: var(--cl-paper);
-  border: 1px solid var(--cl-paper-edge);
+  background: #fffdf8;
+  border: 1px solid var(--cl-line-strong);
   box-shadow: 0 6px 16px rgba(58, 49, 40, 0.10);
 }
 
@@ -139,9 +256,11 @@
 }
 
 .cl-draw-btn {
-  padding: 9px 26px;
+  padding: 11px 30px;
   font-size: 15px;
+  font-weight: 700;
   letter-spacing: 2px;
+  border-radius: 999px;
 }
 
 .cl-draw-btn:disabled {
@@ -149,69 +268,200 @@
   cursor: not-allowed;
 }
 
-/* ---- The drawn card ----------------------------------------------------- */
+/* ---- The drawn card -----------------------------------------------------
+   The card you drew: the page's centrepiece.
+
+   It is a *sheet of paper* — warm, translucent, slightly rotated so it
+   reads as an object lying on the table rather than as a form. The
+   rotation is small (about a degree) on purpose: enough to break the
+   grid, not enough to look like a mistake. */
 
 .cl-card {
+  position: relative;
   width: 100%;
-  max-width: 460px;
-  padding: 22px 26px 20px;
-  border-radius: 18px;
+  padding: 26px 30px 22px;
+  border-radius: var(--cl-radius);
   background: var(--cl-paper);
-  border: 1px solid var(--cl-paper-edge);
-  box-shadow: 0 10px 26px rgba(58, 49, 40, 0.12);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  box-shadow: var(--cl-shadow-lift);
+  transform: rotate(-0.6deg);
+}
+
+/* The paperclip in the top-left corner of the challenge card.
+
+   It is a mask rather than a background image, so it is one vector that
+   stays crisp at any window size and takes its colour from
+   `currentColor` — the same technique the app's other icons use.
+
+   The clip leans slightly to the right, the way a clip actually hangs on
+   a sheet of paper. */
+.cl-card-clip {
+  position: absolute;
+  left: 30px;
+  top: -18px;
+  width: 30px;
+  height: 54px;
+  background: currentColor;
+  color: rgba(150, 120, 95, 0.55);
+  -webkit-mask: var(--icon-paperclip) center / contain no-repeat;
+  mask: var(--icon-paperclip) center / contain no-repeat;
+  transform: rotate(9deg);
+  pointer-events: none;
 }
 
 .cl-card-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
-.cl-card-no {
-  display: inline-block;
-  min-width: 30px;
-  padding: 2px 8px;
-  border-radius: 8px;
-  background: var(--cl-accent);
+/* The 「本周挑战」 badge. A solid accent pill with a star in it — the
+   page's one piece of iconography, because it names the card's status
+   and nothing else on the page needs a glyph. */
+.cl-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffb894, #ff9f76);
   color: #fff;
   font-size: 13px;
   font-weight: 700;
-  text-align: center;
+  letter-spacing: 0.04em;
+  box-shadow: 0 2px 8px rgba(224, 138, 76, 0.24);
+  white-space: nowrap;
 }
 
-.cl-card-week {
+/* The star inside the badge. It is a mask in white, so it takes the
+   badge's own colour rather than carrying one of its own. */
+.cl-card-badge .cl-badge-star {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  background: currentColor;
+  -webkit-mask: var(--icon-star) center / contain no-repeat;
+  mask: var(--icon-star) center / contain no-repeat;
+}
+
+/* The card's number in the deck — 「本周第 30 号卡片」. The number is the
+   point, so it is set large and in the accent, with the words around it
+   in the page's soft ink. */
+.cl-card-no {
   color: var(--cl-ink-soft);
-  font-size: 12px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.cl-card-no b {
+  color: var(--cl-accent);
+  font-size: 26px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  margin: 0 2px;
+  vertical-align: -2px;
 }
 
+/* The card's title — the biggest type on the page. */
 .cl-card-title {
-  margin: 0 0 12px;
-  font-size: 21px;
-  line-height: 1.45;
+  margin: 0 0 16px;
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
   color: var(--cl-ink);
 }
 
+/* The requirement. It sits in a tinted inset panel rather than loose on
+   the paper: it is the card's instruction, and the panel separates "the
+   challenge" from "what to do about it" without adding a label. */
 .cl-card-req {
-  margin: 0 0 18px;
-  padding-left: 12px;
-  border-left: 3px solid var(--cl-paper-edge);
-  color: var(--cl-ink-soft);
-  font-size: 14px;
-  line-height: 1.7;
+  margin: 0 0 20px;
+  padding: 13px 16px;
+  border-radius: 14px;
+  background: rgba(255, 231, 222, 0.55);
+  border: 1px solid rgba(255, 231, 222, 0.9);
+  color: var(--cl-ink);
+  font-size: 14.5px;
+  line-height: 1.75;
   white-space: pre-wrap;
 }
 
 .cl-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* The page's two buttons. The primary one is a solid accent pill — the
+   same shape as the badge above it, so the card reads as one object
+   with a clear call to action. The secondary is a paper pill with a
+   hairline, so the two never compete. */
+.cl-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.cl-actions .btn.secondary {
+  background: var(--cl-paper-list);
+  -webkit-backdrop-filter: blur(16px) saturate(125%);
+  backdrop-filter: blur(16px) saturate(125%);
+  border: 1px solid var(--cl-line-strong);
+  color: var(--cl-ink);
+}
+.cl-actions .btn.secondary:hover {
+  background: var(--cl-paper-solid);
+  border-color: var(--cl-accent);
+  color: var(--cl-accent-deep);
+}
+
+/* The play glyph in front of 「记录这一张」. It is a mask in the button's
+   own colour, so the two travel together. */
+.cl-btn-play {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  background: currentColor;
+  -webkit-mask: var(--icon-play) center / contain no-repeat;
+  mask: var(--icon-play) center / contain no-repeat;
 }
 
 .cl-card-note {
-  margin: 12px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px dashed var(--cl-line);
   color: var(--cl-ink-soft);
-  font-size: 12px;
+  font-size: 12.5px;
+}
+
+/* The tick in front of the note. Drawn as a character rather than an
+   image so it inherits the ink colour with everything else. */
+.cl-card-note::before {
+  content: "✓";
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--cl-blush);
+  color: var(--cl-accent-deep);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 /* The card's entrance: it lands on the table with a short flip. Applied
@@ -219,93 +469,405 @@
    not replay it. */
 @keyframes cl-card-in {
   from { opacity: 0; transform: translateY(14px) rotateY(28deg) scale(0.94); }
-  to   { opacity: 1; transform: none; }
+  to   { opacity: 1; transform: rotate(-0.6deg); }
 }
 
 .cl-card--in {
   animation: cl-card-in 460ms cubic-bezier(0.22, 0.9, 0.3, 1) both;
 }
 
-/* ---- The rules card ------------------------------------------------------ */
+/* ---- The rules card ------------------------------------------------------
+   A quieter card than the one you draw: a dashed edge and a denser
+   sheet, so the two never look like rivals on the table.
 
-/* A quieter card than the one you draw: a dashed edge and a muted paper,
-   so the two never look like rivals on the table. */
+   The rules are numbered rather than bulleted, and each rule carries a
+   title and a line of explanation — the number is the fact, the title
+   is the rule, the line under it is what it means in practice. */
+
 .cl-rules {
-  flex: 0 1 400px;
   min-width: 0;
 }
 
 .cl-rules-card {
   width: 100%;
-  padding: 18px 24px 16px;
-  border-radius: 18px;
-  background: #fbf7f0;
-  border: 1px dashed var(--cl-paper-edge);
+  padding: 20px 24px 18px;
+  border-radius: var(--cl-radius);
+  background: var(--cl-paper-list);
+  -webkit-backdrop-filter: blur(24px) saturate(125%);
+  backdrop-filter: blur(24px) saturate(125%);
+  border: 1px dashed var(--cl-line-strong);
+  box-shadow: var(--cl-shadow);
 }
 
 .cl-rules-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--cl-line);
 }
 
-.cl-rules-badge {
+/* The book glyph in front of the rules card's title. */
+.cl-rules-icon {
   flex: none;
-  padding: 2px 9px;
-  border-radius: 8px;
-  background: #e8e0d4;
-  color: var(--cl-ink-soft);
-  font-size: 12px;
-  font-weight: 700;
+  width: 24px;
+  height: 24px;
+  background: var(--cl-accent);
+  -webkit-mask: var(--icon-book) center / contain no-repeat;
+  mask: var(--icon-book) center / contain no-repeat;
+  opacity: 0.9;
 }
 
 .cl-rules-title {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  color: var(--cl-ink-soft);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--cl-ink);
 }
 
+/* The list. `list-style: none` because the numbers are drawn by the
+   counter — an ordered list's own marker cannot be styled into an
+   accent-coloured circle. */
 .cl-rules-list {
   margin: 0;
-  padding-left: 20px;
-  color: var(--cl-ink-soft);
-  font-size: 13px;
-  line-height: 1.85;
+  padding: 0;
+  list-style: none;
+  counter-reset: cl-rule;
 }
 
 .cl-rules-list li {
-  margin-bottom: 2px;
+  position: relative;
+  padding-left: 34px;
+  margin-bottom: 14px;
+  counter-increment: cl-rule;
 }
-
 .cl-rules-list li:last-child {
   margin-bottom: 0;
+}
+
+/* The rule's number, in an accent circle. */
+.cl-rules-list li::before {
+  content: counter(cl-rule, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #ffb894, #ff9f76);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* The rule's title and its explanation. The title is bold, the
+   explanation is the soft ink underneath it. */
+.cl-rule-title {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--cl-ink);
+  line-height: 1.5;
+}
+.cl-rule-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--cl-ink-soft);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* The foot note under the rules. */
+.cl-rules-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--cl-line);
+  color: var(--cl-ink-soft);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* The heart in front of the foot note. */
+.cl-rules-foot::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  background: var(--cl-accent);
+  -webkit-mask: var(--icon-heart) center / contain no-repeat;
+  mask: var(--icon-heart) center / contain no-repeat;
+  opacity: 0.8;
+}
+
+/* ---- Section headings ---------------------------------------------------
+   Every block below the stage gets the same heading treatment: a star
+   glyph, a bold label, and a hairline that runs to the right edge — so
+   the eye can scan the page by block without the headings shouting. */
+
+.cl-section {
+  margin: 22px 0 12px;
+}
+
+.cl-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cl-section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--cl-ink);
+  opacity: 1;
+}
+
+/* The glyph in front of a section heading.
+
+   It is a mask, so it is one vector that stays crisp at any size and
+   takes the accent colour from `currentColor` — the same technique the
+   app's other icons use. Each section names its own glyph through the
+   `--cl-section-icon` variable, so adding a section means adding a mask
+   and one variable, not another pile of rules. */
+.cl-section-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  background: var(--cl-accent);
+  -webkit-mask: var(--cl-section-icon, var(--icon-star)) center / contain no-repeat;
+  mask: var(--cl-section-icon, var(--icon-star)) center / contain no-repeat;
+}
+
+/* The hairline. It fades to transparent so the rule doesn't end in a
+   hard stop. */
+.cl-section-head::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--cl-line-strong), rgba(196, 160, 132, 0));
+}
+
+/* The count chip next to a heading. */
+.cl-count {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--cl-blush);
+  color: var(--cl-accent-deep);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 /* ---- The user's own cards ----------------------------------------------- */
 
 .cl-custom {
   margin-top: 6px;
-  margin-bottom: 26px;
 }
 
-.cl-custom h2 {
-  margin: 0 0 10px;
-  font-size: 15px;
-  color: var(--cl-ink-soft);
-  font-weight: 600;
-  letter-spacing: 1px;
+/* The panel that holds the list of the user's own cards.
+
+   It is a sheet of paper with the card rows on it — the same
+   translucent-over-the-artwork treatment the rest of the page uses. */
+.cl-custom-panel {
+  display: flex;
+  align-items: stretch;
+  gap: 18px;
+  padding: 18px 20px;
+  border-radius: var(--cl-radius);
+  background: var(--cl-paper);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  box-shadow: var(--cl-shadow);
 }
 
-.cl-custom-form {
+.cl-custom-list {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 14px 16px;
+}
+
+/* One of the user's own cards. It is a preview of a card, so it wears a
+   little of the challenge card's vocabulary: a tinted panel with the
+   title and the requirement under it. */
+.cl-custom-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 231, 222, 0.72), rgba(255, 244, 236, 0.62));
+  border: 1px solid rgba(255, 231, 222, 0.95);
+}
+
+/* The little envelope that stands in for the card's artwork.
+
+   The envelope is a mask on the ::before, so it is one vector that stays
+   crisp at any size — the same technique the app's other icons use. The
+   element itself keeps the paper behind it (the background and the
+   border), so the glyph sits on a little sheet of its own.
+
+   The heart on the envelope is the app's own accent, and it is what the
+   reference card's artwork is really about: a note to your future self. */
+.cl-custom-icon {
+  position: relative;
+  flex: none;
+  width: 56px;
+  height: 42px;
+  border-radius: 10px;
+  background: #fff6ef;
+  border: 1.5px solid rgba(224, 138, 76, 0.55);
+}
+.cl-custom-icon::before {
+  content: "";
+  position: absolute;
+  inset: 7px 8px;
+  background: var(--cl-accent);
+  -webkit-mask: var(--icon-envelope) center / contain no-repeat;
+  mask: var(--icon-envelope) center / contain no-repeat;
+  opacity: 0.85;
+}
+
+.cl-custom-text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cl-custom-title {
+  margin: 0;
+  /* Inside the head row the title shares the line with the 自定义卡片 tag,
+     so it has to be allowed to shrink — otherwise a long title pushes the
+     tag off the end of the row. */
+  min-width: 0;
+  flex: 0 1 auto;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--cl-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cl-custom-req {
+  margin: 3px 0 0;
+  color: var(--cl-ink-soft);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- The pager ----------------------------------------------------------
+   The pager under the list of the user's own cards. It is the app's
+   shared pager (src/js/pager.js), so it carries the shared `.section-page`
+   classes — but the SHARED STYLING for those classes lives in page_bg.css
+   and is scoped to `.bg-page`, which this page is not. So the pager is
+   dressed here in the 抽卡人生 page's own palette.
+
+   Without this the buttons would fall back to the app's global `.btn`
+   look — an opaque white pill on the artwork, which is exactly the
+   "stickers pasted on a painting" the page's design system avoids. */
+.cl-page .section-pager {
+  margin-top: 14px;
+}
+.cl-page .section-pager .btn.secondary {
+  background: var(--cl-paper-list);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  backdrop-filter: blur(20px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  color: var(--cl-ink);
+}
+.cl-page .section-pager .btn.secondary:hover:not(:disabled) {
+  background: var(--cl-paper-solid);
+  border-color: var(--cl-line-strong);
+}
+.cl-page .section-pager .btn.secondary:disabled {
+  opacity: 0.45;
+}
+.cl-page .section-pager .meta {
+  color: var(--cl-ink-soft);
+}
+
+/* The line that opens the add form, under the list of the user's own
+   cards.
+
+   The button used to live in a dashed slot beside the list; now that the
+   list is a plain column of cards, the button stands on its own under
+   it. */
+.cl-custom-addbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* The button that opens the add form. */
+.cl-custom-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 24px;
+  border: none;
   border-radius: 12px;
-  background: var(--cl-paper);
-  border: 1px solid var(--cl-paper-edge);
+  background: linear-gradient(135deg, #ffb894, #ff9f76);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(224, 138, 76, 0.26);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.cl-custom-add-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(224, 138, 76, 0.32);
+}
+.cl-custom-add-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+  transform: none;
+}
+
+/* The plus sign in front of the button's label. */
+.cl-custom-add-btn::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  -webkit-mask: var(--icon-plus) center / contain no-repeat;
+  mask: var(--icon-plus) center / contain no-repeat;
+}
+
+/* The form that opens when the add button is clicked. It is a panel of
+   its own, under the list of added cards. */
+.cl-custom-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: var(--cl-paper-list);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  backdrop-filter: blur(20px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  box-shadow: var(--cl-shadow);
 }
 
 /* The scope is written out twice (`.cl-custom-form .cl-custom-input`)
@@ -313,10 +875,10 @@
    bare class — without it the two fields would not look alike. */
 .cl-custom-form .cl-custom-input {
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--cl-paper-edge);
-  background: #fff;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--cl-line-strong);
+  background: var(--cl-paper-solid);
   color: var(--cl-ink);
   font-family: inherit;
   font-size: 14px;
@@ -324,132 +886,187 @@
 }
 
 .cl-custom-form textarea.cl-custom-input {
-  min-height: 56px;
+  min-height: 62px;
 }
 
 .cl-custom-form .cl-custom-input:focus {
   outline: none;
   border-color: var(--cl-accent);
-  box-shadow: 0 0 0 2px rgba(224, 138, 76, 0.18);
+  box-shadow: 0 0 0 3px rgba(224, 138, 76, 0.18);
 }
 
-.cl-custom-add {
-  align-self: flex-start;
-  padding: 7px 20px;
+/* The form's buttons, side by side. */
+.cl-custom-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cl-custom-submit {
+  padding: 9px 24px;
+  border: none;
+  border-radius: 999px;
+  background: var(--cl-accent);
+  color: #fff;
+  font-family: inherit;
   font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
 }
-
-.cl-custom-add:disabled {
+.cl-custom-submit:hover { background: var(--cl-accent-deep); }
+.cl-custom-submit:disabled {
   opacity: 0.6;
   cursor: wait;
 }
 
+/* The cancel button. It is quieter than the save button on purpose — it
+   is the way OUT of the form, not the thing you came for. */
+.cl-custom-cancel {
+  padding: 9px 16px;
+  border: 1px solid var(--cl-line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cl-ink-soft);
+  font-family: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.cl-custom-cancel:hover {
+  background: rgba(255, 253, 249, 0.6);
+  color: var(--cl-ink);
+}
+
 .cl-custom-hint {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   color: var(--cl-ink-soft);
   font-size: 12.5px;
   line-height: 1.6;
 }
 
+/* The empty state, inside the panel's flex row — so it takes the room the
+   card list would have taken and stays on the panel's own baseline. */
 .cl-custom-empty {
-  margin: 10px 0 0;
-  color: var(--cl-ink-soft);
-  font-size: 13px;
-}
-
-.cl-custom-list {
-  margin-top: 10px;
-}
-
-.cl-custom-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 8px 12px;
-  margin-bottom: 6px;
-  border-radius: 10px;
-  background: var(--cl-paper);
-  border: 1px solid var(--cl-paper-edge);
-  font-size: 13px;
-}
-
-.cl-custom-no {
-  flex: none;
-  width: 20px;
-  color: var(--cl-ink-soft);
-  font-size: 12px;
-  text-align: right;
-}
-
-.cl-custom-title {
-  flex: none;
-  max-width: 46%;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cl-custom-req {
   flex: 1 1 auto;
-  min-width: 0;
+  align-self: center;
+  margin: 0;
   color: var(--cl-ink-soft);
-  font-size: 12.5px;
+  font-size: 13px;
+}
+
+/* ---- The list of cards the user added -------------------------------------
+   The cards the user added, one per row. Rows sit on one paper panel
+   separated by hairlines — the same list idiom the 今日 page's reminder
+   list uses, so a stack of separate floating cards doesn't turn the
+   bottom of the page into a wall of boxes.
+
+   The panel is also what the 抽过的卡 history below wears. */
+
+.cl-added {
+  border-radius: var(--cl-radius);
+  background: var(--cl-paper-list);
+  -webkit-backdrop-filter: blur(24px) saturate(125%);
+  backdrop-filter: blur(24px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  box-shadow: var(--cl-shadow);
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+/* The title and the 自定义卡片 tag, side by side. */
+.cl-custom-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cl-custom-tag {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(255, 231, 222, 0.75);
+  color: var(--cl-accent-deep);
+  font-size: 11.5px;
   white-space: nowrap;
 }
 
 .cl-custom-del {
   flex: none;
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
   border: none;
   border-radius: 8px;
   background: transparent;
   color: var(--cl-ink-soft);
+  font-family: inherit;
   font-size: 12.5px;
   cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
 }
-
 .cl-custom-del:hover {
   background: #fdeceb;
   color: #a5443c;
 }
-
 .cl-custom-del:disabled {
   opacity: 0.5;
   cursor: wait;
 }
 
+/* The bin in front of the delete button's label. */
+.cl-custom-del .cl-del-icon {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  background: currentColor;
+  -webkit-mask: var(--icon-trash) center / contain no-repeat;
+  mask: var(--icon-trash) center / contain no-repeat;
+}
+
+/* The delete button on a PREVIEW row.
+
+   It comes after the base `.cl-custom-del` rules on purpose: the two
+   selectors have the same specificity, so source order is what decides —
+   putting it here is what lets the preview's own shape win.
+
+   The preview rows are the ones the user scrolls past quickly, so the
+   button sits at the far right of the row where the eye already lands
+   for the row's own delete button in the table below — same place, so
+   the gesture is the same in both places. */
+.cl-custom-del--preview {
+  align-self: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 253, 249, 0.6);
+  border: 1px solid var(--cl-line);
+}
+.cl-custom-del--preview:hover {
+  background: #fdeceb;
+  border-color: rgba(165, 68, 60, 0.35);
+  color: #a5443c;
+}
+
 /* ---- The history -------------------------------------------------------- */
-
-.cl-history {
-  margin-top: 6px;
-}
-
-.cl-history h2 {
-  margin: 0 0 10px;
-  font-size: 15px;
-  color: var(--cl-ink-soft);
-  font-weight: 600;
-  letter-spacing: 1px;
-}
 
 .cl-history-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 14px;
-  margin-bottom: 6px;
-  border-radius: 10px;
-  background: var(--cl-paper);
-  border: 1px solid var(--cl-paper-edge);
-  font-size: 13px;
+  padding: 12px 18px;
+  font-size: 13.5px;
+  transition: background 160ms ease;
+}
+.cl-history-row + .cl-history-row {
+  border-top: 1px solid var(--cl-line);
+}
+.cl-history-row:hover {
+  background: rgba(255, 253, 249, 0.55);
 }
 
 .cl-history-week {
   flex: none;
-  width: 92px;
+  width: 96px;
   color: var(--cl-ink-soft);
   font-size: 12px;
 }
@@ -457,6 +1074,7 @@
 .cl-history-title {
   flex: 1 1 auto;
   min-width: 0;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -464,35 +1082,37 @@
 
 .cl-history-state {
   flex: none;
-  padding: 1px 8px;
+  padding: 2px 10px;
   border-radius: 999px;
-  background: #f1ece4;
+  background: rgba(196, 160, 132, 0.16);
   color: var(--cl-ink-soft);
   font-size: 12px;
+  white-space: nowrap;
+}
+
+.cl-history-state.done {
+  background: rgba(122, 186, 122, 0.18);
+  color: #4f8b57;
 }
 
 /* A card the user added themselves, so it is not the official deck's. */
 .cl-history-mine {
   flex: none;
-  padding: 1px 7px;
+  padding: 2px 9px;
   border-radius: 999px;
-  background: #fdf1e6;
-  color: #8a5a2b;
+  background: rgba(255, 231, 222, 0.8);
+  color: var(--cl-accent-deep);
   font-size: 11.5px;
-}
-
-.cl-history-state.done {
-  background: #e6f4ea;
-  color: #3f7d52;
+  white-space: nowrap;
 }
 
 .cl-history-open {
   flex: none;
-  color: var(--cl-accent);
+  color: var(--cl-accent-deep);
   text-decoration: none;
   font-size: 13px;
+  font-weight: 700;
 }
-
 .cl-history-open:hover { text-decoration: underline; }
 
 /* ---- The 回忆事件 editor's draw banner ---------------------------------- */

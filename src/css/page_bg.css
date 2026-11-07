@@ -45,6 +45,23 @@
    the 今日 page and the contact detail page have their own design systems
    and must be left alone. */
 
+/* ---- Page scrim ---------------------------------------------------------
+   The wash between the artwork and the page's content.
+
+   These pages are *lists* — dense rows of 12–14px text — so the artwork is
+   pushed further back than it is on the 今日 page: a heavier scrim here,
+   plus the rows' own translucency. The picture still reads as a warm field
+   around the rows, which is the point of wearing it, but it never competes
+   with the text.
+
+   The rule is scoped by `:has(.bg-page)` because today.css and card_life.css
+   each declare their own scrim for their own page, and an unscoped
+   `.content.page-bg` in one of them would win against the others. */
+.content.page-bg:has(.bg-page) {
+  --page-bg-scrim: rgba(248, 247, 243, 0.82);
+  --page-bg-scrim-bottom: rgba(248, 247, 243, 0.82);
+}
+
 /* ---- Page shell --------------------------------------------------------- */
 .bg-page {
   /* The card surface is a translucent sheet of paper laid over the artwork

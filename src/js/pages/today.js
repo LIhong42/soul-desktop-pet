@@ -882,9 +882,9 @@ function moodNote(mood) {
 // ---- 背景 (background artwork) --------------------------------------------
 //
 // The 今日 page paints the artwork from `resources/ui/` behind its content.
-// The picture is shared with the 联系人 / 提醒日期 / 工作事件 pages, so the
-// painting itself lives in src/js/page_background.js — this page only asks
-// for it. See that module for why the failure paths all degrade to "no
-// artwork".
+// The picture is shared with the 联系人 / 提醒日期 / 工作事件 / 抽卡人生
+// pages, so the painting itself lives in src/js/page_background.js — this
+// page only asks for it. See that module for why the failure paths all
+// degrade to "no artwork".
 
 register('/today', render);

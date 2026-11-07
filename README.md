@@ -62,7 +62,12 @@
 - **You can add cards of your own** — a title and a requirement, written on the page itself. They are stored **apart from the official deck** (in the database, so they travel with the backup) and are **drawn from the same pool**: the weekly card can be one of your own;
 - **One draw per week** is enforced by the main process (`main/card_draws.js`): the week starts on Monday, and once the week has a card, pressing the button again just shows the card you already drew. The drawn cards live in the local database, so they are still there after a restart;
 - The drawn card becomes a **card**: its number, its title and its requirement (the 「要求：…」 line from the deck);
-- A **rules card** sits right beside it, on the same row — the same paper, but quieter (a dashed edge), spelling out the weekly rule, where the cards come from and what happens to the ones you write down;
+- **The page wears the background too**: the same warm room picture the 今日 page uses (`resources/ui/today-background.png`), with its own design system (`src/css/card_life.css`) that turns the cards into **translucent sheets of paper laid over the painting** — the artwork comes through as a hazy wash of colour, rather than as white boxes pasted on top of it;
+- The drawn card is a **sheet of paper**: a paperclip in the top-left corner, an orange 「★ 本周挑战」 badge, and 「本周第 **30** 号卡片」 on the right — the **number is the largest type on that line**, because which card you drew is the only new thing in the week. The requirement sits in its own tinted panel below, so 「what the challenge is」 and 「what to do about it」 stay apart;
+- A **rules card** sits right beside it, on the same row — the same paper, but quieter (a dashed edge), with each rule written as a title plus the line that explains it: **每周只能抽取一张卡 / 官方卡片与自定义卡片混合 / 完成后记录回忆**;
+- Below that is **我的专属卡片**: there is **only one list** of the cards you added (envelope icon, title, a 自定义卡片 tag, and the requirement), and **every card carries its own delete button** on the right — there is no second list to hunt through;
+- The list is **paginated**: at most 3 cards a page, with the app's shared pager underneath (← 上一页 / 第 1 / 2 页 · 共 6 条 / 下一页 →) — however many cards you write, the block cannot grow longer than the page, and **no card is ever hidden**: the next page reaches it, delete button and all;
+- The **添加卡片** button sits right under the list; clicking it opens the form for writing a new one;
 - **记录这一张** jumps straight into the memory-event diary editor with the **title and the requirement already filled in** — you only have to write your own part;
 - The entry you write is filed under a **new 分类 — 抽卡事件**. The memory list's **类型** filter gains that entry, and the card's own tag reads 抽卡事件;
 - Below the card sits the **history of the cards you drew**: an unrecorded one can still be written up, a recorded one opens the entry it became.
@@ -253,6 +258,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  ├─ test-diary-editor.js     ← UI regression check for the diary editor
 │  ├─ verify-work-bulk.js      ← bulk-select round trip on the 工作事件 page
 │  ├─ test-today-design.js     ← UI regression check for the 今日 page's design system
+│  ├─ test-card-life-design.js ← UI regression check for the 抽卡人生 page's design system
 │  ├─ test-contact-design.js   ← UI regression check for the 联系人详情页's design system
 │  ├─ test-contact-tabs.js     ← UI regression check for the 联系人详情页's tabs / rows
 │  ├─ test-page-background.js  ← UI regression check for the shared background artwork
@@ -263,6 +269,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  ├─ shot-today.js            ← renders the 今日 page and saves a PNG
 │  ├─ shot-bg-pages.js         ← renders the three pages that wear the artwork, and saves PNGs
 │  ├─ shot-contact.js          ← renders the 联系人详情页 and saves a PNG
+│  ├─ shot-card-life.js        ← renders the 抽卡人生 page and saves a PNG
 │  └─ shot-pages.js            ← renders several pages, to check shared styles didn't spill
 ├─ docs/                ← documentation
 │  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)

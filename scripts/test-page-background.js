@@ -68,7 +68,7 @@ app.whenReady().then(async () => {
 
   // The routes that wear the background. Kept in one place so the test and
   // the implementation can't disagree about which pages are covered.
-  const BG_ROUTES = ['/today', '/contacts', '/reminders', '/events/work'];
+  const BG_ROUTES = ['/today', '/contacts', '/reminders', '/events/work', '/card-life'];
 
   // Seed enough work events and contacts for their lists to need more than
   // one page. The reminders page already has rows (the auto-seeded
@@ -344,6 +344,35 @@ app.whenReady().then(async () => {
       check(`${route}'s card blurs the artwork behind it`,
         /blur/.test(page.blur), page.blur);
     }
+  }
+
+  // The 抽卡人生 page wears the artwork too, with its own translucent
+  // treatment — it is a page of sheets of paper laid over the picture, the
+  // same idea the 今日 page uses, so its cards must be translucent and
+  // blurred rather than opaque panels pasted on the painting.
+  console.log('\n[7b] the 抽卡人生 page wears the translucent treatment');
+  await goto('#/card-life', 900);
+  const clPage = await winMain.webContents.executeJavaScript(`(() => {
+    const wrapper = document.querySelector('.cl-page');
+    const el = document.querySelector('.cl-page .cl-rules-card, .cl-page .cl-deck');
+    const out = { hasWrapper: !!wrapper };
+    if (el) {
+      const cs = getComputedStyle(el);
+      const bg = cs.backgroundColor;
+      const m = bg.match(/rgba?\\(([^)]+)\\)/);
+      const parts = m ? m[1].split(',').map((s) => parseFloat(s)) : [];
+      out.bg = bg;
+      out.alpha = parts.length === 4 ? parts[3] : 1;
+      out.blur = cs.backdropFilter || cs.webkitBackdropFilter || '';
+    }
+    return out;
+  })()`);
+  check('the 抽卡人生 page wraps its content in .cl-page', clPage.hasWrapper);
+  if (clPage.bg) {
+    check('the 抽卡人生 card is translucent (alpha < 1)', clPage.alpha < 1,
+      `${clPage.bg} (alpha ${clPage.alpha})`);
+    check('the 抽卡人生 card blurs the artwork behind it',
+      /blur/.test(clPage.blur), clPage.blur);
   }
 
   // -------------------------------------------------------------------------

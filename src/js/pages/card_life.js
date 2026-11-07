@@ -6,12 +6,13 @@
 // page, which live in the database.
 //
 //   * 未抽 → a deck of cards and a 「抽一张卡」 button;
-//   * 已抽 → the card that was drawn, with a 「记录这一张」 button that
-//     opens the 回忆事件 editor with the card's title and requirement
-//     already filled in;
-//   * 规则 → a card of its own that spells the game out;
-//   * 我添加的卡片 → a form for the user's own cards, and the list of
-//     them (each one can be deleted);
+//   * 已抽 → the card that was drawn, on a sheet of paper, with a
+//     「记录这一张」 button that opens the 回忆事件 editor with the card's
+//     title and requirement already filled in;
+//   * 规则 → a card of its own, beside the drawn card, that spells the
+//     game out;
+//   * 我的专属卡片 → the user's own cards, in one list (capped at a few,
+//     each with a delete button), and the button that adds another;
 //   * a short history of the cards drawn before, so a card that was never
 //     recorded can still be picked up days later.
 //
@@ -20,8 +21,18 @@
 // comes back.
 import { api, escapeHtml, toast } from '../api.js';
 import { register, navigate } from '../router.js';
+import { pageSlice, pagerHtml, wirePager } from '../pager.js';
 
 const CARD_LIST_ROUTE = '/events/memorial';
+
+// How many of the user's own cards one page of the list shows.
+//
+// The list is paginated rather than endless for the same reason the app's
+// other lists are: a user with a hundred cards would otherwise get an
+// unreadable scroll, and the list is drawn over the shared artwork — a
+// page taller than the viewport shows only the top slice of a fixed
+// picture. The pager under the list reaches the rest.
+const CUSTOM_PAGE_SIZE = 3;
 
 // The state of the page currently on screen. Kept at module scope so a
 // redraw (after a draw) does not need a second round-trip.
@@ -30,7 +41,18 @@ const pageState = {
   // True while the drawn card is being put on screen, so the card can
   // play its entrance animation exactly once per draw.
   justDrew: false,
+  // True while the 「添加卡片」 form is open. The form is hidden until the
+  // button is clicked, so the page's default state is the card list.
+  adding: false,
 };
+
+// Which page of the user's own cards is showing.
+//
+// It is a separate object from pageState because the shared pager
+// (src/js/pager.js) reads and writes a `page` key on the state it is
+// given — the same shape the other four paginated lists use. The index is
+// a view state, not a URL state, so paging is not a history entry.
+const customPager = { page: 0 };
 
 async function render() {
   const app = document.getElementById('app');
@@ -47,31 +69,27 @@ async function render() {
   pageState.state = state;
 
   app.innerHTML = `
-    <div class="page-column">
-      <div class="cl-page">
-        <div class="cl-head">
-          <h1>抽卡人生</h1>
-          <p class="cl-sub">
-            每周可以抽一张卡 · 本周 ${escapeHtml(state.weekLabel || '')}
-            · 卡池 ${state.totalSize || 0} 张
-            ${state.customCount ? `（官方 ${state.deckSize || 0} + 我的 ${state.customCount}）` : ''}
-          </p>
-        </div>
-
-        ${state.deckError ? `<div class="cl-error">${escapeHtml(state.deckError)}</div>` : ''}
-
-        <div class="cl-table">
-          <div class="cl-stage" id="cl-stage">
-            ${state.card ? cardHtml(state.card) : deckHtml(state)}
-          </div>
-
-          ${rulesHtml()}
-        </div>
-
-        ${customHtml(state)}
-
-        ${historyHtml(state)}
+    <div class="cl-page">
+      <div class="cl-head">
+        <h1>抽卡人生</h1>
+        <p class="cl-sub">
+          每周给生活一点新的期待 · 本周 ${escapeHtml(state.weekLabel || '')}
+        </p>
       </div>
+
+      ${state.deckError ? `<div class="cl-error">${escapeHtml(state.deckError)}</div>` : ''}
+
+      <div class="cl-table">
+        <div class="cl-stage" id="cl-stage">
+          ${state.card ? cardHtml(state.card) : deckHtml(state)}
+        </div>
+
+        ${rulesHtml()}
+      </div>
+
+      ${customHtml(state)}
+
+      ${historyHtml(state)}
     </div>
   `;
 
@@ -111,23 +129,33 @@ function cardHtml(card) {
   // the card is written, so a later visit does not replay it.
   const animate = pageState.justDrew;
   pageState.justDrew = false;
+  // A custom card has no number in the official deck, so the counter
+  // reads as "我的专属卡片" instead of an empty "第 号卡片".
+  const counter = custom
+    ? '<span class="cl-card-no">我的专属卡片</span>'
+    : `<span class="cl-card-no">本周第 <b>${escapeHtml(card.card_no == null ? '?' : String(card.card_no))}</b> 号卡片</span>`;
   return `
     <div class="cl-card${animate ? ' cl-card--in' : ''}">
+      <span class="cl-card-clip" aria-hidden="true"></span>
       <div class="cl-card-head">
-        <span class="cl-card-no">${escapeHtml(custom ? '自定义' : String(card.card_no == null ? '?' : card.card_no))}</span>
-        <span class="cl-card-week">${escapeHtml(card.week_key || '')} 那一周</span>
+        <span class="cl-card-badge">
+          <span class="cl-badge-star" aria-hidden="true"></span>
+          本周挑战
+        </span>
+        ${counter}
       </div>
       <h2 class="cl-card-title">${escapeHtml(card.title || '(无标题)')}</h2>
       ${card.requirement ? `<p class="cl-card-req">${escapeHtml(card.requirement)}</p>` : ''}
       <div class="cl-actions">
         <button class="btn" id="cl-record">
+          <span class="cl-btn-play" aria-hidden="true"></span>
           ${recorded ? '查看这篇回忆' : '记录这一张'}
         </button>
         <a class="btn secondary" href="#${CARD_LIST_ROUTE}">回忆事件</a>
       </div>
       ${recorded
         ? '<p class="cl-card-note">这张卡已经记录过了。</p>'
-        : '<p class="cl-card-note">本周的卡已经抽过，下周一可以再抽。</p>'}
+        : '<p class="cl-card-note">本周已抽取，下一周继续开启</p>'}
     </div>
   `;
 }
@@ -139,23 +167,32 @@ function cardHtml(card) {
 // back — and is always there, so nobody has to guess why the button says
 // 「抽一张卡」 and why it only works once a week.
 //
-// It is a card of its own, but a quieter one than the card you draw: a
-// dashed edge and a muted paper, so the two never look like rivals.
+// Each rule is a title plus the line that explains it, because a bare
+// sentence gives the reader no way to tell which part is the rule and
+// which part is the detail.
 function rulesHtml() {
   return `
     <section class="cl-rules">
       <div class="cl-rules-card">
         <div class="cl-rules-head">
-          <span class="cl-rules-badge">规则</span>
-          <span class="cl-rules-title">抽卡人生怎么玩</span>
+          <span class="cl-rules-icon" aria-hidden="true"></span>
+          <span class="cl-rules-title">抽卡规则</span>
         </div>
         <ol class="cl-rules-list">
-          <li>每周只能抽一张卡——一周从星期一开始算，抽过了就要等下个星期一；</li>
-          <li>卡来自两个地方：官方卡库，和你在下面自己添加的卡片；两边放在一起随机抽，所以你写的那张也可能被抽到；</li>
-          <li>抽到之后想写下来，点「记录这一张」，会跳到回忆事件的编辑器，标题和要求已经替你填好了；</li>
-          <li>写完的回忆归到「抽卡事件」这一类，在回忆事件的列表里按「类型」就能筛出来；</li>
-          <li>抽过的卡都留在下面的历史里，哪一周抽的、记没记过都写着，没记的随时可以补记。</li>
+          <li>
+            <span class="cl-rule-title">每周只能抽取一张卡</span>
+            <span class="cl-rule-note">每周一开启新一轮抽卡</span>
+          </li>
+          <li>
+            <span class="cl-rule-title">官方卡片与自定义卡片混合</span>
+            <span class="cl-rule-note">每张卡片都有相同的抽取机会</span>
+          </li>
+          <li>
+            <span class="cl-rule-title">完成后记录回忆</span>
+            <span class="cl-rule-note">自动归档到回忆事件</span>
+          </li>
         </ol>
+        <p class="cl-rules-foot">已经抽取的卡片会保留在历史记录中。</p>
       </div>
     </section>
   `;
@@ -166,40 +203,135 @@ function rulesHtml() {
 // The cards the user added. They live in the database, they are drawn from
 // the same pool as the official deck, and each one can be deleted again —
 // deleting one does not touch the cards already drawn from it.
+//
+// There is ONE list of them, under the heading 我的专属卡片. There used to
+// be two — a preview above and a 「已添加的卡片」 table below — which meant
+// the same cards were on the page twice, in two different shapes, and the
+// user had to look in one place to add a card and another to delete one.
+//
+// The list is PAGINATED: it shows a fixed number of cards per page, with
+// the app's shared pager underneath. A card is never hidden — it is one
+// click of 「下一页」 away, and every card carries its own delete button,
+// so any card can be deleted from any page.
 
 function customHtml(state) {
   const cards = state.customCards || [];
-  const rows = cards.map((c, i) => `
-    <div class="cl-custom-row">
-      <span class="cl-custom-no">${i + 1}</span>
-      <span class="cl-custom-title">${escapeHtml(c.title || '(无标题)')}</span>
-      ${c.requirement ? `<span class="cl-custom-req">${escapeHtml(c.requirement)}</span>` : ''}
-      <button class="cl-custom-del" data-id="${escapeHtml(c.id || '')}" title="删除这张卡">删除</button>
-    </div>
-  `).join('');
+
+  // Which slice of the cards the current page shows. The shared pager
+  // does the maths and clamps the index, so deleting a card on the last
+  // page cannot leave the list pointing past the end.
+  const { total, totalPages, visible } = pageSlice(cards, customPager, CUSTOM_PAGE_SIZE);
+
+  const list = cards.length
+    ? `<div class="cl-custom-list">${visible.map(customCardHtml).join('')}</div>`
+    : '<p class="cl-custom-empty">还没有添加自己的卡片。</p>';
+
+  const form = pageState.adding ? customFormHtml() : '';
 
   return `
     <section class="cl-custom">
-      <h2>我添加的卡片${cards.length ? `（${cards.length} 张）` : ''}</h2>
-      <form class="cl-custom-form" id="cl-custom-form">
-        <input type="text" id="cl-custom-title" class="cl-custom-input" maxlength="120"
-               placeholder="卡片标题，例如：给三个月后的自己写一封信"/>
-        <textarea id="cl-custom-req" class="cl-custom-input" rows="2" maxlength="2000"
-                  placeholder="要求（可选）：这张卡要做什么"></textarea>
-        <button type="submit" class="btn cl-custom-add" id="cl-custom-add">添加卡片</button>
-      </form>
+      <div class="cl-section">
+        <div class="cl-section-head">
+          <h2>
+            <span class="cl-section-icon" aria-hidden="true"></span>
+            我的专属卡片
+          </h2>
+          ${cards.length ? `<span class="cl-count">${cards.length} 张</span>` : ''}
+        </div>
+      </div>
+
+      <div class="cl-custom-panel">
+        ${list}
+      </div>
+
+      <div id="cl-custom-pager">
+        ${pagerHtml(customPager.page, totalPages, total)}
+      </div>
+
+      <div class="cl-custom-addbar">
+        ${pageState.adding ? '' : `
+          <button type="button" class="cl-custom-add-btn" id="cl-custom-add">
+            添加卡片
+          </button>
+        `}
+      </div>
+
+      ${form}
+
       <p class="cl-custom-hint">
         自己添加的卡片和官方卡库放在一起抽——每周抽到的卡，有可能是你写的这一张。
       </p>
-      ${cards.length
-        ? `<div class="cl-custom-list">${rows}</div>`
-        : '<p class="cl-custom-empty">还没有添加自己的卡片。</p>'}
     </section>
+  `;
+}
+
+// One of the user's own cards.
+//
+// It carries a delete button, so a card can be thrown away from here
+// without hunting for it anywhere else.
+function customCardHtml(c) {
+  return `
+    <div class="cl-custom-card">
+      <span class="cl-custom-icon" aria-hidden="true"></span>
+      <div class="cl-custom-text">
+        <div class="cl-custom-head">
+          <p class="cl-custom-title">${escapeHtml(c.title || '(无标题)')}</p>
+          <span class="cl-custom-tag">自定义卡片</span>
+        </div>
+        ${c.requirement
+          ? `<p class="cl-custom-req">${escapeHtml(c.requirement)}</p>`
+          : ''}
+      </div>
+      <button class="cl-custom-del cl-custom-del--preview" data-id="${escapeHtml(c.id || '')}"
+              title="删除这张卡" aria-label="删除「${escapeHtml(c.title || '(无标题)')}」">
+        <span class="cl-del-icon" aria-hidden="true"></span>
+        删除
+      </button>
+    </div>
+  `;
+}
+
+// The add form. It only exists while the user is adding a card.
+function customFormHtml() {
+  return `
+    <form class="cl-custom-form" id="cl-custom-form">
+      <input type="text" id="cl-custom-title" class="cl-custom-input" maxlength="120"
+             placeholder="卡片标题，例如：给三个月后的自己写一封信"/>
+      <textarea id="cl-custom-req" class="cl-custom-input" rows="2" maxlength="2000"
+                placeholder="要求（可选）：这张卡要做什么"></textarea>
+      <div class="cl-custom-form-actions">
+        <button type="submit" class="cl-custom-submit" id="cl-custom-submit">保存卡片</button>
+        <button type="button" class="cl-custom-cancel" id="cl-custom-cancel">取消</button>
+      </div>
+    </form>
   `;
 }
 
 // Wire the add form and the delete buttons.
 function wireCustom() {
+  // The 「＋ 添加卡片」 button opens the form. It sits under the list of
+  // the user's own cards.
+  const addBtn = document.getElementById('cl-custom-add');
+  const openForm = async () => {
+    if (pageState.adding) return;
+    pageState.adding = true;
+    await render();
+    const titleEl = document.getElementById('cl-custom-title');
+    if (titleEl) titleEl.focus();
+  };
+  if (addBtn) addBtn.onclick = openForm;
+
+  // The cancel button closes the form again. Without it the form is a
+  // one-way door: the 「添加卡片」 button is replaced by the form, so a
+  // user who changes their mind has no way back.
+  const cancelBtn = document.getElementById('cl-custom-cancel');
+  if (cancelBtn) {
+    cancelBtn.onclick = async () => {
+      pageState.adding = false;
+      await render();
+    };
+  }
+
   const form = document.getElementById('cl-custom-form');
   if (form) {
     form.onsubmit = async (e) => {
@@ -213,17 +345,18 @@ function wireCustom() {
         if (titleEl) titleEl.focus();
         return;
       }
-      const addBtn = document.getElementById('cl-custom-add');
-      if (addBtn) { addBtn.disabled = true; addBtn.textContent = '添加中…'; }
+      const submitBtn = document.getElementById('cl-custom-submit');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '保存中…'; }
       try {
         await api.cardDraws.customCreate({ title, requirement });
+        pageState.adding = false;
         await render();
         toast('卡片已添加');
       } catch (err) {
         console.error('could not add the card', err);
         toast((err && err.message) || '添加失败');
-        const btn = document.getElementById('cl-custom-add');
-        if (btn) { btn.disabled = false; btn.textContent = '添加卡片'; }
+        const btn = document.getElementById('cl-custom-submit');
+        if (btn) { btn.disabled = false; btn.textContent = '保存卡片'; }
       }
     };
   }
@@ -244,6 +377,26 @@ function wireCustom() {
       }
     };
   });
+
+  // The pager under the list. The page index lives in `customPager`; the
+  // repaint re-renders the whole page, which also re-runs this wiring —
+  // the pager's buttons are new nodes after every repaint.
+  const pagerHost = document.getElementById('cl-custom-pager');
+  if (pagerHost) {
+    wirePager(
+      pagerHost,
+      customPager,
+      async () => { await render(); },
+      // Keep the user at the top of the new page of cards — otherwise they
+      // land halfway down the page, looking at cards they already saw.
+      // This runs BEFORE the repaint, which is what makes the scroll
+      // stick: the repaint changes the content's height, and a scroll
+      // set afterwards would be measured against the new content.
+      () => {
+        const scroller = document.querySelector('.content');
+        if (scroller) scroller.scrollTop = 0;
+      });
+  }
 }
 
 // The cards drawn before, newest first.
@@ -272,8 +425,17 @@ function historyHtml(state) {
   `).join('');
   return `
     <section class="cl-history">
-      <h2>抽过的卡</h2>
-      ${rows}
+      <div class="cl-section">
+        <div class="cl-section-head">
+          <h2>
+            <span class="cl-section-icon" style="--cl-section-icon: var(--icon-list);" aria-hidden="true"></span>
+            抽过的卡
+          </h2>
+        </div>
+      </div>
+      <div class="cl-added">
+        ${rows}
+      </div>
     </section>
   `;
 }

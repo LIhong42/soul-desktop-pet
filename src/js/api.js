@@ -146,7 +146,7 @@ export const api = {
     get: (k) => M.settings.get(k),
     set: (k, v) => M.settings.set(k, v),
   },
-  // 页面背景（「今日」「联系人」「提醒日期」「工作事件」共用同一张底图）。
+  // 页面背景（「今日」「联系人」「提醒日期」「工作事件」「抽卡人生」共用同一张底图）。
   // `get()` → { list, chosen, current: {id,url}|null, noneId, routes };
   // `set(id)` stores the choice and returns the same shape. An empty id clears
   // the choice (back to "跟随默认"); `noneId` means "explicitly no background".
