@@ -27,7 +27,7 @@
 // window only ever creates).
 
 import { escapeHtml, displayName, todayYmd, nowDatetimeLocal } from './api.js';
-import { memorialKindLabel } from './diary_kinds.js';
+import { memorialKindLabel, MEMORIAL_KINDS } from './diary_kinds.js';
 
 // ---- Calendar-mode rules ------------------------------------------------
 //
@@ -457,11 +457,17 @@ export function buildMemorialForm(opts = {}) {
     ? (ev.occurred_at.length >= 16 ? ev.occurred_at.slice(0, 16) : ev.occurred_at)
     : nowDatetimeLocal();
 
+  // The 分类 select. The options come from the shared vocabulary
+  // (src/js/diary_kinds.js), so the third one — 抽卡事件, the 分类 used by
+  // the 抽卡人生 page — shows up here without this file having to know it.
+  const kindValue = ev.kind || 'other';
+  const kindOptionsHtml = MEMORIAL_KINDS.map((k) => `
+        <option value="${k.value}" ${kindValue === k.value ? 'selected' : ''}>${escapeHtml(memorialKindLabel(k.value))}</option>`).join('');
+
   const html = `
     ${field(t, '类型', `
       <select id="${p}-mem-kind">
-        <option value="first_time" ${ev.kind === 'first_time' ? 'selected' : ''}>${escapeHtml(memorialKindLabel('first_time'))}</option>
-        <option value="other"      ${ev.kind === 'other' || !ev.kind ? 'selected' : ''}>${escapeHtml(memorialKindLabel('other'))}</option>
+        ${kindOptionsHtml}
       </select>
     `)}
     ${field(t, '标题 *', `<input type="text" id="${p}-title" maxlength="120" value="${escapeHtml(ev.title || '')}" placeholder="例如：第一次去迪士尼" autofocus/>`)}

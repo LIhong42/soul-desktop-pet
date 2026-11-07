@@ -3,6 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const initSqlJs = require('sql.js');
 
+// The whole schema, as one template literal.
+//
+// CAREFUL: this is a template literal, so a comment inside it may NOT
+// contain a backtick — markdown-style `code spans` end the string early
+// and the file stops parsing ("SyntaxError: Unexpected identifier").
+// Write plain paths (resources/…) in the SQL comments below.
 const SCHEMA = `
 PRAGMA foreign_keys = ON;
 
@@ -120,7 +126,11 @@ CREATE INDEX IF NOT EXISTS idx_search_kind_ref ON search_index(kind, ref_id);
 -- runtime CREATE statements that run alongside the schema above.
 CREATE TABLE IF NOT EXISTS memorial_events (
   id          TEXT PRIMARY KEY,
-  kind        TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('first_time','other')),
+  -- The event's 分类: 是第一次 / 不是第一次 / 抽卡事件. The third value was
+  -- added for the 抽卡人生 page — a memory written down from a drawn card
+  -- is filed as 抽卡事件. Older databases carry a narrower CHECK, so
+  -- migrateMemorialEventsV4 widens it.
+  kind        TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('first_time','other','card_draw')),
   title       TEXT NOT NULL,
   -- The five user-facing fields that replace the legacy single description
   -- text column. All nullable; the form lets the user skip any of them.
@@ -164,6 +174,52 @@ CREATE TABLE IF NOT EXISTS memorial_event_photos (
   created_at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mep_event ON memorial_event_photos(memorial_event_id);
+
+-- 抽卡人生：每周抽到的那张卡。
+--
+-- The deck itself lives in resources/intersting-list/list.md (a file the
+-- user can edit); this table remembers what was drawn, when, and whether
+-- the card was turned into a 回忆事件.
+--
+--   week_key — the Monday of the week the card belongs to (YYYY-MM-DD).
+--     One draw per week, so the unique index is the rule, not a
+--     convention.
+--   source — 'deck' for a card from list.md, 'custom' for one the user
+--     added on the 抽卡人生 page.
+--   card_ref_id — for a custom card, the custom_cards row it came from.
+--     The title and requirement are copied into the draw, so deleting a
+--     custom card later does not rewrite the history.
+--   memorial_event_id — set once the user records the card.
+CREATE TABLE IF NOT EXISTS card_draws (
+  id                TEXT PRIMARY KEY,
+  week_key          TEXT NOT NULL,
+  card_no           INTEGER,
+  title             TEXT NOT NULL,
+  requirement       TEXT,
+  source            TEXT NOT NULL DEFAULT 'deck',
+  card_ref_id       TEXT,
+  drawn_at          TEXT NOT NULL,
+  recorded_at       TEXT,
+  memorial_event_id TEXT,
+  created_at        TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_card_draws_week
+  ON card_draws(week_key);
+
+-- 抽卡人生：用户自己添加的卡片。
+--
+-- The official deck lives in a file (resources/intersting-list/list.md) so
+-- it can be edited with any text editor; the cards the user adds live here
+-- instead, because they are data the app owns — they are written from the
+-- 抽卡人生 page and they travel with the database backup.
+--
+--   title / requirement — the same two fields a deck card has.
+CREATE TABLE IF NOT EXISTS custom_cards (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  requirement TEXT,
+  created_at  TEXT NOT NULL
+);
 
 -- Bond / Cozy / WeeklyRitual tables (Ritual-Bond pet intimacy system).
 --   bond_strength : persistent pet affinity per pet_id, with tier (1..7).
@@ -275,6 +331,8 @@ async function open(dbPathArg) {
   migrateMemorialEventsV1();
   migrateMemorialEventsV2();
   migrateMemorialEventsV3();
+  migrateMemorialEventsV4();
+  migrateCardDrawsV5();
   seedDefaultFestivals();
   migratePinV1();
   migrateBondV1();
@@ -1312,6 +1370,248 @@ function migrateMemorialEventsV3() {
   }
 }
 
+// ---- memorial events v4 migration ----
+// Widens the `kind` CHECK so a memorial event can be filed as 抽卡事件
+// (the third 分类, used by the 抽卡人生 page).
+//
+// SQLite cannot ALTER a CHECK constraint, so the table is rebuilt — the
+// same shape as the v2 / v3 migrations above. The rebuild copies every row
+// across, so the user's memories survive the upgrade.
+//
+// The check is on the TABLE'S OWN SQL, not on a settings guard: a database
+// that already carries 'card_draw' is left alone, and one that does not is
+// rebuilt whether or not the guard key was ever written. (A guard-only
+// check would skip a database whose schema was created by an older build.)
+//
+// `PRAGMA legacy_alter_table = ON` around the rename keeps SQLite from
+// re-parsing the whole schema while the parent table is momentarily gone
+// — the child tables (memorial_event_contacts / memorial_event_photos)
+// keep their foreign keys pointing at "memorial_events", which is the name
+// the rebuilt table ends up with.
+const MEMORIAL_EVENTS_V4_KEY = 'memorial_events_v4_applied';
+
+function migrateMemorialEventsV4() {
+  if (!db) return;
+
+  let tableSql = '';
+  try {
+    const row = one(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memorial_events'");
+    tableSql = (row && row.sql) || '';
+  } catch (e) {
+    console.error('memorial_events v4 migration failed:', e);
+    return;
+  }
+  // No table at all — v1 creates it on the next boot, and v4 runs again
+  // then. Nothing to widen yet.
+  if (!tableSql) return;
+  if (tableSql.includes("'card_draw'")) {
+    setSetting(MEMORIAL_EVENTS_V4_KEY, '1');
+    return;
+  }
+
+  try {
+    db.run('PRAGMA foreign_keys = OFF');
+    db.run('PRAGMA legacy_alter_table = ON');
+    try {
+      db.run('BEGIN');
+      db.run(`
+        CREATE TABLE memorial_events_new (
+          id          TEXT PRIMARY KEY,
+          kind        TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('first_time','other','card_draw')),
+          title       TEXT NOT NULL,
+          place       TEXT,
+          food        TEXT,
+          outfit      TEXT,
+          activities  TEXT,
+          notes       TEXT,
+          occurred_at TEXT NOT NULL,
+          background  TEXT,
+          content     TEXT,
+          created_at  TEXT NOT NULL,
+          updated_at  TEXT NOT NULL
+        )`);
+      db.run(`INSERT INTO memorial_events_new
+                (id, kind, title, place, food, outfit, activities, notes,
+                 occurred_at, background, content, created_at, updated_at)
+              SELECT id, kind, title, place, food, outfit, activities, notes,
+                     occurred_at, background, content, created_at, updated_at
+                FROM memorial_events`);
+      db.run('DROP TABLE memorial_events');
+      db.run('ALTER TABLE memorial_events_new RENAME TO memorial_events');
+      db.run('CREATE INDEX IF NOT EXISTS idx_memorial_events_occurred_at ON memorial_events(occurred_at)');
+      db.run('CREATE INDEX IF NOT EXISTS idx_memorial_events_kind        ON memorial_events(kind)');
+      db.run('COMMIT');
+      setSetting(MEMORIAL_EVENTS_V4_KEY, '1');
+      markDirty();
+      console.log('[memorial v4 migration] kind widened with 抽卡事件 (card_draw).');
+    } catch (e) {
+      try { db.run('ROLLBACK'); } catch (_) {}
+      throw e;
+    }
+  } catch (e) {
+    console.error('memorial_events v4 migration failed:', e);
+  } finally {
+    try { db.run('PRAGMA legacy_alter_table = OFF'); } catch (_) {}
+    try { db.run('PRAGMA foreign_keys = ON'); } catch (_) {}
+  }
+}
+
+// ---- card draws v5 migration ----
+//
+// The 抽卡人生 page lets the user add their own cards. A drawn card has to
+// say where it came from, so `card_draws` gains two columns:
+//
+//   source      — 'deck' (from list.md) or 'custom' (the user's own)
+//   card_ref_id — the custom_cards row a custom card came from
+//
+// The columns are added with the plain ALTER TABLE ADD COLUMN shape (like
+// migrateMemorialEventsV3 does for `background` / `content`): adding a
+// column does not invalidate the existing rows, so there is nothing to
+// copy. A database written before this migration keeps its draws, and the
+// old rows read back as 'deck' cards.
+const CARD_DRAWS_V5_KEY = 'card_draws_v5_applied';
+
+function migrateCardDrawsV5() {
+  if (!db) return;
+
+  const cols = db.prepare('PRAGMA table_info(card_draws)');
+  const names = new Set();
+  while (cols.step()) names.add(cols.get()[1]);
+  cols.free();
+
+  // No table yet — the schema creates it with both columns.
+  if (!names.size) return;
+
+  try {
+    let altered = false;
+    if (!names.has('source')) {
+      db.run("ALTER TABLE card_draws ADD COLUMN source TEXT NOT NULL DEFAULT 'deck'");
+      altered = true;
+    }
+    if (!names.has('card_ref_id')) {
+      db.run('ALTER TABLE card_draws ADD COLUMN card_ref_id TEXT');
+      altered = true;
+    }
+    if (altered) {
+      setSetting(CARD_DRAWS_V5_KEY, '1');
+      markDirty();
+    }
+  } catch (e) {
+    console.error('card_draws v5 migration failed:', e);
+  }
+}
+
+// ---- card draws (抽卡人生) ----
+//
+// The storage for the cards drawn on the 抽卡人生 page. One draw per week:
+// `week_key` is the Monday of the week, and the unique index on it is what
+// enforces the rule.
+//
+//   listCardDraws(limit)  — newest first
+//   getCardDraw(id)       — one draw
+//   getCardDrawByWeek(key)— this week's draw (null when none)
+//   createCardDraw(row)   — insert a draw
+//   linkCardDraw(id, eventId) — point the draw at the 回忆事件 it became
+
+function listCardDraws(limit = 52) {
+  const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 52;
+  return all(
+    `SELECT * FROM card_draws ORDER BY week_key DESC, drawn_at DESC LIMIT ${n}`);
+}
+
+function getCardDraw(id) {
+  if (!id) return null;
+  return one('SELECT * FROM card_draws WHERE id = ?', [id]);
+}
+
+function getCardDrawByWeek(weekKey) {
+  if (!weekKey) return null;
+  return one('SELECT * FROM card_draws WHERE week_key = ?', [weekKey]);
+}
+
+function createCardDraw(row = {}) {
+  const id = row.id || newId();
+  const now = nowStr();
+  run(
+    `INSERT INTO card_draws(id, week_key, card_no, title, requirement,
+                             source, card_ref_id,
+                             drawn_at, recorded_at, memorial_event_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id,
+     row.week_key,
+     Number.isFinite(row.card_no) ? row.card_no : null,
+     String(row.title || ''),
+     row.requirement == null ? null : String(row.requirement),
+     row.source === 'custom' ? 'custom' : 'deck',
+     row.card_ref_id == null ? null : String(row.card_ref_id),
+     row.drawn_at || now,
+     null,
+     null,
+     now]
+  );
+  markDirty();
+  return getCardDraw(id);
+}
+
+// Point a draw at the 回忆事件 it became. Re-recording the same card
+// replaces the link (the entry may have been deleted and written again).
+function linkCardDraw(id, memorialEventId) {
+  if (!id) return null;
+  const cur = getCardDraw(id);
+  if (!cur) return null;
+  run(
+    'UPDATE card_draws SET memorial_event_id = ?, recorded_at = ? WHERE id = ?',
+    [memorialEventId || null, nowStr(), id]);
+  markDirty();
+  return getCardDraw(id);
+}
+
+// ---- custom cards (抽卡人生) ----
+//
+// The cards the user added on the 抽卡人生 page. They are stored apart
+// from the official deck (which lives in a file) and they are drawn from
+// the same pool as the official ones.
+//
+//   listCustomCards()      — every custom card, oldest first
+//   getCustomCard(id)      — one custom card
+//   createCustomCard(row)  — add a custom card
+//   deleteCustomCard(id)   — remove a custom card
+//
+// Deleting a custom card does NOT touch the cards already drawn from it:
+// a draw keeps its own copy of the title and the requirement.
+
+function listCustomCards() {
+  return all('SELECT * FROM custom_cards ORDER BY created_at ASC, rowid ASC');
+}
+
+function getCustomCard(id) {
+  if (!id) return null;
+  return one('SELECT * FROM custom_cards WHERE id = ?', [id]);
+}
+
+function createCustomCard(row = {}) {
+  const id = row.id || newId();
+  run(
+    'INSERT INTO custom_cards(id, title, requirement, created_at) VALUES (?, ?, ?, ?)',
+    [id,
+     String(row.title || ''),
+     row.requirement == null ? null : String(row.requirement),
+     nowStr()]
+  );
+  markDirty();
+  return getCustomCard(id);
+}
+
+function deleteCustomCard(id) {
+  if (!id) return false;
+  const cur = getCustomCard(id);
+  if (!cur) return false;
+  run('DELETE FROM custom_cards WHERE id = ?', [id]);
+  markDirty();
+  return true;
+}
+
 // ---- memorial event queries ----
 // Each returned row is decorated with:
 //   - contact_ids[]: ordered list of associated contact ids
@@ -1346,7 +1646,7 @@ function listMemorialEvents(opts = {}) {
                FROM memorial_events me
               WHERE 1=1`;
   const args = [];
-  if (opts.kind === 'first_time' || opts.kind === 'other') {
+  if (opts.kind === 'first_time' || opts.kind === 'other' || opts.kind === 'card_draw') {
     sql += ' AND me.kind = ?';
     args.push(opts.kind);
   }
@@ -1767,6 +2067,10 @@ module.exports = {
   deletePetData,
   listMemorialEvents, getMemorialEvent, listPhotosForMemorialEvent,
   listMemorialEventsForExport,
+  // 抽卡人生 — the cards drawn on the 抽卡人生 page, and the custom
+  // cards the user added.
+  listCardDraws, getCardDraw, getCardDrawByWeek, createCardDraw, linkCardDraw,
+  listCustomCards, getCustomCard, createCustomCard, deleteCustomCard,
   // Exposed so ipc.js can call them (avoids duplicating logic in IPC handlers).
   // These wrap require() at call-time so we don't introduce a require cycle
   // between db.js and the helpers.

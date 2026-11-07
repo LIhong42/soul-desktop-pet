@@ -13,6 +13,7 @@
     "verify:reminders": "node scripts/verify-reminders.js && node scripts/run-electron.js scripts/test-reminder-dismiss.js && node scripts/run-electron.js scripts/test-reminder-pill.js",
     "verify:quick-record": "node scripts/run-electron.js scripts/verify-quick-record.js && node scripts/run-electron.js scripts/test-quick-record-ui.js && node scripts/run-electron.js scripts/test-form-parity.js",
     "verify:diary": "node scripts/verify-diary-db.js && node scripts/run-electron.js scripts/test-diary-editor.js",
+    "verify:card-draws": "node scripts/verify-card-draws.js",
     "verify:work-bulk": "node scripts/run-electron.js scripts/verify-work-bulk.js",
     "verify:page-background": "node scripts/run-electron.js scripts/test-page-background.js",
     "verify:page-column": "node scripts/run-electron.js scripts/test-page-column.js",

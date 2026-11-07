@@ -118,7 +118,7 @@ app.whenReady().then(async () => {
   await new Promise((r) => setTimeout(r, 1500));
   const tab = await evalIn(winMain, `return ({
     active: document.querySelector('.cd-tab.is-active').textContent.trim(),
-    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .lr-title-main')).map(e => e.textContent),
+    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .cd-attr-text')).map(e => e.textContent),
     count: (document.querySelector('.cd-count')||{}).textContent,
     hasAdd: !!document.getElementById('cd-add-toggle'),
     formHidden: document.getElementById('cd-add-card').classList.contains('hidden'),
@@ -148,7 +148,7 @@ app.whenReady().then(async () => {
   `);
   await new Promise((r) => setTimeout(r, 1500));
   const afterAdd = await evalIn(winMain, `return ({
-    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .lr-title-main')).map(e => e.textContent),
+    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .cd-attr-text')).map(e => e.textContent),
     count: (document.querySelector('.cd-count')||{}).textContent,
     tabCount: (document.querySelector('.cd-tab.is-active .cd-tab-count')||{}).textContent,
     formHidden: document.getElementById('cd-add-card').classList.contains('hidden'),
@@ -172,7 +172,7 @@ app.whenReady().then(async () => {
   `);
   await new Promise((r) => setTimeout(r, 600));
   const searched = await evalIn(winMain, `return ({
-    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .lr-title-main')).map(e => e.textContent),
+    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .cd-attr-text')).map(e => e.textContent),
     footer: (document.querySelector('.list-tail > div.meta')||{}).textContent || '',
     inputAlive: document.querySelector('.section-search').value,
   })`);
@@ -187,7 +187,7 @@ app.whenReady().then(async () => {
   await new Promise((r) => setTimeout(r, 1200));
   const kept = await evalIn(winMain, `return ({
     value: document.querySelector('.section-search').value,
-    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .lr-title-main')).map(e => e.textContent),
+    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .cd-attr-text')).map(e => e.textContent),
   })`);
   check('the search term survives a tab switch', kept.value, '抹茶');
   check('the filtered list is still filtered', kept.rows, ['抹茶甜点']);
@@ -248,7 +248,7 @@ app.whenReady().then(async () => {
   await evalIn(winMain, `document.querySelector('[data-bulk-delete]').click(); true`);
   await new Promise((r) => setTimeout(r, 1500));
   const afterDelete = await evalIn(winMain, `return ({
-    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .lr-title-main')).map(e => e.textContent),
+    rows: Array.from(document.querySelectorAll('.list-host .attribute-clickable .cd-attr-text')).map(e => e.textContent),
     count: (document.querySelector('.cd-count')||{}).textContent,
   });`);
   check('the deleted row is gone from the list', afterDelete.rows.includes('抹茶甜点'), false);

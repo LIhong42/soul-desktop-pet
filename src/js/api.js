@@ -57,6 +57,19 @@ export const api = {
       read:   (photoId)         => M.memorialEvents.photos.read(photoId),
     },
   },
+  // 抽卡人生 — the weekly card draw. The official deck lives in
+  // `resources/intersting-list/list.md` and is read by the main process;
+  // the user's own cards live in the database. The renderer only asks for
+  // the state and asks for a draw.
+  cardDraws: {
+    state: ()   => M.cardDraws.state(),
+    draw:  ()   => M.cardDraws.draw(),
+    get:   (id) => M.cardDraws.get(id),
+    link:  (id, eventId) => M.cardDraws.link(id, eventId),
+    customList:   ()   => M.cardDraws.customList(),
+    customCreate: (input) => M.cardDraws.customCreate(input),
+    customDelete: (id) => M.cardDraws.customDelete(id),
+  },
   reminders: {
     listActive: () => M.reminders.listActive(),
     // Today's reminder view: every event scheduled for today (whether

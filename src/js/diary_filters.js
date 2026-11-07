@@ -5,7 +5,7 @@
 //
 //   * 时间   — how long ago the entry happened ("最近 30 天", "今年", …)
 //   * 联系人 — who it was with
-//   * 类型   — whether it was the first time (是第一次 / 不是第一次)
+//   * 类型   — the entry's 分类 (是第一次 / 不是第一次 / 抽卡事件)
 //
 // plus the free-text 搜索 box that already existed. All of them compose:
 // search ∩ time ∩ contact ∩ kind.
@@ -136,7 +136,7 @@ export function matchesContact(e, contactId) {
 // ---- 类型 -----------------------------------------------------------------
 //
 // The kind filter is the same vocabulary the cards show: 是第一次 /
-// 不是第一次. The labels come from the shared kind list
+// 不是第一次 / 抽卡事件. The labels come from the shared kind list
 // (src/js/diary_kinds.js), so a rename there shows up here too.
 export function kindOptions() {
   return [

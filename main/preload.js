@@ -70,6 +70,25 @@ contextBridge.exposeInMainWorld('mp', {
       meta:   (photoId)         => ipcRenderer.invoke('memorial_events:photo_meta', photoId),
     },
   },
+  // 抽卡人生 — one random card per week, drawn from
+  // `resources/intersting-list/list.md` plus the user's own cards.
+  //   state()          → { weekKey, weekLabel, deckSize, deckError,
+  //                       customCards, customCount, totalSize, card, history }
+  //   draw()           → { ok, card, reason, state }
+  //   get(id)          → one draw
+  //   link(id, eventId) → point the draw at the 回忆事件 it became
+  //   customList()     → the cards the user added
+  //   customCreate()   → add a card of the user's own
+  //   customDelete(id) → remove one of the user's own cards
+  cardDraws: {
+    state: ()   => ipcRenderer.invoke('card_draws:state'),
+    draw:  ()   => ipcRenderer.invoke('card_draws:draw'),
+    get:   (id) => ipcRenderer.invoke('card_draws:get', id),
+    link:  (id, eventId) => ipcRenderer.invoke('card_draws:link', id, eventId),
+    customList:   ()   => ipcRenderer.invoke('card_draws:custom_list'),
+    customCreate: (input) => ipcRenderer.invoke('card_draws:custom_create', input),
+    customDelete: (id) => ipcRenderer.invoke('card_draws:custom_delete', id),
+  },
   // reminders
   reminders: {
     listActive: () => ipcRenderer.invoke('reminders:list_active'),

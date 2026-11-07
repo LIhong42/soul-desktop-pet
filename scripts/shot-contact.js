@@ -67,11 +67,16 @@ app.whenReady().then(async () => {
      VALUES (?, ?, ?, 'heart', '[]', '[]', '[]', 1, ?, ?)`,
     [contactId, '小绮', '女朋友', now, now]
   );
-  db.run(
+  const addAttr = (kind, desc, ev) => db.run(
     `INSERT INTO contact_attributes(id, contact_id, kind, description, event, created_at, updated_at)
-     VALUES (?, ?, 'like', ?, '2025-11-20', ?, ?)`,
-    [db.newId(), contactId, '喜欢抹茶甜点', now, now]
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [db.newId(), contactId, kind, desc, ev, now, now]
   );
+  addAttr('like', '喜欢抹茶甜点', '2025-11-20');
+  addAttr('like', '喜欢散步', '2025-03-02');
+  addAttr('like', '晨练后喝豆浆', '2024-05-12');
+  addAttr('taboo', '不谈生意', '2025-08-01');
+  addAttr('gift', '真丝围巾', '2025-12-20');
   db.run(
     `INSERT INTO important_dates(id, contact_id, label, day, month, year, kind,
                                   remind_time, advance_days, remind_enabled, created_at, updated_at)

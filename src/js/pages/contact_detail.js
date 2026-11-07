@@ -26,7 +26,7 @@
 // keyed by "contactId:kind" in a module-level Map, so flipping to another
 // tab and back keeps whatever the user had typed.
 
-import { api, escapeHtml, displayName, eventKindAttr, contactColorIndex, fmtDate, formatRelative, countdownTo, categoryIcon, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, getCachedPhotoDataUrl, fetchPhotoDataUrl, wireDateInputs, repeatLabel, eventDisplayTitle, todayYmd } from '../api.js';
+import { api, escapeHtml, displayName, eventKindAttr, contactColorIndex, formatRelative, countdownTo, categoryIcon, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, getCachedPhotoDataUrl, fetchPhotoDataUrl, wireDateInputs, repeatLabel, eventDisplayTitle, todayYmd } from '../api.js';
 import { iconSVG, suggestIconKind } from '../icons.js';
 import { register, navigate } from '../router.js';
 import {
@@ -41,10 +41,14 @@ const PAGE_SIZE = 5;
 // Internal short kind ("like" / "taboo" / "gift") ↔ URL long kind
 // ("likes" / "taboos" / "gifts"). The tab bar and the route table talk in
 // the short form; the URL uses the long form.
+//
+// `icon` is the glyph on each row's tile. It matches the glyph the 快速记录
+// window uses for the same kind (src/js/quick_record.js), so the two places
+// that record the same thing look the same.
 const KIND_META = {
-  like:  { title: '喜好', url: 'likes',  attrKind: 'like'  },
-  taboo: { title: '忌讳', url: 'taboos', attrKind: 'taboo' },
-  gift:  { title: '礼物', url: 'gifts',  attrKind: 'gift'  },
+  like:  { title: '喜好', url: 'likes',  attrKind: 'like',  icon: '💖' },
+  taboo: { title: '忌讳', url: 'taboos', attrKind: 'taboo', icon: '🚫' },
+  gift:  { title: '礼物', url: 'gifts',  attrKind: 'gift',  icon: '🎁' },
 };
 
 // --- Per-contact / per-kind view state ---------------------------------
@@ -146,14 +150,21 @@ function sortByEventDesc(items) {
 
 // A single row. Clicking it opens the shared attribute detail page
 // (#/attributes/:id), where the row can be edited or deleted.
-function renderItemRow(it) {
+//
+// The row is deliberately a one-liner: a tinted tile carrying the kind's
+// glyph, the description, and a chevron on the right. The 事件 date used
+// to sit under the description as a second line — it made every row
+// two lines tall and the faded date line read as the "real" content, when
+// the description is what the user scans for. The date is still one click
+// away (the row → the detail page) and still drives the year/month filter
+// dropdown above the list, so nothing is lost by dropping it here.
+function renderItemRow(it, kind) {
+  const meta = KIND_META[kind] || KIND_META.like;
   return `
-    <div class="row between attribute-clickable" data-id="${escapeHtml(it.id)}" style="cursor:pointer;">
-      <div style="flex:1; min-width:0;">
-        <div class="lr-title-main">${escapeHtml(it.description || '')}</div>
-        ${it.event ? `<div class="meta">${escapeHtml(fmtDate(it.event))}</div>` : ''}
-      </div>
-      <span class="cd-row-go">编辑</span>
+    <div class="cd-attr-row attribute-clickable" data-id="${escapeHtml(it.id)}">
+      <span class="cd-attr-icon" data-kind="${escapeHtml(meta.attrKind)}">${meta.icon}</span>
+      <span class="cd-attr-text">${escapeHtml(it.description || '')}</span>
+      <span class="cd-attr-go" aria-hidden="true"></span>
     </div>
   `;
 }
@@ -566,7 +577,7 @@ function renderKindTab(c, kind, itemsByKind) {
     const selectActive = !!st.selectModeActive;
 
     const rowsHtml = visible.map((it) => {
-      const inner = renderItemRow(it);
+      const inner = renderItemRow(it, kind);
       if (selectActive) {
         // Select mode renders every row as its own bulk-row card. The
         // shared helper's markup is what the toolbar's "全选" scans for,

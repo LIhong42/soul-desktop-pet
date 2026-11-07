@@ -1,8 +1,9 @@
 // src/js/pages/events_memorial.js — 回忆事件 list.
 //
 // Reads from `memorial_events` (independent of the reminder events table).
-// Each row carries its own kind ('first_time' / 'other'), occurrence time,
-// multi-contact list, the diary background style it was written on, the
+// Each row carries its own kind ('first_time' / 'other' / 'card_draw'), its
+// occurrence time, the multi-contact list, the diary background style it was
+// written on, the
 // ordered list of its photo ids, and the diary document (`content`) that
 // says where the text and the photos sit.
 //

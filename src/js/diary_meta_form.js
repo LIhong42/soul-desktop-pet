@@ -6,7 +6,7 @@
 //
 //   * 事件发生时间   when it happened
 //   * 关联联系人     who was there
-//   * 是否第一次     whether this was the first time
+//   * 事件分类       which 分类 the entry belongs to
 //
 // — used to sit in the side panel next to the paper. They broke the
 // promise of the page: the user had to reach for the right-hand column to
@@ -21,8 +21,8 @@
 // the one place their rules live:
 //   * the time is required — a memory without a date cannot be filed;
 //   * the contacts are optional and multi-select;
-//   * 是否第一次 is a two-way choice, and the two-way choice is written
-//     to the `kind` column ('first_time' / 'other').
+//   * 事件分类 is the entry's 分类, written to the `kind` column
+//     ('first_time' / 'other' / 'card_draw').
 //
 // The dialog returns the values to the caller; it never saves anything
 // itself. The editor keeps ownership of the save.
@@ -72,7 +72,7 @@ function contactPickerHtml(contacts, selected) {
 //   contacts    the contact list to pick from
 //   occurredAt  the current value ('YYYY-MM-DD HH:MM:SS' or the
 //               datetime-local shape)
-//   kind        the current 是否第一次 value
+//   kind        the current 分类 value ('first_time' / 'other' / 'card_draw')
 //   contactIds  the currently selected contacts
 //   onConfirm   called with { occurredAt, kind, contactIds } when the
 //               user presses 确认. It may return a promise.
@@ -114,7 +114,7 @@ export function openMemorialMetaDialog(opts = {}) {
         </div>
 
         <div class="diary-meta-field">
-          <label class="diary-meta-label">是否第一次</label>
+          <label class="diary-meta-label">事件分类</label>
           <div class="diary-meta-radios" data-role="kind-row">
             ${MEMORIAL_KINDS.map((k) => `
               <label class="diary-meta-radio">

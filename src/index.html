@@ -29,6 +29,10 @@
        page_bg.css. Loaded last so it wins the specificity fight against the
        global primitives for its own scope only. -->
   <link rel="stylesheet" href="css/page_bg.css" />
+  <!-- The 抽卡人生 page's own design system (the card, the deck, the draw
+       history). Loaded last so it can override the global primitives for
+       its own scope only — see the scoping note at the top of card_life.css. -->
+  <link rel="stylesheet" href="css/card_life.css" />
 </head>
 <body>
   <header class="topbar">
@@ -38,6 +42,7 @@
       <a href="#/contacts" data-route="/contacts">联系人</a>
       <a href="#/reminders" data-route="/reminders">提醒日期</a>
       <a href="#/events/memorial" data-route="/events/memorial">回忆事件</a>
+      <a href="#/card-life" data-route="/card-life">抽卡人生</a>
       <a href="#/events/work" data-route="/events/work">工作事件</a>
       <a href="#/tools" data-route="/tools">工具</a>
       <a href="#/settings" data-route="/settings">设置</a>

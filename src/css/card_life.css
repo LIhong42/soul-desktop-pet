@@ -1,0 +1,520 @@
+/* ===========================================================================
+   src/css/card_life.css — 抽卡人生页 (Card Draw Life)
+   ===========================================================================
+   The 抽卡人生 page has one job: draw a card, show it, and let the user
+   write it down. The stage itself has exactly two states — an untouched
+   deck and a drawn card — and the stylesheet dresses those two states,
+   plus the three blocks below them: the rules card, the user's own cards
+   and the short history.
+
+   Everything here is scoped under `.cl-page` (a class the page renderer
+   puts on the content wrapper) — deliberately, because the app's other
+   pages share the global `.card` / `.btn` / `.h1` primitives and
+   restyling those globally would repaint the whole app. Only the 抽卡人生
+   page opts in.
+
+   The one exception is the `.diary-draw-banner` at the bottom of the file:
+   it lives on the 回忆事件 editor, which is a different page, and it is
+   named after what it is rather than after the page it appears on.
+
+   Palette notes:
+     - The card is a playing card: warm paper, a rounded corner, and a
+       hairline border, so it reads as an object on the table rather than
+       as a form.
+     - The accent is the app's own warm orange (`--accent`), so the draw
+       button belongs to the same family as every other action button.
+   =========================================================================== */
+
+.cl-page {
+  --cl-paper: #fffdf8;
+  --cl-paper-edge: #efe6d8;
+  --cl-ink: #3a3128;
+  --cl-ink-soft: #7b6d5d;
+  --cl-accent: #e08a4c;
+  /* Wide enough for the drawn card and the rules card to sit on one row
+     (460 + 24 + 400). Below that the row wraps and the rules card falls
+     under the drawn one. */
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 18px 0 40px;
+  color: var(--cl-ink);
+}
+
+/* ---- The header --------------------------------------------------------- */
+
+.cl-head h1 {
+  margin: 0 0 4px;
+  font-size: 26px;
+  letter-spacing: 1px;
+}
+
+.cl-sub {
+  margin: 0 0 22px;
+  color: var(--cl-ink-soft);
+  font-size: 13px;
+}
+
+/* ---- The error strip ---------------------------------------------------- */
+
+.cl-error {
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fdeceb;
+  color: #a5443c;
+  font-size: 13px;
+}
+
+/* ---- The table (the card you drew, and the rules card beside it) ------- */
+
+/* The two cards sit on one row: the card you drew on the left, the rules
+   card on the right. The row wraps when the window is too narrow, so the
+   rules card falls under the drawn card instead of squeezing it. */
+.cl-table {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 26px;
+}
+
+/* ---- The stage (deck OR card) ------------------------------------------- */
+
+.cl-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 1 460px;
+  min-width: 0;
+  min-height: 260px;
+}
+
+/* ---- The deck (nothing drawn yet) -------------------------------------- */
+
+.cl-deck {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding-top: 8px;
+}
+
+.cl-deck-stack {
+  position: relative;
+  width: 190px;
+  height: 210px;
+}
+
+.cl-deck-card {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  background: var(--cl-paper);
+  border: 1px solid var(--cl-paper-edge);
+  box-shadow: 0 6px 16px rgba(58, 49, 40, 0.10);
+}
+
+/* The three stacked cards are the same card, fanned out a little. */
+.cl-deck-card--3 { transform: rotate(-7deg) translate(-8px, 4px); opacity: 0.55; }
+.cl-deck-card--2 { transform: rotate(4deg) translate(7px, 2px); opacity: 0.75; }
+.cl-deck-card--1 { transform: rotate(-1deg); }
+
+.cl-deck-mark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 84px;
+  color: var(--cl-accent);
+  opacity: 0.35;
+  font-weight: 700;
+}
+
+.cl-deck-text {
+  margin: 0;
+  color: var(--cl-ink-soft);
+  font-size: 14px;
+}
+
+.cl-draw-btn {
+  padding: 9px 26px;
+  font-size: 15px;
+  letter-spacing: 2px;
+}
+
+.cl-draw-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---- The drawn card ----------------------------------------------------- */
+
+.cl-card {
+  width: 100%;
+  max-width: 460px;
+  padding: 22px 26px 20px;
+  border-radius: 18px;
+  background: var(--cl-paper);
+  border: 1px solid var(--cl-paper-edge);
+  box-shadow: 0 10px 26px rgba(58, 49, 40, 0.12);
+}
+
+.cl-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.cl-card-no {
+  display: inline-block;
+  min-width: 30px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--cl-accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.cl-card-week {
+  color: var(--cl-ink-soft);
+  font-size: 12px;
+}
+
+.cl-card-title {
+  margin: 0 0 12px;
+  font-size: 21px;
+  line-height: 1.45;
+  color: var(--cl-ink);
+}
+
+.cl-card-req {
+  margin: 0 0 18px;
+  padding-left: 12px;
+  border-left: 3px solid var(--cl-paper-edge);
+  color: var(--cl-ink-soft);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.cl-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cl-card-note {
+  margin: 12px 0 0;
+  color: var(--cl-ink-soft);
+  font-size: 12px;
+}
+
+/* The card's entrance: it lands on the table with a short flip. Applied
+   only right after a draw (pageState.justDrew), so a later redraw does
+   not replay it. */
+@keyframes cl-card-in {
+  from { opacity: 0; transform: translateY(14px) rotateY(28deg) scale(0.94); }
+  to   { opacity: 1; transform: none; }
+}
+
+.cl-card--in {
+  animation: cl-card-in 460ms cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+
+/* ---- The rules card ------------------------------------------------------ */
+
+/* A quieter card than the one you draw: a dashed edge and a muted paper,
+   so the two never look like rivals on the table. */
+.cl-rules {
+  flex: 0 1 400px;
+  min-width: 0;
+}
+
+.cl-rules-card {
+  width: 100%;
+  padding: 18px 24px 16px;
+  border-radius: 18px;
+  background: #fbf7f0;
+  border: 1px dashed var(--cl-paper-edge);
+}
+
+.cl-rules-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.cl-rules-badge {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 8px;
+  background: #e8e0d4;
+  color: var(--cl-ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cl-rules-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--cl-ink-soft);
+}
+
+.cl-rules-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--cl-ink-soft);
+  font-size: 13px;
+  line-height: 1.85;
+}
+
+.cl-rules-list li {
+  margin-bottom: 2px;
+}
+
+.cl-rules-list li:last-child {
+  margin-bottom: 0;
+}
+
+/* ---- The user's own cards ----------------------------------------------- */
+
+.cl-custom {
+  margin-top: 6px;
+  margin-bottom: 26px;
+}
+
+.cl-custom h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: var(--cl-ink-soft);
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.cl-custom-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--cl-paper);
+  border: 1px solid var(--cl-paper-edge);
+}
+
+/* The scope is written out twice (`.cl-custom-form .cl-custom-input`)
+   because the global `input[type="text"]` rule is more specific than a
+   bare class — without it the two fields would not look alike. */
+.cl-custom-form .cl-custom-input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--cl-paper-edge);
+  background: #fff;
+  color: var(--cl-ink);
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.cl-custom-form textarea.cl-custom-input {
+  min-height: 56px;
+}
+
+.cl-custom-form .cl-custom-input:focus {
+  outline: none;
+  border-color: var(--cl-accent);
+  box-shadow: 0 0 0 2px rgba(224, 138, 76, 0.18);
+}
+
+.cl-custom-add {
+  align-self: flex-start;
+  padding: 7px 20px;
+  font-size: 14px;
+}
+
+.cl-custom-add:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.cl-custom-hint {
+  margin: 8px 0 0;
+  color: var(--cl-ink-soft);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.cl-custom-empty {
+  margin: 10px 0 0;
+  color: var(--cl-ink-soft);
+  font-size: 13px;
+}
+
+.cl-custom-list {
+  margin-top: 10px;
+}
+
+.cl-custom-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  background: var(--cl-paper);
+  border: 1px solid var(--cl-paper-edge);
+  font-size: 13px;
+}
+
+.cl-custom-no {
+  flex: none;
+  width: 20px;
+  color: var(--cl-ink-soft);
+  font-size: 12px;
+  text-align: right;
+}
+
+.cl-custom-title {
+  flex: none;
+  max-width: 46%;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cl-custom-req {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--cl-ink-soft);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cl-custom-del {
+  flex: none;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cl-ink-soft);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.cl-custom-del:hover {
+  background: #fdeceb;
+  color: #a5443c;
+}
+
+.cl-custom-del:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+/* ---- The history -------------------------------------------------------- */
+
+.cl-history {
+  margin-top: 6px;
+}
+
+.cl-history h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: var(--cl-ink-soft);
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.cl-history-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  background: var(--cl-paper);
+  border: 1px solid var(--cl-paper-edge);
+  font-size: 13px;
+}
+
+.cl-history-week {
+  flex: none;
+  width: 92px;
+  color: var(--cl-ink-soft);
+  font-size: 12px;
+}
+
+.cl-history-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cl-history-state {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #f1ece4;
+  color: var(--cl-ink-soft);
+  font-size: 12px;
+}
+
+/* A card the user added themselves, so it is not the official deck's. */
+.cl-history-mine {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fdf1e6;
+  color: #8a5a2b;
+  font-size: 11.5px;
+}
+
+.cl-history-state.done {
+  background: #e6f4ea;
+  color: #3f7d52;
+}
+
+.cl-history-open {
+  flex: none;
+  color: var(--cl-accent);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.cl-history-open:hover { text-decoration: underline; }
+
+/* ---- The 回忆事件 editor's draw banner ---------------------------------- */
+
+.diary-draw-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 900px;
+  margin: 0 auto 10px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: #fdf1e6;
+  color: #8a5a2b;
+  font-size: 12.5px;
+}
+
+.diary-draw-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--cl-accent, #e08a4c);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}

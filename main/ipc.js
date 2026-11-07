@@ -50,6 +50,8 @@ const imageBatchResize = require('./image_batch_resize');
 const appUpdate = require('./app_update');
 // 日记正文的校验规则（文字块 + 图组），单独成模块便于单独测试。
 const { normDiaryContent } = require('./diary_content');
+// 抽卡人生：卡库（resources/intersting-list/list.md）与每周一次的抽卡规则。
+const cardDraws = require('./card_draws');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
 // `export:cancel`. The value is a mutable record: { killed, outPath? }.
@@ -955,10 +957,54 @@ function normFreeText(s) {
 
   ipcMain.handle('memorial_events:get', (_e, id) => db.getMemorialEvent(id));
 
+  // ---- 抽卡人生 ----
+  //
+  // The 抽卡人生 page draws one card a week from the deck in
+  // `resources/intersting-list/list.md` plus the cards the user added on
+  // the page itself. The deck and the weekly rule live in
+  // main/card_draws.js; the drawn cards live in the `card_draws` table and
+  // the user's own cards in `custom_cards`.
+  //
+  //   state() → { weekKey, weekLabel, deckSize, deckError, customCards,
+  //               customCount, totalSize, card, history }
+  //   draw()  → { ok, card, reason }   reason: drawn | already_drawn | empty_deck
+  //   get(id) → one draw (the diary editor reads it to prefill the entry)
+  //   link(id, eventId) → point the draw at the 回忆事件 it became
+  ipcMain.handle('card_draws:state', () => cardDraws.state(null, db));
+
+  ipcMain.handle('card_draws:draw', () => {
+    const result = cardDraws.draw(null, db);
+    return { ...result, state: cardDraws.state(null, db) };
+  });
+
+  ipcMain.handle('card_draws:get', (_e, id) => db.getCardDraw(id));
+
+  ipcMain.handle('card_draws:link', (_e, id, eventId) =>
+    db.linkCardDraw(id, eventId));
+
+  // The cards the user added. They are stored apart from the official
+  // deck (which is a file) and are drawn from the same pool.
+  ipcMain.handle('card_draws:custom_list', () => db.listCustomCards());
+
+  ipcMain.handle('card_draws:custom_create', (_e, input) => {
+    const title = (input && typeof input.title === 'string')
+      ? input.title.trim() : '';
+    if (!title) throw new Error('卡片标题不能为空');
+    if (title.length > 120) throw new Error('卡片标题太长了');
+    const requirement = (input && typeof input.requirement === 'string')
+      ? input.requirement.trim() : '';
+    if (requirement.length > 2000) throw new Error('卡片要求太长了');
+    return db.createCustomCard({ title, requirement });
+  });
+
+  ipcMain.handle('card_draws:custom_delete', (_e, id) =>
+    db.deleteCustomCard(id));
+
   ipcMain.handle('memorial_events:create', (_e, input) => {
     const id = db.newId();
     const now = db.nowStr();
-    const kind = (input && (input.kind === 'first_time' || input.kind === 'other'))
+    const kind = (input && (input.kind === 'first_time' || input.kind === 'other'
+      || input.kind === 'card_draw'))
       ? input.kind : 'other';
     const title = (typeof input.title === 'string' && input.title.trim())
       ? input.title.trim() : '回忆事件';
@@ -1002,7 +1048,8 @@ function normFreeText(s) {
     const now = db.nowStr();
     const cur = db.one('SELECT * FROM memorial_events WHERE id = ?', [id]);
     if (!cur) throw new Error('memorial_event not found');
-    const kind = (input && (input.kind === 'first_time' || input.kind === 'other'))
+    const kind = (input && (input.kind === 'first_time' || input.kind === 'other'
+      || input.kind === 'card_draw'))
       ? input.kind : cur.kind;
     const title = (typeof input.title === 'string' && input.title.trim())
       ? input.title.trim() : cur.title;

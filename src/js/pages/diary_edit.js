@@ -58,12 +58,12 @@
 //
 // The paper holds the writing and nothing else. The three pieces of
 // metadata that are NOT part of the writing — 事件发生时间 / 关联联系人 /
-// 是否第一次 — used to sit in the side panel, but that made the user reach
+// 事件分类 — used to sit in the side panel, but that made the user reach
 // for the right-hand column to finish an entry that was already written.
 //
 // Now they are asked for in a dialog when the user presses 保存: the press
 // is the moment the entry becomes a record, and a record has a time, a
-// cast and a first-time flag. The dialog lives in
+// cast and a 分类. The dialog lives in
 // src/js/diary_meta_form.js.
 
 import {
@@ -108,6 +108,11 @@ const pageState = {
   pendingPhotos: [],
   existingPhotos: [],
   returnTo: MEMORIAL_LIST_ROUTE,
+  // The 抽卡人生 card this entry was started from (null for every entry
+  // that was not opened from a drawn card). It carries the card's title
+  // and requirement into the page, and it is linked back to the card once
+  // the entry is saved.
+  draw: null,
   // Removes the document-level listeners the theme picker's popover adds.
   // The page is re-rendered on every navigation, and a listener left
   // behind would close a picker that is no longer on screen.
@@ -946,6 +951,24 @@ export async function render(args, params) {
     pageState.existingPhotos = ev.photos || [];
     for (const cid of (ev.contact_ids || [])) pageState.selectedContactIds.add(cid);
   }
+  // 抽卡人生: the entry starts from the card that was drawn. The card's
+  // title and requirement fill the page, and the entry is filed as
+  // 抽卡事件 — the 分类 the 抽卡人生 page records.
+  let draw = null;
+  if (params.draw) {
+    try {
+      draw = await api.cardDraws.get(params.draw);
+    } catch (e) {
+      console.error('could not load the drawn card', e);
+      draw = null;
+    }
+  }
+  pageState.draw = draw;
+  if (isNew && draw) {
+    ev.title = draw.title || ev.title;
+    ev.notes = draw.requirement || ev.notes;
+    ev.kind = 'card_draw';
+  }
   if (params.contact_id) pageState.selectedContactIds.add(params.contact_id);
 
   const contacts = await api.contacts.list();
@@ -960,12 +983,23 @@ export async function render(args, params) {
 
   app.innerHTML = `
     <div class="row between diary-topbar">
-      <a class="back-link" href="#${escapeHtml(pageState.returnTo)}"><span class="icon-arrow-left"></span>返回列表</a>
+      <a class="back-link" href="#${escapeHtml(pageState.returnTo)}"><span class="icon-arrow-left"></span>${pageState.draw ? '返回抽卡' : '返回列表'}</a>
       <div class="row" style="gap:8px;">
         ${!isNew ? '<button class="btn danger" id="del">删除</button>' : ''}
         <button class="btn" id="save">保存</button>
       </div>
     </div>
+
+    <!-- The entry was started from a card drawn on the 抽卡人生 page, so the
+         page says where it came from. The card's own title and requirement
+         are already in the title field and the first text block. -->
+    ${pageState.draw ? `
+    <div class="diary-draw-banner">
+      <span class="diary-draw-badge">抽卡</span>
+      <span>来自抽卡人生 · ${pageState.draw.source === 'custom'
+        ? '我自己添加的卡片'
+        : `第 ${escapeHtml(String(pageState.draw.card_no || '?'))} 张`} · ${escapeHtml(pageState.draw.week_key || '')} 那一周</span>
+    </div>` : ''}
 
     <div class="diary-layout">
       <!-- The writing surface. Its colors come from the CSS variables the
@@ -1318,6 +1352,18 @@ async function onSave() {
     toast((e && e.message) || '保存失败');
     if (saveBtn) saveBtn.disabled = false;
     return;
+  }
+
+  // The entry was written from a card drawn on the 抽卡人生 page — point
+  // the card back at the entry, so the page can show that this card was
+  // already recorded.
+  if (pageState.draw && pageState.draw.id && pageState.isNew) {
+    try {
+      await api.cardDraws.link(pageState.draw.id, saved.id);
+    } catch (e) {
+      // A failed link is cosmetic — the entry itself is saved.
+      console.error('could not link the drawn card', e);
+    }
   }
 
   // Upload the newly picked photos and rewrite the document so the

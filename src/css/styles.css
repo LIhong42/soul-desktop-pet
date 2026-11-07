@@ -1111,20 +1111,6 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
    Used by 联系人 list and others that already have a chunky left block. */
 .list-row.no-id { grid-template-columns: minmax(0, 1fr) auto; }
 
-/* ---- List-row two-tier content ----
-   Some lists (e.g. the contact detail's 喜好 / 忌讳 / 礼物 tabs) want both a
-   header line and a prominent content line in the middle column.
-   `.lr-title` is reserved for the upper "header" — contact name + date —
-   and `.lr-title-main` carries the actual content the user came to read
-   (description, label, etc). Both lines share the same font weight/size so
-   they read as one block instead of a "title + faded meta" hierarchy. */
-.lr-title-main {
-  font-weight: 600;
-  font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 /* Clickable list rows that lead to a detail page. Mirrors `.card.clickable`
    (lift + shadow on hover) but is scoped to the attribute-style rows that
    share the same `.card` base — keeping the visual cue consistent across

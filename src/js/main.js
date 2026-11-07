@@ -11,6 +11,7 @@ import './pages/attribute_detail.js';
 import './pages/important_date_detail.js';
 import './pages/events.js';
 import './pages/events_memorial.js';
+import './pages/card_life.js';
 import './pages/events_work.js';
 import './pages/event_edit.js';
 import './pages/diary_edit.js';

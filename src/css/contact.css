@@ -398,14 +398,96 @@
   padding: 2px 9px;
 }
 
-/* The rows inside a 喜好 / 忌讳 / 礼物 card are separated by a hairline
-   rather than by their own boxes. */
-.cd-page .card .attribute-clickable { padding: 4px 0; }
-.cd-page .card .attribute-clickable + .attribute-clickable {
+/* ---------------------------------------------------------------------------
+   The rows inside a 喜好 / 忌讳 / 礼物 card.
+
+   One row is one line: a tinted tile with the kind's glyph, the description,
+   and a chevron on the right that says "this opens something". The rows are
+   separated by a hairline rather than by their own boxes, so a long list
+   reads as a single column of text instead of a stack of cards.
+
+   The 事件 date is deliberately NOT shown here — it used to sit under the
+   description as a faded second line, which doubled the row height and made
+   the date look like the content. It is still in the row's detail page and
+   still drives the year/month filter above the list. */
+.cd-page .cd-attr-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 4px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 180ms ease;
+}
+.cd-page .card .cd-attr-row + .cd-attr-row {
   border-top: 1px solid var(--cd-line);
 }
-.cd-page .card .attribute-clickable:hover { background: rgba(251, 230, 216, 0.45); }
-.cd-page .cd-row-go { color: var(--cd-ink-soft); }
+/* Scoped on `.cd-page` rather than `.cd-page .card` so it always beats the
+   global `.attribute-clickable:hover` in styles.css, which paints the row
+   in the app-wide neutral accent instead of this page's warm one. */
+.cd-page .cd-attr-row:hover { background: rgba(251, 230, 216, 0.5); }
+
+/* The tile — a soft tinted square holding the kind's glyph. Its colour
+   comes from the same --cat-* tokens the other lists use, so a 喜好 row
+   looks like a 喜好 everywhere in the app. */
+.cd-page .cd-attr-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  font-size: 16px;
+  line-height: 1;
+  flex: none;
+  background: var(--cd-accent-soft);
+}
+.cd-page .cd-attr-icon[data-kind="like"]  { background: rgba(95, 169, 111, 0.16); }
+.cd-page .cd-attr-icon[data-kind="taboo"] { background: rgba(168, 153, 152, 0.20); }
+.cd-page .cd-attr-icon[data-kind="gift"]  { background: rgba(216, 168, 120, 0.20); }
+
+/* The description — the one thing the row is about. It gets the page's
+   ink colour and a slightly larger, heavier weight than the meta text it
+   replaced, so it reads as the content of the row. */
+.cd-page .cd-attr-text {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--cd-ink);
+  line-height: 1.45;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The chevron. It is painted as a mask so it takes the colour of whatever
+   carries it (the same trick the 「返回」 chevron uses), and it fades in on
+   hover — a permanent arrow on every row is noise, an arrow that appears
+   under the cursor is a hint. */
+.cd-page .cd-attr-go {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  justify-self: end;
+  color: var(--cd-ink-soft);
+  opacity: 0;
+  transition: opacity 180ms ease;
+  -webkit-mask-image: var(--cd-icon-chevron-right);
+  mask-image: var(--cd-icon-chevron-right);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+.cd-page .cd-attr-row:hover .cd-attr-go { opacity: 0.75; }
+
+/* In bulk-select mode every row sits in its own card with a checkbox in
+   front of it, so the row itself no longer needs the list's inner padding
+   — and the chevron would lie, because clicking the row no longer opens
+   the detail page while selecting. */
+.cd-page .bulk-row .cd-attr-row { padding: 4px 0; }
+.cd-page .bulk-row .cd-attr-go { display: none; }
 
 /* The search + filter row of a kind tab. */
 .cd-page .section-search,

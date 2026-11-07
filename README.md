@@ -52,10 +52,20 @@
 - The photos on a card are **laid out by the gallery's own arrangement** (单图 / 双图 / 三图 / 网格) — the card and the editor share one width formula (`src/js/diary_layout.js`), so a photo sits exactly where the page put it;
 - **The card's foot carries the date alone** — the coloured strip at the bottom holds nothing but the date, set in the title's own size and weight, so it reads as a second line of the title rather than as a footnote in a smaller voice. The date is the one fact a reader looks for on every card, so it is the one fact that stays on the paper;
 - **The rest of the details wait for the pointer** — the contacts, the kind and the photo count no longer sit on the card at rest. They appear only while the pointer rests on a card, as a translucent layer (a 虚影) floating over the lower edge of the paper, with the entry's own text showing faintly through it, and they vanish when the pointer leaves. A screen of thumbnails does not have to carry a string of annotations each; only the card being read opens them;
-- **A filter row sits above the cards** — three dropdowns, **时间** (all time / last 7 days / 30 days / 3 months / a year / this year / last year / earlier), **联系人** and **类型** (是第一次 / 不是第一次). They compose with the search box: the conditions are ANDed, and an entry has to satisfy all four to stay. A counter tells you how many the dropdowns kept, and **重置筛选** puts them all back;
+- **A filter row sits above the cards** — three dropdowns, **时间** (all time / last 7 days / 30 days / 3 months / a year / this year / last year / earlier), **联系人** and **类型** (是第一次 / 不是第一次 / 抽卡事件). They compose with the search box: the conditions are ANDed, and an entry has to satisfy all four to stay. A counter tells you how many the dropdowns kept, and **重置筛选** puts them all back;
 - **The filter state lives in the URL** — the time range, the contact, the kind and the search text all ride along in the address bar (`#/events/memorial?time=30d&contact=…`), so a filtered view can be shared and survives a reload;
 - One-click export to a **PDF album** or an **MP4 video album**, with multiple templates and a live WYSIWYG preview;
 - **Annual album**: automatically gathers all memories from a given year for a year-in-review.
+
+### 🃏 Card Draw Life
+- A new **抽卡人生** page in the navigation bar: **one card a week**, drawn from `resources/intersting-list/list.md` — a plain-text deck you extend by adding a `### NN. Title` section;
+- **You can add cards of your own** — a title and a requirement, written on the page itself. They are stored **apart from the official deck** (in the database, so they travel with the backup) and are **drawn from the same pool**: the weekly card can be one of your own;
+- **One draw per week** is enforced by the main process (`main/card_draws.js`): the week starts on Monday, and once the week has a card, pressing the button again just shows the card you already drew. The drawn cards live in the local database, so they are still there after a restart;
+- The drawn card becomes a **card**: its number, its title and its requirement (the 「要求：…」 line from the deck);
+- A **rules card** sits right beside it, on the same row — the same paper, but quieter (a dashed edge), spelling out the weekly rule, where the cards come from and what happens to the ones you write down;
+- **记录这一张** jumps straight into the memory-event diary editor with the **title and the requirement already filled in** — you only have to write your own part;
+- The entry you write is filed under a **new 分类 — 抽卡事件**. The memory list's **类型** filter gains that entry, and the card's own tag reads 抽卡事件;
+- Below the card sits the **history of the cards you drew**: an unrecorded one can still be written up, a recorded one opens the entry it became.
 
 ### 💼 Work Event Reminders
 - One-off or **cron-scheduled recurring** work reminders;
@@ -187,6 +197,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  ├─ scheduler.js        reminder queue + 1Hz intimacy pipeline
 │  ├─ ipc.js              all IPC handlers
 │  ├─ diary_content.js    the diary document validator (text blocks + galleries)
+│  ├─ card_draws.js       the 抽卡人生 deck (resources/intersting-list/list.md) + the once-a-week draw rule
 │  ├─ bond_engine.js      intimacy (tier 1+2) algorithm
 │  ├─ cozy_engine.js      cozy (tier 3) algorithm
 │  ├─ pet_controller.js   pet auto-behavior state machine
@@ -222,20 +233,23 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │     ├─ gesture_guard.js  ← shared pointer-gesture guard (survives sleep / lost pointerup)
 │     ├─ diary_themes.js  ← the six diary paper styles (single source of truth)
 │     ├─ diary_layout.js  ← the diary document's shared vocabulary (gallery layouts + photo widths), used by the editor and the list cards
-│     ├─ diary_kinds.js  ← the 「第一次」 vocabulary (the two kinds and their labels)
+│     ├─ diary_kinds.js  ← the 分类 vocabulary (是第一次 / 不是第一次 / 抽卡事件)
 │     ├─ diary_filters.js  ← the 回忆事件 list's filter vocabulary (time ranges / contacts / kinds) and its predicates
-│     ├─ diary_meta_form.js  ← the 保存 dialog (the time, the cast, the first-time flag)
+│     ├─ diary_meta_form.js  ← the 保存 dialog (the time, the cast, the 分类)
 │     ├─ quick_record.js  ← 快速记录 window renderer
 │     └─ pages/            router pages (today / contacts / events / export …)
 │                        ├─ diary_edit.js  ← the diary editor (/diary/new, /diary/:id)
-│                        └─ events_memorial.js  ← the 回忆事件 list (a wall of cards)
+│                        ├─ events_memorial.js  ← the 回忆事件 list (a wall of cards)
+│                        └─ card_life.js  ← the 抽卡人生 page (draw a card → record it)
 │  ├─ css/
 │  │  ├─ styles.css       ← global styles (top bar, cards, forms …)
 │  │  ├─ today.css        ← the 今日 page's own design system (scoped to .today-*)
 │  │  ├─ contact.css      ← the 联系人详情页's own design system (scoped to .cd-*)
-│  │  └─ page_bg.css      ← the 联系人 / 提醒日期 / 工作事件 pages over the artwork (scoped to .bg-page)
+│  │  ├─ page_bg.css      ← the 联系人 / 提醒日期 / 工作事件 pages over the artwork (scoped to .bg-page)
+│  │  └─ card_life.css    ← the 抽卡人生 page's own design system (scoped to .cl-*)
 ├─ scripts/             ← utility scripts (incl. `verify-cutout.js`, the cutout regression check)
 │  ├─ verify-diary-db.js       ← DB regression check for the diary fields (background / content)
+│  ├─ verify-card-draws.js     ← the 抽卡人生 rules (deck / one draw a week / the 抽卡事件 分类)
 │  ├─ test-diary-editor.js     ← UI regression check for the diary editor
 │  ├─ verify-work-bulk.js      ← bulk-select round trip on the 工作事件 page
 │  ├─ test-today-design.js     ← UI regression check for the 今日 page's design system
@@ -254,6 +268,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)
 ├─ icons/               ← application icons (icon.ico + per-size PNGs)
 ├─ resources/           ← pet frame assets (several built-in pets included)
+│  ├─ intersting-list/  ← the 抽卡人生 deck (list.md: one `### NN. Title` section = one card)
 │  └─ ui/               ← artwork for the app's pages (drop a PNG in and it shows up)
 │                        ←   user-detail-background.png is the 联系人详情页's banner
 └─ package.json
