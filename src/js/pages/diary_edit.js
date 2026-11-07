@@ -108,11 +108,54 @@ const pageState = {
   pendingPhotos: [],
   existingPhotos: [],
   returnTo: MEMORIAL_LIST_ROUTE,
+  // Removes the document-level listeners the theme picker's popover adds.
+  // The page is re-rendered on every navigation, and a listener left
+  // behind would close a picker that is no longer on screen.
+  cleanupThemePicker: null,
 };
 
 // ---- Theme picker --------------------------------------------------------
+//
+// The six background styles used to sit in an always-open panel beside
+// the writing surface. That crowded the page for a choice the user makes
+// once and then never touches again.
+//
+// Now the panel is ONE button: it shows the style in use — a miniature
+// of the page and the style's name — and pressing it opens the six
+// previews in a popover underneath. Picking a style closes the popover
+// again, so the page goes straight back to writing.
 
-// Render the six background style tiles. Each tile previews the style
+// The miniature page on the collapsed button. It is painted in the same
+// three layers the real page is: the header bar, the body and the
+// decorative strip.
+function themeThumbHtml(theme) {
+  return `
+    <span class="diary-theme-thumb"
+          style="--theme-header:${escapeHtml(theme.headerBg)};
+                 --theme-top:${escapeHtml(theme.bgTop)};
+                 --theme-mid:${escapeHtml(theme.bgMid)}">
+      <span class="diary-theme-thumb-bar"></span>
+      <span class="diary-theme-thumb-body"></span>
+      <span class="diary-theme-thumb-foot"></span>
+    </span>
+  `;
+}
+
+// The collapsed button. It carries the style that is in use.
+function themeToggleHtml(theme) {
+  return `
+    <button type="button" class="diary-theme-toggle" id="diary-theme-toggle"
+            aria-expanded="false" aria-controls="diary-theme-pop">
+      ${themeThumbHtml(theme)}
+      <span class="diary-theme-toggle-label">
+        <span class="diary-theme-toggle-title" id="diary-theme-current">${escapeHtml(theme.name)}</span>
+      </span>
+      <span class="diary-theme-chevron" aria-hidden="true"></span>
+    </button>
+  `;
+}
+
+// The six background style tiles. Each tile previews the style
 // faithfully: the header bar, the body surface, the decorative strip and
 // the three accent dots, exactly like the reference picker.
 function themePickerHtml(selectedId) {
@@ -867,6 +910,10 @@ export async function render(args, params) {
   pageState.pendingPhotos = [];
   pageState.blocks = [];
   pageState.existingPhotos = [];
+  // The previous visit's popover listeners belong to a picker that is
+  // about to be replaced — drop them before the new page is drawn.
+  if (pageState.cleanupThemePicker) pageState.cleanupThemePicker();
+  pageState.cleanupThemePicker = null;
   // A pending target from a previous visit to this page would send the
   // next file pick to the wrong place.
   pendingInsertFor = null;
@@ -952,13 +999,20 @@ export async function render(args, params) {
         <div class="diary-page-foot" aria-hidden="true"></div>
       </div>
 
-      <!-- The side panel holds the paper style only. The time, the cast
-           and the first-time flag are asked for in the 保存 dialog — the
-           press on 保存 is the moment the entry becomes a record. -->
+      <!-- The side panel holds the paper style only, and only as a
+           button: the six previews open in a popover when the button is
+           pressed. The time, the cast and the first-time flag are asked
+           for in the 保存 dialog — the press on 保存 is the moment the
+           entry becomes a record. -->
       <aside class="diary-side">
         <section class="card diary-side-card">
           <h2>背景样式</h2>
-          ${themePickerHtml(theme.id)}
+          <div class="diary-theme-picker" id="diary-theme-picker">
+            ${themeToggleHtml(theme)}
+            <div class="diary-theme-pop" id="diary-theme-pop" hidden>
+              ${themePickerHtml(theme.id)}
+            </div>
+          </div>
         </section>
       </aside>
     </div>
@@ -1023,8 +1077,54 @@ function loadGalleryPhotos(b) {
 }
 
 // Repaint the writing surface when the user picks a different background.
+//
+// The picker is a popover: the button opens it, a style closes it, and a
+// press anywhere outside it closes it too. The button itself carries the
+// style in use, so it is repainted with the miniature of the new page
+// whenever the style changes.
 function wireThemePicker() {
   const page = document.getElementById('diary-page');
+  const picker = document.getElementById('diary-theme-picker');
+  const toggle = document.getElementById('diary-theme-toggle');
+  const pop = document.getElementById('diary-theme-pop');
+  if (!picker || !toggle || !pop) return;
+
+  // Open or close the popover.
+  const setOpen = (open) => {
+    picker.classList.toggle('open', open);
+    pop.hidden = !open;
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+
+  toggle.onclick = (e) => {
+    e.stopPropagation();
+    setOpen(pop.hidden);
+  };
+
+  // A press outside the picker closes it. The listener is on the
+  // document and is removed when the page goes away, so it cannot fire
+  // against a picker that no longer exists.
+  const onDocClick = (e) => {
+    if (!picker.contains(e.target)) setOpen(false);
+  };
+  document.addEventListener('click', onDocClick);
+  // The Escape key closes it as well — a popover you can only close by
+  // clicking somewhere else is a popover you cannot close with the
+  // keyboard.
+  const onKey = (e) => {
+    if (e.key === 'Escape' && !pop.hidden) {
+      setOpen(false);
+      toggle.focus();
+    }
+  };
+  document.addEventListener('keydown', onKey);
+  // The page is re-rendered on every navigation; the listeners belong to
+  // the one that is on screen.
+  pageState.cleanupThemePicker = () => {
+    document.removeEventListener('click', onDocClick);
+    document.removeEventListener('keydown', onKey);
+  };
+
   document.querySelectorAll('.diary-theme-tile').forEach((tile) => {
     tile.onclick = () => {
       const t = getDiaryTheme(tile.dataset.themeId);
@@ -1034,6 +1134,17 @@ function wireThemePicker() {
       document.querySelectorAll('.diary-theme-tile').forEach((el) => {
         el.classList.toggle('selected', el === tile);
       });
+      // The button now shows the style that was just picked.
+      const name = document.getElementById('diary-theme-current');
+      if (name) name.textContent = t.name;
+      const thumb = toggle.querySelector('.diary-theme-thumb');
+      if (thumb) {
+        thumb.style.setProperty('--theme-header', t.headerBg);
+        thumb.style.setProperty('--theme-top', t.bgTop);
+        thumb.style.setProperty('--theme-mid', t.bgMid);
+      }
+      // The choice is made — close the popover and go back to writing.
+      setOpen(false);
     };
   });
 }

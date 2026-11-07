@@ -265,11 +265,24 @@ app.whenReady().then(async () => {
     const tiles = document.querySelectorAll('.diary-theme-tile');
     const beforeBg = page.style.getPropertyValue('--diary-bg');
 
+    // The six styles live in a POPOVER: they are hidden until the
+    // collapsed button is pressed.
+    const pop = document.getElementById('diary-theme-pop');
+    const toggle = document.getElementById('diary-theme-toggle');
+    const popHiddenAtStart = !!pop && pop.hidden;
+
+    // Press the button: the popover opens.
+    if (toggle) toggle.click();
+    await new Promise(r => setTimeout(r, 20));
+    const popOpenAfterToggle = !!pop && !pop.hidden;
+
     const shadowTile = Array.from(tiles).find(t => t.dataset.themeId === 'shadow');
     shadowTile.click();
     await new Promise(r => setTimeout(r, 20));
     const afterBg = page.style.getPropertyValue('--diary-bg');
     const afterHeader = page.style.getPropertyValue('--diary-header-bg');
+    // Picking a style closes the popover again.
+    const popClosedAfterPick = !!pop && pop.hidden;
 
     return {
       hasTitle: !!document.getElementById('diary-title'),
@@ -294,6 +307,17 @@ app.whenReady().then(async () => {
       // The page paints a flat color now — the decoration is a layer of
       // its own, not a band inside one background stack.
       pageBg: getComputedStyle(page).backgroundColor,
+      // The collapsed button and its popover.
+      hasToggle: !!toggle,
+      popHiddenAtStart,
+      popOpenAfterToggle,
+      popClosedAfterPick,
+      // The button carries the style in use: its miniature is painted in
+      // the chosen style's colors, and its label names the style.
+      thumbHeader: (toggle && toggle.querySelector('.diary-theme-thumb'))
+        ? toggle.querySelector('.diary-theme-thumb').style.getPropertyValue('--theme-header')
+        : '',
+      toggleLabel: (document.getElementById('diary-theme-current') || {}).textContent || '',
       // The metadata (the date, the cast, the first-time flag) is NOT on
       // the page any more: it is asked for in the 保存 dialog. The writing
       // surface holds the title and the text, and nothing else.
@@ -337,6 +361,12 @@ app.whenReady().then(async () => {
   checkTrue('the editor renders a save button', editorResult.hasSave);
   checkTrue('the editor starts with one text block', editorResult.textBlocks >= 1);
   check('the style picker shows all six tiles', editorResult.tiles, 6);
+  checkTrue('the styles are collapsed into one button', editorResult.hasToggle);
+  checkTrue('the popover starts closed', editorResult.popHiddenAtStart);
+  checkTrue('pressing the button opens the popover', editorResult.popOpenAfterToggle);
+  checkTrue('picking a style closes the popover', editorResult.popClosedAfterPick);
+  check('the button names the style in use', editorResult.toggleLabel, 'Shadow');
+  check('the button previews the style in use', editorResult.thumbHeader, '#77613b');
   checkTrue('picking a style repaints the writing surface', editorResult.changed);
   check('the Shadow style writes its header color', editorResult.header, '#77613b');
   check('exactly one tile is marked selected', editorResult.selectedCount, 1);

@@ -3112,12 +3112,24 @@ body.locked #pin-modal.hidden { display: none !important; }
    renderer writes inline (--diary-bg, --diary-text, …) — one write per
    property, so switching the background style repaints the page without
    re-rendering it. The defaults below are the 'light' style, so the page
-   is readable even before the inline variables land. */
+   is readable even before the inline variables land.
+
+   The layout sits in a centred column, the same reading band the 联系人
+   page uses. Without the cap the grid would stretch across the whole
+   window on a wide monitor and the side panel would drift off to the
+   far right, a metre away from the page it belongs to — the two sides
+   stopped reading as one page. The cap keeps them a fixed distance
+   apart and leaves the same side margin on both edges. */
 .diary-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 18px;
+  gap: 24px;
   align-items: start;
+  /* The writing column's own cap. The paper needs room to be written on,
+     so this is a little wider than the app's shared `--page-column-max`
+     — but it is still a cap, and still centred. */
+  max-width: 1180px;
+  margin: 0 auto;
 }
 @media (max-width: 900px) {
   .diary-layout { grid-template-columns: minmax(0, 1fr); }
@@ -3600,6 +3612,125 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   background: var(--panel);
 }
 .diary-meta-actions .btn { padding: 9px 18px; font-size: 14px; }
+
+/* ---- The background style picker (collapsed into one button) -----------
+   The six styles used to sit in an always-open panel beside the writing
+   surface: a card the width of the page's side column, holding six
+   previews, for a choice the user makes once and then never touches
+   again. It crowded the page for a control that is only wanted at the
+   moment of choosing.
+
+   So the panel is now ONE button. It shows the style that is in use —
+   a miniature of the page and the style's name — and pressing it opens
+   the six previews in a popover underneath. Choosing a style closes the
+   popover again, so the page returns to writing. */
+.diary-theme-picker { position: relative; }
+
+/* The collapsed button: a miniature of the current page on the left, the
+   style's name on the right, and a chevron that says "there are more". */
+.diary-theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.diary-theme-toggle:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+.diary-theme-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The miniature page. It is the same three layers the real page is
+   painted in — the header bar, the body and the decorative strip — so
+   the button shows the style the user is about to pick. */
+.diary-theme-thumb {
+  display: block;
+  flex: none;
+  width: 34px;
+  border-radius: 5px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: var(--theme-mid);
+}
+.diary-theme-thumb-bar {
+  display: block;
+  height: 8px;
+  background: var(--theme-header);
+}
+.diary-theme-thumb-body {
+  display: block;
+  height: 14px;
+  background: var(--theme-top);
+}
+.diary-theme-thumb-foot {
+  display: block;
+  height: 5px;
+  background: var(--theme-mid);
+}
+
+.diary-theme-toggle-label { flex: 1; min-width: 0; }
+.diary-theme-toggle-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The chevron on the button. It turns over when the popover is open, so
+   the button and the popover read as one control. */
+.diary-theme-chevron {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background-color: var(--muted);
+  -webkit-mask-image: var(--icon-chevron-down);
+  mask-image: var(--icon-chevron-down);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  transition: transform 180ms ease;
+}
+.diary-theme-picker.open .diary-theme-chevron { transform: rotate(180deg); }
+
+/* The popover with the six styles. It is positioned under the button
+   rather than in the flow, so opening it does not push the page around.
+
+   It is pulled out past the card's padding so its edges line up with the
+   card's own edges — a popover that is narrower than the panel it grows
+   out of reads as a different thing. */
+.diary-theme-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  /* The card's own padding is 16px; the popover reaches past it on both
+     sides so the two share the same width. */
+  left: -16px;
+  right: -16px;
+  z-index: 20;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow-md);
+}
+.diary-theme-pop[hidden] { display: none; }
 
 /* The six background style tiles. Each tile previews the style: the
    header bar, the page background and the three accent dots. */
