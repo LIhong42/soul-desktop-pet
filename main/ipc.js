@@ -52,6 +52,8 @@ const appUpdate = require('./app_update');
 const { normDiaryContent } = require('./diary_content');
 // 抽卡人生：卡库（resources/intersting-list/list.md）与每周一次的抽卡规则。
 const cardDraws = require('./card_draws');
+// 抽卡人生打卡墙：每周的完成情况与连续完成统计。
+const cardProgress = require('./card_progress');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
 // `export:cancel`. The value is a mutable record: { killed, outPath? }.
@@ -999,6 +1001,14 @@ function normFreeText(s) {
 
   ipcMain.handle('card_draws:custom_delete', (_e, id) =>
     db.deleteCustomCard(id));
+
+  // The 打卡墙 — the summary of every week the user has drawn, and how
+  // many of those weeks were actually written down.
+  //
+  // The completion rule lives in main/card_progress.js, not here: this
+  // handler only fetches the rows and hands them over.
+  ipcMain.handle('card_draws:progress', () =>
+    cardProgress.summary(db.listCardDrawsWithProgress(200)));
 
   ipcMain.handle('memorial_events:create', (_e, input) => {
     const id = db.newId();

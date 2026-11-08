@@ -53,6 +53,10 @@ export const BACKGROUND_ROUTES = [
   '/reminders',
   '/events/work',
   '/card-life',
+  // The 打卡墙 — the check-in wall for the 抽卡人生 page. It wears the
+  // same artwork because it is the same page family and its translucent
+  // paper sheets are drawn for that picture.
+  '/card-life/stats',
 ];
 
 // The scroll container the artwork is painted onto.

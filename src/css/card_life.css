@@ -1121,3 +1121,406 @@
   font-size: 12px;
   font-weight: 700;
 }
+
+/* ===========================================================================
+   The 打卡墙 (the check-in wall)
+   ===========================================================================
+   The wall lives on its own route (#/card-life/stats) but wears the same
+   clothes as the 抽卡人生 page: the same translucent sheets of paper over
+   the same artwork, the same warm ink, the same rounded radii. It is the
+   same game seen from the outside, so it must not look like a different
+   app.
+
+   The one idea the page is built around: a run of finished weeks should
+   be VISIBLE as a shape. That is what the grid is for — a wall of
+   squares, filled and empty, that a user reads in one glance instead of
+   scanning a table of text for it. Everything else on the page
+   (the summary tiles, the detail list) is the readable version of what
+   the grid already says.
+   =========================================================================== */
+
+/* ---- The 打卡墙 door on the 抽卡人生 page -------------------------------- */
+
+/* The link that opens the wall. It reads as a small panel of its own —
+   a sheet of paper with a title, a line of explanation and an arrow —
+   so it does not look like a stray text link dropped onto the page. */
+.cl-checkin {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 20px 0 6px;
+  padding: 14px 18px;
+  border-radius: var(--cl-radius);
+  background: var(--cl-paper);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  box-shadow: var(--cl-shadow);
+  color: var(--cl-ink);
+  text-decoration: none;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.cl-checkin:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--cl-shadow-lift);
+}
+
+/* The glyph on the left — a little wall of squares, in the accent. */
+.cl-checkin-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--cl-blush);
+  /* Four squares in a 2×2, with the top-left one filled — the wall, at
+     the smallest size that still reads as a grid. */
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='8' height='8' rx='2'/%3E%3Crect x='13' y='3' width='8' height='8' rx='2'/%3E%3Crect x='3' y='13' width='8' height='8' rx='2'/%3E%3Crect x='13' y='13' width='8' height='8' rx='2'/%3E%3C/svg%3E") center / 20px 20px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='3' width='8' height='8' rx='2'/%3E%3Crect x='13' y='3' width='8' height='8' rx='2'/%3E%3Crect x='3' y='13' width='8' height='8' rx='2'/%3E%3Crect x='13' y='13' width='8' height='8' rx='2'/%3E%3C/svg%3E") center / 20px 20px no-repeat;
+  position: relative;
+}
+.cl-checkin-icon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: var(--cl-accent);
+  /* The one filled square, in the top-left cell. */
+  transform: translate(-7px, -7px);
+}
+
+.cl-checkin-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cl-checkin-title {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.cl-checkin-sub {
+  color: var(--cl-ink-soft);
+  font-size: 12.5px;
+}
+.cl-checkin-arrow {
+  flex: none;
+  color: var(--cl-accent-deep);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* ---- The stats page ------------------------------------------------------ */
+
+/* The back link. It keeps the app's own `.back-link` look — the ink is
+   the app's muted grey rather than the page's warm one, because a back
+   link is chrome, not content. */
+.cl-stats-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.cl-stats-page .cl-head {
+  margin-bottom: 4px;
+}
+
+/* The empty state — nothing has been drawn yet. */
+.cl-stats-empty {
+  margin: 22px 0;
+  padding: 32px 24px;
+  border-radius: var(--cl-radius);
+  background: var(--cl-paper);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  box-shadow: var(--cl-shadow);
+  text-align: center;
+}
+.cl-stats-empty-text {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.cl-stats-empty-hint {
+  margin: 0 0 16px;
+  color: var(--cl-ink-soft);
+  font-size: 13px;
+}
+.cl-stats-empty-btn {
+  display: inline-block;
+  text-decoration: none;
+}
+
+/* ---- The summary tiles ---------------------------------------------------
+   Four numbers on one row. The streak tile is the accent one: it is the
+   number the user is playing for, and the one still in motion. */
+
+/* The wrapper around one section's head and its body. The head inside it
+   carries its own margin (the shared .cl-section rule), so this only
+   needs the room BETWEEN the sections. */
+.cl-stats-section {
+  margin-top: 26px;
+}
+
+.cl-stats-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin: 18px 0 4px;
+}
+
+.cl-stats-tile {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--cl-paper);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  box-shadow: var(--cl-shadow);
+}
+
+.cl-stats-tile--accent {
+  background: linear-gradient(135deg, rgba(255, 231, 222, 0.86), rgba(255, 244, 236, 0.76));
+  border-color: rgba(255, 231, 222, 0.95);
+}
+
+.cl-stats-tile-value {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  line-height: 1.1;
+}
+.cl-stats-tile-value b {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--cl-ink);
+}
+.cl-stats-tile-value span {
+  font-size: 12px;
+  color: var(--cl-ink-soft);
+}
+.cl-stats-tile-label {
+  margin-top: 4px;
+  color: var(--cl-ink-soft);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* ---- The grid ------------------------------------------------------------
+   The heart of the page: one square per week, newest at the top.
+
+   The squares are laid out in a fixed grid rather than a flex row, so a
+   long history wraps into columns instead of running off the side. The
+   newest week is at the top-left, so the run of finished weeks reads
+   downwards from the top-left — the same way a calendar hangs. */
+
+.cl-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
+  gap: 10px;
+  padding: 18px 20px;
+  border-radius: var(--cl-radius);
+  background: var(--cl-paper);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
+  border: 1px solid var(--cl-line);
+  box-shadow: var(--cl-shadow);
+}
+
+.cl-stats-cell-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/* One week. It is a button because it does something — it opens the
+   week in the detail list below. */
+.cl-stats-cell {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid var(--cl-line-strong);
+  background: rgba(255, 253, 250, 0.5);
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+.cl-stats-cell:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--cl-shadow);
+}
+
+/* A finished week. It is filled with the accent and carries a small
+   mark, so it reads as "done" at a glance without needing a colour
+   legend — the shape of the mark is the signal, the colour is only
+   reinforcement. */
+.cl-stats-cell.done {
+  background: linear-gradient(150deg, rgba(224, 138, 76, 0.92), rgba(217, 119, 87, 0.88));
+  border-color: rgba(217, 119, 87, 0.55);
+}
+.cl-stats-cell.done .cl-stats-cell-mark {
+  opacity: 1;
+}
+
+/* The check mark. It is a mask, so it stays crisp at any size. */
+.cl-stats-cell-mark {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 17px;
+  height: 17px;
+  opacity: 0;
+  background: #fff;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* The current week — the newest one. It is marked with a ring, so a
+   user who has drawn this week's card but not written it up can tell it
+   apart from the weeks that were simply skipped.
+
+   The ring is an OUTLINE rather than a box-shadow, because the hover
+   state also uses box-shadow — an outline keeps the two from fighting
+   over the same property, so the marker survives the hover. */
+.cl-stats-cell.current {
+  outline: 2px solid var(--cl-accent-deep);
+  outline-offset: -2px;
+}
+
+/* The caption under a square: the week, in 'MM-DD'. */
+.cl-stats-cell-week {
+  color: var(--cl-ink-soft);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* The legend. It says what a filled square means and what the rule is,
+   so the grid is self-explanatory. */
+.cl-stats-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 10px 2px 0;
+  color: var(--cl-ink-soft);
+  font-size: 12px;
+}
+.cl-stats-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cl-stats-legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  border: 1px solid var(--cl-line-strong);
+  background: rgba(255, 253, 250, 0.5);
+}
+.cl-stats-legend-swatch.done {
+  background: linear-gradient(150deg, rgba(224, 138, 76, 0.92), rgba(217, 119, 87, 0.88));
+  border-color: rgba(217, 119, 87, 0.55);
+}
+.cl-stats-legend-note {
+  margin-left: auto;
+  opacity: 0.85;
+}
+
+/* ---- The card on the table ------------------------------------------------
+   The week the user clicked, drawn in the 抽卡人生 page's own card
+   style. It reuses the .cl-card rules wholesale — the paper, the
+   paperclip, the badge, the button — so the card on the wall IS the
+   card on the other page, not a lookalike of it.
+
+   Only two things are added here: the section's own heading, and the
+   square that is on the table, which is marked so the user can see
+   which one they picked. */
+
+.cl-stats-card-section {
+  margin-top: 30px;
+}
+
+/* The card sits on the table, but the table is the wall's own — it does
+   not borrow the 抽卡人生 page's two-column layout, because here there
+   is nothing beside the card. The card is centered so it reads as the
+   one thing the click produced.
+
+   The stage is a COLUMN flex, so `align-items` is the horizontal axis
+   here: `center` centers the card, and `margin: 0 auto` is not needed
+   because the card's own max-width is what stops it stretching. */
+.cl-stats-stage {
+  align-items: center;
+}
+
+.cl-stats-card {
+  /* The 抽卡人生 page's card is tilted a little, the way a card lying on
+     a table is. Here it is the one thing on screen, so the tilt is
+     kept but softened — a wall's card sits a little more squarely. */
+  transform: rotate(-0.35deg);
+  max-width: 560px;
+}
+
+/* The square that is on the table.
+
+   The current week is already marked with an OUTLINE, so the picked
+   square uses a different property — a ring that sits OUTSIDE the
+   outline, drawn with a box-shadow. The two can therefore be seen at
+   the same time: a week can be both the current one and the one the
+   user is looking at, and neither marker hides the other.
+
+   The hover shadow is replaced rather than added to, so the picked
+   square keeps its ring instead of losing it under the hover. */
+.cl-stats-cell.open {
+  box-shadow: 0 0 0 2px var(--cl-accent);
+}
+.cl-stats-cell.open:hover {
+  box-shadow: 0 0 0 2px var(--cl-accent), var(--cl-shadow);
+}
+
+/* ---- Narrow windows ------------------------------------------------------
+   The four summary tiles are too tight side by side on a narrow
+   window, so they wrap to two columns. The grid's own minimum column
+   width already handles the week squares. */
+
+@media (max-width: 720px) {
+  .cl-stats-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .cl-stats-legend-note {
+    margin-left: 0;
+    width: 100%;
+  }
+  /* The wall's tagline is a little longer than the 抽卡人生 page's, so
+     on a narrow window the headline has to shrink a step or it wraps
+     badly. */
+  .cl-stats-page .cl-head h1,
+  .cl-stats-page .cl-head-tagline {
+    font-size: 26px;
+  }
+  .cl-stats-page .cl-head-heart {
+    width: 24px;
+    height: 24px;
+    margin: 0 10px;
+  }
+  /* The card is the one thing on the table, so on a narrow window it
+     takes the whole width and the type shrinks with it. */
+  .cl-stats-card {
+    max-width: none;
+    padding: 22px 20px 18px;
+  }
+  .cl-stats-card .cl-card-title {
+    font-size: 24px;
+  }
+}

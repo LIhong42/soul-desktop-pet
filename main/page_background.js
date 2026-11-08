@@ -97,6 +97,8 @@ const BACKGROUND_ROUTES = [
   '/reminders',
   '/events/work',
   '/card-life',
+  // The 打卡墙 — the check-in wall for the 抽卡人生 page.
+  '/card-life/stats',
 ];
 
 /**

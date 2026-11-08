@@ -136,12 +136,32 @@ async function main() {
   const state = cardDraws.state(null, db, fixedNow);
   check('the state reports this week\'s card', state.card.id, first.card.id);
   checkTrue('the state lists the history', state.history.length >= 2);
+  // The 打卡墙's door says how many weeks have been drawn IN TOTAL. The
+  // history list above is capped at a year, so this count is a separate
+  // number — and it must be the whole history, not the capped list.
+  check('the state counts every draw', state.totalDraws, db.countCardDraws());
+  checkTrue('the count is the whole history', state.totalDraws >= 2,
+    `got ${state.totalDraws}`);
+  // Every history row carries the completion verdict, so the page's
+  // 「已记录」 badge and the 打卡墙's squares cannot disagree.
+  checkTrue('every history row carries the verdict',
+    state.history.every((h) => typeof h.done === 'boolean'));
+  check('a card with no entry is not done', state.history[0].done, false);
 
   // ---- Linking the card to the entry -------------------------------------
   console.log('\n== 记录 ==');
   const linked = db.linkCardDraw(first.card.id, memId);
   check('the card points at the entry', linked.memorial_event_id, memId);
   checkTrue('the card records when it was written', !!linked.recorded_at);
+
+  // The verdict follows the link — and it follows the RULE, not just
+  // the link. The entry linked here holds a four-character body, which
+  // is under the threshold, so the week is NOT finished even though an
+  // entry exists.
+  const afterLink = cardDraws.state(null, db, fixedNow);
+  const linkedRow = afterLink.history.find((h) => h.id === first.card.id);
+  check('a card with a too-thin entry is not done', linkedRow.done, false);
+  check('the card still has the entry', linkedRow.memorial_event_id, memId);
 
   // ---- The cards the user adds -------------------------------------------
   console.log('\n== 自己添加的卡片 ==');

@@ -1525,6 +1525,17 @@ function getCardDraw(id) {
   return one('SELECT * FROM card_draws WHERE id = ?', [id]);
 }
 
+// How many cards have ever been drawn.
+//
+// A plain COUNT, so the number is the whole history however long it is.
+// The 抽卡人生 page's own list is capped at a year (a reading list, not a
+// ledger), but the 打卡墙's door says how far the user has got — and that
+// number must not stop at the cap.
+function countCardDraws() {
+  const row = one('SELECT COUNT(*) AS n FROM card_draws');
+  return row && Number.isFinite(row.n) ? row.n : 0;
+}
+
 function getCardDrawByWeek(weekKey) {
   if (!weekKey) return null;
   return one('SELECT * FROM card_draws WHERE week_key = ?', [weekKey]);
@@ -1565,6 +1576,49 @@ function linkCardDraw(id, memorialEventId) {
     [memorialEventId || null, nowStr(), id]);
   markDirty();
   return getCardDraw(id);
+}
+
+// ---- card draws with their completion (抽卡人生 打卡墙) ----
+//
+// The 打卡墙 needs, for every draw the user has made, the STATE of the
+// 回忆事件 it became: how many photos it has and how much text it holds.
+// Both facts live on the memorial event, and the draw only holds the
+// event's id — so the two tables are joined here.
+//
+// The join is a LEFT JOIN on purpose: a draw that was never recorded has
+// NO memorial event at all, and a draw whose event was deleted since
+// (the link is not a foreign key with ON DELETE) also has none. Both are
+// "not finished", and neither may drop the draw out of the list.
+//
+// The text columns are selected as-is rather than counted in SQL: the
+// completion rule counts the characters of the CONTENT DOCUMENT too, and
+// that document is JSON — counting it in SQLite would mean parsing JSON
+// in SQL, which the engine here cannot do portably. main/card_progress.js
+// does the counting in JS, where the diary content module already lives.
+//
+//   photo_count — the number of photos attached to the event
+//   event_*    — the event's own columns, renamed with an `event_` prefix
+//                so they cannot collide with the draw's columns (both
+//                tables have a `title` and an `id`)
+function listCardDrawsWithProgress(limit = 200) {
+  const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+  return all(
+    `SELECT cd.*,
+            me.id          AS event_id,
+            me.title       AS event_title,
+            me.notes       AS event_notes,
+            me.place       AS event_place,
+            me.food        AS event_food,
+            me.outfit      AS event_outfit,
+            me.activities  AS event_activities,
+            me.content     AS event_content,
+            me.occurred_at AS event_occurred_at,
+            (SELECT COUNT(*) FROM memorial_event_photos p
+              WHERE p.memorial_event_id = me.id) AS photo_count
+       FROM card_draws cd
+       LEFT JOIN memorial_events me ON me.id = cd.memorial_event_id
+      ORDER BY cd.week_key DESC, cd.drawn_at DESC
+      LIMIT ${n}`);
 }
 
 // ---- custom cards (抽卡人生) ----
@@ -2070,6 +2124,7 @@ module.exports = {
   // 抽卡人生 — the cards drawn on the 抽卡人生 page, and the custom
   // cards the user added.
   listCardDraws, getCardDraw, getCardDrawByWeek, createCardDraw, linkCardDraw,
+  listCardDrawsWithProgress, countCardDraws,
   listCustomCards, getCustomCard, createCustomCard, deleteCustomCard,
   // Exposed so ipc.js can call them (avoids duplicating logic in IPC handlers).
   // These wrap require() at call-time so we don't introduce a require cycle

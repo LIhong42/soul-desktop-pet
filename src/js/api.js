@@ -69,6 +69,8 @@ export const api = {
     customList:   ()   => M.cardDraws.customList(),
     customCreate: (input) => M.cardDraws.customCreate(input),
     customDelete: (id) => M.cardDraws.customDelete(id),
+    // The 打卡墙 — every week's completion, and the streak.
+    progress: () => M.cardDraws.progress(),
   },
   reminders: {
     listActive: () => M.reminders.listActive(),

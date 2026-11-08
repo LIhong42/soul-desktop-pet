@@ -22,6 +22,15 @@
 const fs = require('fs');
 const path = require('path');
 
+// The completion rule — "a week counts as written when its 回忆记录 has
+// a photo, or more than 30 characters of text".
+//
+// It lives in its own module (main/card_progress.js) because the 打卡墙
+// needs it too, and there must be ONE rule: the 抽卡人生 page's history
+// list and the 打卡墙's squares answer the same question, and two pages
+// answering it differently would be worse than either answer.
+const cardProgress = require('./card_progress');
+
 // Where the deck file lives. `appPath` is the app root (the parent of
 // `main/`), matching how ui_artwork finds `resources/ui`.
 function deckPath(appPath) {
@@ -185,6 +194,19 @@ function state(appPath, db, now = new Date()) {
   const key = weekKey(now);
   const deck = readDeck(appPath);
   const customCards = db.listCustomCards();
+  // The history carries the completion verdict, so the page's 「已记录」
+  // badge and the 打卡墙's squares cannot disagree about the same week.
+  // The rule lives in main/card_progress.js — one copy, two pages.
+  const withVerdict = (row) => {
+    const v = cardProgress.evaluate(row);
+    return { ...row, done: v.done, photo_count: v.photoCount, text_length: v.textLength };
+  };
+  // One query brings both the history and this week's card, each with
+  // the completion verdict attached, so the card on the stage and the
+  // square on the 打卡墙 never disagree about the same week.
+  const rows = db.listCardDrawsWithProgress(53);
+  const history = rows.slice(0, 52).map(withVerdict);
+  const card = rows.find((r) => r.week_key === key);
   return {
     weekKey: key,
     weekLabel: `${key} ~ ${weekEndKey(now)}`,
@@ -193,8 +215,14 @@ function state(appPath, db, now = new Date()) {
     customCards,
     customCount: customCards.length,
     totalSize: deck.cards.length + customCards.length,
-    card: db.getCardDrawByWeek(key),
-    history: db.listCardDraws(52),
+    card: card ? withVerdict(card) : null,
+    history,
+    // How many weeks have been drawn IN TOTAL. The history above is
+    // capped at a year (52) because the page's list is a reading list,
+    // not a ledger — but the 打卡墙's door says how far the user has got,
+    // and that number must not stop at 52. The count is a plain COUNT,
+    // so it costs nothing however long the history is.
+    totalDraws: db.countCardDraws(),
   };
 }
 

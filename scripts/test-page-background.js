@@ -68,7 +68,10 @@ app.whenReady().then(async () => {
 
   // The routes that wear the background. Kept in one place so the test and
   // the implementation can't disagree about which pages are covered.
-  const BG_ROUTES = ['/today', '/contacts', '/reminders', '/events/work', '/card-life'];
+  const BG_ROUTES = [
+    '/today', '/contacts', '/reminders', '/events/work',
+    '/card-life', '/card-life/stats',
+  ];
 
   // Seed enough work events and contacts for their lists to need more than
   // one page. The reminders page already has rows (the auto-seeded

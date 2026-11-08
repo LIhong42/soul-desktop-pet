@@ -72,6 +72,20 @@
 - The entry you write is filed under a **new 分类 — 抽卡事件**. The memory list's **类型** filter gains that entry, and the card's own tag reads 抽卡事件;
 - Below the card sits the **history of the cards you drew**: an unrecorded one can still be written up, a recorded one opens the entry it became.
 
+#### 🧱 The Check-In Wall
+- The 抽卡人生 page has a **door to the check-in wall** — its own page (`#/card-life/stats`), answering a question nothing used to answer: **you drew for five weeks; how many of them did you actually write down?**
+- **There is exactly one completion rule**, and it lives in the main process (`main/card_progress.js`): a week counts as **finished** when its card was really turned into a memory entry, and that entry satisfies **either** of these —
+  - it **has a photo** (图文并茂), **or**
+  - its **text runs past 30 characters** (the body document plus the five fields — 地点 / 食物 / 穿着 / 活动 / 备注).
+    - Exactly 30 characters is **not** enough; 31 is. Only the characters you actually typed count — the separators and the padding do not.
+- Four **summary tiles** sit at the top: **已抽周数 / 完成 / 完成率 / 连续完成**. The streak tile is the **brightest** one, because it is the only number still in motion.
+- In the middle is **one square per week**: a filled orange square with a check mark for a week you wrote up, an empty one for a week you did not. So **how many weeks you wrote in a row is something you see**, not something you read off a number. The current week carries a ring around it, so 「drawn this week, not written yet」 and 「not drawn at all」 stay apart.
+- **Clicking any square puts that week's card on the table below** — drawn in **exactly the same card style as the 抽卡人生 page**: the same paper, the same paperclip, the same badge, the same button. Where the old page had a table of one row per week, a click now shows **the card itself** — its title, its requirement, and a line saying **why it does (or does not) count** (「有 2 张照片 · 正文 42 字」).
+- The button on that card **behaves exactly like the 抽卡人生 page's own button**: 「查看这篇回忆」 when the week was written up, 「记录这一张」 when it was not (the editor opens with the card's title and requirement already filled in). **A card you never finished three months ago is still open** — the wall is not a museum; it just moved the table.
+- There is **no one-row-per-week list**. The grid IS the index and the card IS the detail — saying the same thing twice is slower and pushes the card off the screen. Clicking the same square again puts the card away.
+- The rule exists in **one place only**. The renderer (`src/js/pages/card_life_stats.js`) holds no threshold and does no counting — change the rule and every number on the page follows, so the grid and the tiles can never disagree.
+- A memory entry that gets **deleted** leaves its week on the wall: it goes back to unfinished, and is never quietly erased.
+
 ### 💼 Work Event Reminders
 - One-off or **cron-scheduled recurring** work reminders;
 - Shown on a separate channel from personal events — never in the way, never missed.
@@ -203,6 +217,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  ├─ ipc.js              all IPC handlers
 │  ├─ diary_content.js    the diary document validator (text blocks + galleries)
 │  ├─ card_draws.js       the 抽卡人生 deck (resources/intersting-list/list.md) + the once-a-week draw rule
+│  ├─ card_progress.js    the check-in wall's completion rule and statistics (the one copy of the rule)
 │  ├─ bond_engine.js      intimacy (tier 1+2) algorithm
 │  ├─ cozy_engine.js      cozy (tier 3) algorithm
 │  ├─ pet_controller.js   pet auto-behavior state machine
@@ -245,7 +260,8 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │     └─ pages/            router pages (today / contacts / events / export …)
 │                        ├─ diary_edit.js  ← the diary editor (/diary/new, /diary/:id)
 │                        ├─ events_memorial.js  ← the 回忆事件 list (a wall of cards)
-│                        └─ card_life.js  ← the 抽卡人生 page (draw a card → record it)
+│                        ├─ card_life.js  ← the 抽卡人生 page (draw a card → record it)
+│                        └─ card_life_stats.js  ← the check-in wall (/card-life/stats: stats, one square per week, and the card you click)
 │  ├─ css/
 │  │  ├─ styles.css       ← global styles (top bar, cards, forms …)
 │  │  ├─ today.css        ← the 今日 page's own design system (scoped to .today-*)
@@ -255,10 +271,12 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 ├─ scripts/             ← utility scripts (incl. `verify-cutout.js`, the cutout regression check)
 │  ├─ verify-diary-db.js       ← DB regression check for the diary fields (background / content)
 │  ├─ verify-card-draws.js     ← the 抽卡人生 rules (deck / one draw a week / the 抽卡事件 分类)
+│  ├─ verify-card-progress.js  ← the check-in wall's completion rule and streak statistics
 │  ├─ test-diary-editor.js     ← UI regression check for the diary editor
 │  ├─ verify-work-bulk.js      ← bulk-select round trip on the 工作事件 page
 │  ├─ test-today-design.js     ← UI regression check for the 今日 page's design system
 │  ├─ test-card-life-design.js ← UI regression check for the 抽卡人生 page's design system
+│  ├─ test-card-stats-design.js ← UI regression check for the check-in wall's design system
 │  ├─ test-contact-design.js   ← UI regression check for the 联系人详情页's design system
 │  ├─ test-contact-tabs.js     ← UI regression check for the 联系人详情页's tabs / rows
 │  ├─ test-page-background.js  ← UI regression check for the shared background artwork
@@ -270,6 +288,7 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 │  ├─ shot-bg-pages.js         ← renders the three pages that wear the artwork, and saves PNGs
 │  ├─ shot-contact.js          ← renders the 联系人详情页 and saves a PNG
 │  ├─ shot-card-life.js        ← renders the 抽卡人生 page and saves a PNG
+│  ├─ shot-card-stats.js       ← renders the check-in wall and saves a PNG
 │  └─ shot-pages.js            ← renders several pages, to check shared styles didn't spill
 ├─ docs/                ← documentation
 │  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)

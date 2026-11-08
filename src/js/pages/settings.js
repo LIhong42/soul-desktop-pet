@@ -14,6 +14,7 @@ const PAGE_BG_ROUTE_LABELS = {
   '/reminders': '提醒日期',
   '/events/work': '工作事件',
   '/card-life': '抽卡人生',
+  '/card-life/stats': '打卡墙',
 };
 
 // ---- 桌宠压缩包导入进度 -----------------------------------------------

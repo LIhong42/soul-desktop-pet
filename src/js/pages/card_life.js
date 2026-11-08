@@ -84,6 +84,8 @@ async function render() {
         ${rulesHtml()}
       </div>
 
+      ${checkinHtml(state)}
+
       ${customHtml(state)}
 
       ${historyHtml(state)}
@@ -120,7 +122,18 @@ function deckHtml(state) {
 // The drawn card: its number, its title and its requirement — the same
 // three things a deck card holds.
 function cardHtml(card, weekLabel) {
+  // Two different questions, and they are not the same:
+  //
+  //   recorded — is there an entry to LOOK AT? (the button offers to
+  //              open it)
+  //   done     — is that entry WRITTEN ENOUGH to count? (the rule the
+  //              打卡墙 draws its squares from)
+  //
+  // An entry can exist and still be too thin to count — a title and
+  // nothing else. That case says so, rather than claiming the card is
+  // done.
   const recorded = !!card.memorial_event_id;
+  const done = card.done === undefined ? recorded : !!card.done;
   const custom = card.source === 'custom';
   // The entrance animation plays once per draw — the flag is cleared as
   // the card is written, so a later visit does not replay it.
@@ -131,6 +144,12 @@ function cardHtml(card, weekLabel) {
   const counter = custom
     ? '<span class="cl-card-no">我的专属卡片</span>'
     : `<span class="cl-card-no">本周第 <b>${escapeHtml(card.card_no == null ? '?' : String(card.card_no))}</b> 号卡片</span>`;
+  // The note under the card says where this week stands.
+  const note = done
+    ? '这张卡已经记录过了'
+    : (recorded
+      ? '已经写了一点，再补上照片或写长一点就算数'
+      : '本周已抽取，下一周继续开启');
   return `
     <div class="cl-card${animate ? ' cl-card--in' : ''}">
       <span class="cl-card-clip" aria-hidden="true"></span>
@@ -149,10 +168,41 @@ function cardHtml(card, weekLabel) {
           ${recorded ? '查看这篇回忆' : '记录这一张'}
         </button>
       </div>
-      ${recorded
-        ? `<p class="cl-card-note">这张卡已经记录过了 · 本周 ${escapeHtml(weekLabel || '')}</p>`
-        : `<p class="cl-card-note">本周已抽取，下一周继续开启 · 本周 ${escapeHtml(weekLabel || '')}</p>`}
+      <p class="cl-card-note">${escapeHtml(note)} · 本周 ${escapeHtml(weekLabel || '')}</p>
     </div>
+  `;
+}
+
+// ---- The 打卡墙 link ------------------------------------------------------
+//
+// The door to the check-in wall — the page that shows every week the user
+// has drawn and how many of them were actually written down.
+//
+// It sits under the stage, next to the rules card, because it answers
+// the question the rules card raises: 「完成后记录回忆」 — but the rules
+// card says HOW, and this says HOW FAR ALONG you are.
+//
+// It is a link rather than a block of statistics because the statistics
+// need room to breathe: the wall is a grid of weeks and a list, and
+// cramming them into a corner of this page would make both unreadable.
+function checkinHtml(state) {
+  // The TOTAL number of weeks drawn — not the length of the page's own
+  // history list, which is capped at a year. The door says how far the
+  // user has got, so it must count the whole history.
+  const weeks = state.totalDraws != null
+    ? state.totalDraws
+    : (state.history || []).length;
+  return `
+    <a class="cl-checkin" href="#/card-life/stats">
+      <span class="cl-checkin-icon" aria-hidden="true"></span>
+      <span class="cl-checkin-text">
+        <span class="cl-checkin-title">打卡墙</span>
+        <span class="cl-checkin-sub">${weeks
+          ? `已经抽了 ${weeks} 周，看看完成了多少`
+          : '抽过的每一周都会记在这里'}</span>
+      </span>
+      <span class="cl-checkin-arrow" aria-hidden="true">→</span>
+    </a>
   `;
 }
 
@@ -396,25 +446,40 @@ function wireCustom() {
 // A card that was never recorded can still be written up — every row
 // carries its own 记录 link, so a card from three weeks ago is not lost
 // just because the week is over.
+//
+// The 「已记录 / 未记录」 verdict uses the SAME rule as the 打卡墙 — a
+// week counts as recorded when its 回忆记录 has a photo or more than 30
+// characters of text. It used to read the link alone, which meant this
+// list could call a week 「已记录」 while the wall called the same week
+// 「未完成」. Two pages answering the same question differently is worse
+// than either answer, so they now share one rule
+// (main/card_progress.js).
 function historyHtml(state) {
   // This week's card is already on the stage — the list holds the older
   // ones only.
   const currentId = state.card && state.card.id;
   const history = (state.history || []).filter((h) => h.id !== currentId);
   if (!history.length) return '';
-  const rows = history.map((h) => `
+  const rows = history.map((h) => {
+    // A card with no entry at all was never recorded. A card WITH an
+    // entry counts only if that entry is written enough.
+    const recorded = h.memorial_event_id
+      ? (h.done === undefined ? true : !!h.done)
+      : false;
+    return `
     <div class="cl-history-row">
       <span class="cl-history-week">${escapeHtml(h.week_key || '')}</span>
       <span class="cl-history-title">${escapeHtml(h.title || '(无标题)')}</span>
       ${h.source === 'custom' ? '<span class="cl-history-mine">我的</span>' : ''}
-      <span class="cl-history-state${h.memorial_event_id ? ' done' : ''}">
-        ${h.memorial_event_id ? '已记录' : '未记录'}
+      <span class="cl-history-state${recorded ? ' done' : ''}">
+        ${recorded ? '已记录' : '未记录'}
       </span>
       ${h.memorial_event_id
         ? `<a class="cl-history-open" href="#/diary/${encodeURIComponent(h.memorial_event_id)}">查看</a>`
         : `<a class="cl-history-open" href="#/diary/new?draw=${encodeURIComponent(h.id)}">记录</a>`}
     </div>
-  `).join('');
+  `;
+  }).join('');
   return `
     <section class="cl-history">
       <div class="cl-section">

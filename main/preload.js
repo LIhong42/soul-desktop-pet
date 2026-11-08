@@ -88,6 +88,8 @@ contextBridge.exposeInMainWorld('mp', {
     customList:   ()   => ipcRenderer.invoke('card_draws:custom_list'),
     customCreate: (input) => ipcRenderer.invoke('card_draws:custom_create', input),
     customDelete: (id) => ipcRenderer.invoke('card_draws:custom_delete', id),
+    // The 打卡墙 — every week's completion, and the streak.
+    progress: () => ipcRenderer.invoke('card_draws:progress'),
   },
   // reminders
   reminders: {
