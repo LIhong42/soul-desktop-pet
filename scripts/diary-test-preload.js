@@ -83,12 +83,32 @@ const events = {
   debugFireDueNow: async () => null,
 };
 
+// The 抽卡人生 cards. The editor asks for the card it was opened from,
+// so that the card's title and requirement can pre-fill the page. The
+// fake holds a couple of cards and records the links the editor makes.
+const cardRows = {};
+const cardLinks = [];
+
 contextBridge.exposeInMainWorld('mp', {
   memorialEvents: mem,
   events,
   contacts: {
     list: async () => CONTACTS,
     get: async (id) => CONTACTS.find((c) => c.id === id) || null,
+  },
+  cardDraws: {
+    get: async (id) => cardRows[id] || null,
+    link: async (id, eventId) => {
+      cardLinks.push({ id, eventId });
+      if (cardRows[id]) cardRows[id].memorial_event_id = eventId;
+      return cardRows[id] || null;
+    },
+    state: async () => ({ weekKey: '', weekLabel: '', history: [], card: null }),
+    draw: async () => ({ ok: false, error: 'not available in the test' }),
+    progress: async () => ({ entries: [], weeks: 0, done: 0, pending: 0, rate: 0, streak: 0, best: 0, threshold: 30 }),
+    customList: async () => [],
+    customCreate: async () => null,
+    customDelete: async () => true,
   },
 });
 
@@ -125,4 +145,16 @@ contextBridge.exposeInMainWorld('__testUploads', {
 contextBridge.exposeInMainWorld('__testPhotos', {
   set: (id, dataUrl) => { photoBytes[id] = dataUrl; return true; },
   all: () => Object.assign({}, photoBytes),
+});
+
+// The 抽卡人生 cards the fake holds, and the links the editor made to
+// them. A test seeds a card to check that the editor pre-fills the page
+// from it, and reads the links to check that saving links the new entry
+// back to the card.
+contextBridge.exposeInMainWorld('__testCards', {
+  all: () => Object.assign({}, cardRows),
+  seed: (id, row) => { cardRows[id] = row; return true; },
+  clear: () => { for (const k of Object.keys(cardRows)) delete cardRows[k]; },
+  links: () => cardLinks.slice(),
+  clearLinks: () => { cardLinks.length = 0; },
 });

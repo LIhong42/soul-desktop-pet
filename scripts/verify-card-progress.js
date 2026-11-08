@@ -277,6 +277,15 @@ async function main() {
   check('the orphaned draw is not finished',
     afterDelete.entries.find((x) => x.weekKey === weeks[3]).done, false);
   check('the totals follow', afterDelete.done, 3);
+  // The draw still HOLDS the deleted entry's id, but the wall must not
+  // hand that id out — a card that says 「查看这篇回忆」 and then leads to
+  // an editor that says 「这篇回忆不存在」 is worse than a card that
+  // simply offers to write it.
+  check('the orphaned draw reports no entry',
+    afterDelete.entries.find((x) => x.weekKey === weeks[3]).memorialEventId, null);
+  // The weeks that still have their entry are untouched.
+  check('the surviving entries keep their id',
+    afterDelete.entries.find((x) => x.weekKey === weeks[4]).memorialEventId, ev5);
 
   db.close();
 

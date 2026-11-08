@@ -197,9 +197,21 @@ function state(appPath, db, now = new Date()) {
   // The history carries the completion verdict, so the page's 「已记录」
   // badge and the 打卡墙's squares cannot disagree about the same week.
   // The rule lives in main/card_progress.js — one copy, two pages.
+  //
+  // The row's `memorial_event_id` is REPLACED by the joined one, so a
+  // draw whose entry was deleted no longer points at a stale id. The
+  // link is not a foreign key with ON DELETE, so the column survives the
+  // deletion — and a button that says 「查看这篇回忆」 would then lead
+  // to an editor that answers 「这篇回忆不存在」.
   const withVerdict = (row) => {
     const v = cardProgress.evaluate(row);
-    return { ...row, done: v.done, photo_count: v.photoCount, text_length: v.textLength };
+    return {
+      ...row,
+      memorial_event_id: row.event_id || null,
+      done: v.done,
+      photo_count: v.photoCount,
+      text_length: v.textLength,
+    };
   };
   // One query brings both the history and this week's card, each with
   // the completion verdict attached, so the card on the stage and the

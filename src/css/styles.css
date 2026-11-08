@@ -3854,6 +3854,47 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   align-items: start;
 }
 
+/* ---- the pager under the card wall ---------------------------------------
+   The pager is the app's shared one (src/js/pager.js), so it carries the
+   shared `.section-pager` / `.section-page` classes — but the shared
+   STYLING for those classes lives in page_bg.css and is scoped to
+   `.bg-page`, which this page is not. So the pager is dressed here in the
+   回忆事件 page's own palette: the same warm ink and the same soft edges
+   as the toolbar panel above it.
+
+   The wall's cards are diary pages standing on the app's plain surface —
+   there is no artwork behind them, so the pager needs no translucent
+   sheet the way the pages on the artwork do. A plain outline on the
+   app's own background is enough to read as furniture rather than as
+   content. */
+.memorial-pager .section-pager {
+  margin-top: 18px;
+}
+.memorial-pager .btn.secondary {
+  background: #fff;
+  border: 1px solid #f0e4da;
+  color: #4a3f38;
+  border-radius: 999px;
+}
+.memorial-pager .btn.secondary:hover:not(:disabled) {
+  background: #fdf2ea;
+  border-color: #e6d3c4;
+}
+.memorial-pager .btn.secondary:disabled {
+  /* The app's global `.btn:disabled` paints a muted background, but the
+     other pagers (`.bg-page`, `.cl-page`) dim their disabled buttons
+     instead of recolouring them — a faded button that still reads as
+     the same button. This rule outranks the global one (it is more
+     specific), so the button keeps its own white paper and only fades. */
+  background: #fff;
+  opacity: 0.45;
+}
+.memorial-pager .meta {
+  color: #9c8c80;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+
 /* ---------------------------------------------------------------------------
    回忆事件 toolbar — the header, the search pill and the filter card
    ---------------------------------------------------------------------------

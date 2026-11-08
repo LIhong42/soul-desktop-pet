@@ -1122,6 +1122,18 @@
   font-weight: 700;
 }
 
+/* The banner that says the entry the link named is gone. It is the same
+   shape as the 「来自抽卡人生」 banner but a different temperature — this
+   one is a note about something that went wrong, so it is cooler and it
+   does not pretend to be the card's origin. */
+.diary-missing-banner {
+  background: rgba(240, 240, 240, 0.9);
+  color: #5c5c5c;
+}
+.diary-missing-banner .diary-draw-badge {
+  background: #9a9a9a;
+}
+
 /* ===========================================================================
    The 打卡墙 (the check-in wall)
    ===========================================================================

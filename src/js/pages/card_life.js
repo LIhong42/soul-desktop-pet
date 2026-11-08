@@ -475,7 +475,7 @@ function historyHtml(state) {
         ${recorded ? '已记录' : '未记录'}
       </span>
       ${h.memorial_event_id
-        ? `<a class="cl-history-open" href="#/diary/${encodeURIComponent(h.memorial_event_id)}">查看</a>`
+        ? `<a class="cl-history-open" href="#/diary/${encodeURIComponent(h.memorial_event_id)}?draw=${encodeURIComponent(h.id)}">查看</a>`
         : `<a class="cl-history-open" href="#/diary/new?draw=${encodeURIComponent(h.id)}">记录</a>`}
     </div>
   `;
@@ -540,7 +540,11 @@ function wireStage() {
       const card = pageState.state && pageState.state.card;
       if (!card) return;
       if (card.memorial_event_id) {
-        navigate('/diary/' + encodeURIComponent(card.memorial_event_id));
+        // The card's id rides along, so that if the entry turns out to be
+        // gone, the editor knows which card was meant and can write it
+        // up instead of showing an error page.
+        const q = `?draw=${encodeURIComponent(card.id)}`;
+        navigate('/diary/' + encodeURIComponent(card.memorial_event_id) + q);
         return;
       }
       // The editor opens with the card's title and requirement filled in,

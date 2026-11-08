@@ -264,7 +264,17 @@ function summary(rows, now = new Date()) {
       hasPhoto: v.hasPhoto,
       photoCount: v.photoCount,
       textLength: v.textLength,
-      memorialEventId: row.memorial_event_id || null,
+      // The entry this draw became — but only if that entry STILL EXISTS.
+      //
+      // The draw's own `memorial_event_id` column is not enough: the
+      // link is not a foreign key with ON DELETE, so a deleted entry
+      // leaves the draw holding a stale id. The JOIN already knows the
+      // truth (`event_id` is NULL when the entry is gone), so the joined
+      // id is what goes here.
+      //
+      // Getting this wrong means the wall says 「查看这篇回忆」 and the
+      // editor answers 「这篇回忆不存在」.
+      memorialEventId: row.event_id || null,
       eventTitle: row.event_title || '',
     };
   });

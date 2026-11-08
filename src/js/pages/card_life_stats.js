@@ -393,6 +393,10 @@ function wire() {
   // The button on the card. It behaves exactly as the 抽卡人生 page's own
   // button does: with an entry it opens the entry, without one it opens
   // the editor with the card's title and requirement filled in.
+  //
+  // The entry's id is carried along as well, so that IF the entry is
+  // gone by the time the editor opens, the editor knows which card the
+  // user meant and can create the entry from it.
   const recordBtn = document.getElementById('cl-stats-record');
   if (recordBtn) {
     recordBtn.onclick = () => {
@@ -400,7 +404,8 @@ function wire() {
       const entry = openEntry(pageState.data || {});
       if (!id || !entry) return;
       if (entry.memorialEventId) {
-        navigate('/diary/' + encodeURIComponent(entry.memorialEventId));
+        const q = `?draw=${encodeURIComponent(entry.id)}`;
+        navigate('/diary/' + encodeURIComponent(entry.memorialEventId) + q);
         return;
       }
       navigate('/diary/new?draw=' + encodeURIComponent(entry.id));

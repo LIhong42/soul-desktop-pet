@@ -21,6 +21,16 @@
 // is cut off at the bottom, and the card fades out over its last lines so
 // the cut reads as "there is more" rather than as a clipped sentence.
 //
+// ---- The pages ----
+//
+// The wall shows six cards at a time and reaches the rest through the
+// app's shared pager (src/js/pager.js) — the same one the reminder, work
+// and contact lists use, so the paging maths, the clamping and the
+// markup cannot drift apart from theirs. The page index is view state:
+// it is not in the URL, so a page turn is not a history entry, and
+// anything that changes WHAT the list holds (a search, a filter, a
+// reset) takes the reader back to the first page.
+//
 // Clicking a card opens the diary editor (src/js/pages/diary_edit.js).
 import { api, escapeHtml, memorialPhotoUrl, fetchPhotoDataUrl } from '../api.js';
 import { register, navigate } from '../router.js';
@@ -38,6 +48,17 @@ import {
   TIME_RANGES, kindOptions, contactOptions,
   emptyFilter, matchesFilter,
 } from '../diary_filters.js';
+import { pageSlice, pagerHtml, wirePager } from '../pager.js';
+
+// How many memory cards one page of the wall shows.
+//
+// The wall is paginated rather than endless for two reasons. The obvious
+// one is length: a user with a few hundred memories would otherwise get
+// an unreadable scroll. The less obvious one is the card grid's own
+// shape — six cards make two tidy rows of three on the reading column,
+// so a page reads as a spread of diary pages rather than as a strip
+// that keeps thinning out as it goes.
+const CARDS_PER_PAGE = 6;
 
 // selectMode is per-page state so toggling bulk-delete mode doesn't lose
 // the user's checkbox selections on re-render. `q` mirrors the current
@@ -47,24 +68,42 @@ import {
 // `filter` holds the three dropdown selections (时间 / 联系人 / 类型). They
 // are applied client-side on top of the cached rows, so changing one is
 // instant and composes with the search box without a round-trip.
+//
+// `page` is the index of the page of cards on screen. Like the other
+// list pages in the app it is VIEW state, not URL state — the page index
+// is not in the hash, because every "next page" click would then be a
+// history entry. The shared pager clamps it, so a filter that shrinks
+// the list cannot leave the wall pointing past its end.
 const pageState = {
   selectMode: { active: false, selected: new Set() },
   q: '',
   filter: emptyFilter(),
   allEvents: [],
   contacts: [],
+  page: 0,
   basePath: '/events/memorial',
 };
 
 // Exported so the test harness (scripts/test-diary-editor.js) can drive
 // the list directly, the way the router does.
-export async function render(args, params) {
+//
+// `opts.keepPage` tells the render to hold the current page index
+// instead of starting at the first page. It is set when the page
+// REPAINTS ITSELF after a mutation (a bulk delete) — the user stays
+// where they were. A fresh navigation (the router calling render()
+// again) starts at the first page: the page index is view state, not URL
+// state, so there is nothing to restore it from.
+//
+// `opts` is a THIRD argument rather than a key of `params` on purpose:
+// `params` is the URL's query string, and a flag that only exists
+// between two calls of this function has no business in a URL.
+export async function render(args, params, opts = {}) {
   const app = document.getElementById('app');
   app.innerHTML = `<div class="empty">载入中…</div>`;
 
-  const opts = {};
-  if (params.contact_id) opts.contact_id = params.contact_id;
-  const events = await api.memorialEvents.list(opts);
+  const listOpts = {};
+  if (params.contact_id) listOpts.contact_id = params.contact_id;
+  const events = await api.memorialEvents.list(listOpts);
   // The contact dropdown lists every contact the user has, plus any
   // contact that only appears in an entry — so a filter value the URL
   // carries can always be shown, even for a contact with no entry yet.
@@ -82,6 +121,9 @@ export async function render(args, params) {
   for (const e of events) warmPhotos(e);
   pageState.allEvents = events;
   pageState.contacts = contacts;
+  // A fresh load starts at the first page; a repaint after a mutation
+  // keeps the user where they were.
+  if (!opts.keepPage) pageState.page = 0;
   pageState.q = ((params && params.q) || '').trim().toLowerCase();
   // The filter state comes from the URL too, so a filtered view can be
   // shared or reloaded. Unknown values are dropped by the dropdown
@@ -202,6 +244,16 @@ function rerenderList() {
   const emptyMsg = filterActive
     ? `没有符合筛选条件的回忆事件 · 已隐藏 ${suppressed} 条`
     : (q ? `没有匹配「${escapeHtml(q)}」的回忆事件 · 已隐藏 ${suppressed} 条` : '');
+
+  // The wall shows one page of cards at a time. The shared pager does
+  // the maths and clamps the index, so a filter that leaves fewer cards
+  // than the page holds cannot leave the wall pointing past its end.
+  const { total, totalPages, visible } = pageSlice(filtered, pageState, CARDS_PER_PAGE);
+  // The shared pager renders nothing when everything fits on one page, so
+  // its wrapper is only written when there IS a pager — an empty div
+  // under the wall would be a stray piece of markup for nothing.
+  const pager = pagerHtml(pageState.page, totalPages, total);
+
   host.innerHTML = `
     ${pageState.selectMode.active ? bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
@@ -212,9 +264,10 @@ function rerenderList() {
       ? `<div class="empty">还没有回忆事件 · 点 + 新建 创建一个</div>`
       : filtered.length === 0
         ? `<div class="empty">${emptyMsg}</div>`
-        : `<div class="memorial-grid">${filtered.map((e) => pageState.selectMode.active
+        : `<div class="memorial-grid">${visible.map((e) => pageState.selectMode.active
             ? bulkSelectableCardHtml(e, pageState.selectMode.selected.has(e.id))
             : renderRow(e)).join('')}</div>`}
+    ${pager ? `<div class="memorial-pager">${pager}</div>` : ''}
   `;
 
   if (!pageState.selectMode.active) {
@@ -230,6 +283,14 @@ function rerenderList() {
     // after any redraw.
     wireBulkToolbar(host, pageState.selectMode, bulkHandlers);
   }
+  // The pager's buttons are part of the rewritten subtree too, so they
+  // need their handlers bound on every repaint.
+  wirePager(host, pageState, rerenderList, () => {
+    // Keep the user at the top of the new page — otherwise they land
+    // halfway down it, looking at cards they already saw.
+    const scroller = document.querySelector('.content');
+    if (scroller) scroller.scrollTop = 0;
+  });
 }
 
 // A card in select mode: the same card, with a checkbox on its title bar.
@@ -266,6 +327,10 @@ function wireSearchInput() {
     const apply = () => {
       settleTimer = null;
       const next = input.value.trim().toLowerCase();
+      // A different search is a different list — start it at the first
+      // page, or the user would land on a page that may not exist any
+      // more.
+      if (next !== pageState.q) pageState.page = 0;
       pageState.q = next;
       // The URL carries the search text AND the three dropdown values, so
       // both use the same sync helper — otherwise one would wipe the
@@ -287,6 +352,9 @@ function wireSearchInput() {
     clearBtn.onclick = () => {
       if (input.value) input.value = '';
       pageState.q = '';
+      // Clearing the search widens the list again — back to the first
+      // page.
+      pageState.page = 0;
       syncFilterUrl();
       rerenderList();
       input.focus();
@@ -363,6 +431,10 @@ function wireFilters() {
     if (!el || el.dataset.wired) return;
     el.dataset.wired = '1';
     el.onchange = () => {
+      // A different filter is a different list — start it at the first
+      // page, so narrowing the list never lands the user on an empty
+      // page.
+      if (el.value !== pageState.filter[key]) pageState.page = 0;
       pageState.filter[key] = el.value;
       syncFilterUrl();
       rerenderList();
@@ -381,6 +453,8 @@ function wireFilters() {
     resetBtn.dataset.wired = '1';
     resetBtn.onclick = () => {
       pageState.filter = emptyFilter();
+      // The list is a different one now — back to its first page.
+      pageState.page = 0;
       // Put every dropdown back to its "不限" option.
       for (const [id, key] of [
         ['memorial-filter-time', 'time'],
@@ -545,8 +619,12 @@ function bulkOnChange() {
     cb.checked = pageState.selectMode.selected.has(id);
   });
   const count = pageState.selectMode.selected.size;
-  // The toolbar's total must count what the list actually shows —
-  // search AND the three dropdown filters.
+  // The toolbar's total counts the whole FILTERED set — search AND the
+  // three dropdown filters — not just the page on screen. That is what
+  // makes 「全选（N / 总数）」 honest: the 「全选」 box itself only ticks
+  // the cards on this page, so the user can see that the wall holds more
+  // than they have picked. This is the same contract the shared helper
+  // already documents for the paginated lists.
   const total = pageState.allEvents.filter((e) =>
     (!pageState.q || matchesMemorialQuery(e, pageState.q)) &&
     matchesFilter(e, pageState.filter)
@@ -590,6 +668,11 @@ async function reloadAndRender(params = {}) {
     time: params.time,
     contact: params.contact,
     kind: params.kind,
+  }, {
+    // The list repaints itself after the delete — the user stays on the
+    // page they were reading. The pager clamps the index if the delete
+    // emptied that page.
+    keepPage: true,
   });
 }
 

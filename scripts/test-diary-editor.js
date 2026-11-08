@@ -1769,6 +1769,245 @@ app.whenReady().then(async () => {
     'memorial-toolbar-head');
   check('the cards survive the round trip', bulkResult.cards, 1);
 
+  // ---- 16. A link to a memory that is gone -----------------------------
+  //
+  // The 抽卡人生 page and the 打卡墙 both link to a 回忆记录 by its id.
+  // That entry can be deleted, and the link can be stale. The editor used
+  // to answer with a dead end — 「这篇回忆不存在或已被删除。」 — which left
+  // the user with no way to write the memory the link was asking for.
+  //
+  // Now the editor writes a NEW entry instead, pre-filled from the card
+  // the link carries, and links it back to that card when it is saved.
+  console.log('\n== 回忆不存在时改写 ==');
+  const missingResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testCards.clear();
+    window.__testCards.seed('draw-7', {
+      id: 'draw-7',
+      week_key: '2026-01-05',
+      card_no: 7,
+      title: '给一个曾经重要、如今失联的人写一封信',
+      requirement: '写完寄出去，或者至少写完。',
+      source: 'deck',
+    });
+
+    // The link names an entry that is not there.
+    await window.__editor.render({ id: 'gone-1' }, { draw: 'draw-7' });
+    await new Promise(r => setTimeout(r, 120));
+
+    const q = (sel) => document.querySelector(sel);
+    const banner = q('.diary-missing-banner');
+    return {
+      // The page is a working editor, not an error message.
+      isEditor: !!q('#diary-page'),
+      title: (q('#diary-title') || {}).value || '',
+      hasBlocks: !!q('#diary-blocks'),
+      canSave: !!q('#save'),
+      // A missing entry has nothing to delete.
+      hasDelete: !!q('#del'),
+      // The banner says what happened.
+      banner: !!banner,
+      bannerText: banner ? banner.textContent.replace(/\\s+/g, ' ').trim() : '',
+      // The card the link named pre-fills the page, so the user is
+      // writing THAT card's memory and not a blank page.
+      bodyText: (q('.diary-block-text') || {}).value || '',
+      // The back link still goes somewhere sensible.
+      back: (q('.back-link') || {}).getAttribute ? q('.back-link').getAttribute('href') : '',
+    };
+  `);
+
+  checkTrue('a missing entry still opens the editor', missingResult.isEditor);
+  checkTrue('the editor has a body', missingResult.hasBlocks);
+  checkTrue('the editor can be saved', missingResult.canSave);
+  checkTrue('a missing entry offers no delete button', !missingResult.hasDelete);
+  checkTrue('the page says the memory is gone', missingResult.banner);
+  checkTrue('the banner explains it',
+    /已经不在了|重新写/.test(missingResult.bannerText), missingResult.bannerText);
+  checkTrue('the card pre-fills the title',
+    /写一封信/.test(missingResult.title), missingResult.title);
+  checkTrue('the card pre-fills the body',
+    /寄出去/.test(missingResult.bodyText), missingResult.bodyText);
+  checkTrue('the back link still works', missingResult.back.startsWith('#'),
+    missingResult.back);
+
+  // And saving it must CREATE the entry rather than fail on the missing
+  // id — the whole point is that the user can write it. And it must be
+  // linked BACK to the card, so the wall's square turns to finished.
+  const missingSave = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testCards.clear();
+    window.__testCards.clearLinks();
+    window.__testCards.seed('draw-8', {
+      id: 'draw-8',
+      week_key: '2026-01-12',
+      card_no: 8,
+      title: '给自己做一顿饭',
+      requirement: '认真做一顿饭，摆盘，拍下来。',
+      source: 'deck',
+    });
+    await window.__editor.render({ id: 'gone-2' }, { draw: 'draw-8' });
+    await new Promise(r => setTimeout(r, 120));
+
+    const before = Object.keys(window.__testRows.all()).length;
+    // The meta dialog asks for the time; fill it and confirm.
+    document.getElementById('save').click();
+    await new Promise(r => setTimeout(r, 200));
+    const dialog = document.querySelector('.diary-meta-modal-backdrop');
+    if (dialog) {
+      const occ = dialog.querySelector('[data-role="occurred"]');
+      if (occ && !occ.value) occ.value = '2026-04-01 09:15:00';
+      dialog.querySelector('[data-act="confirm"]').click();
+      await new Promise(r => setTimeout(r, 250));
+    }
+    const rows = window.__testRows.all();
+    const ids = Object.keys(rows);
+    return {
+      before,
+      after: ids.length,
+      // The new entry must exist, and it must NOT be the id the link
+      // named — that row is gone.
+      ids,
+      titles: ids.map(id => rows[id].title),
+      notes: ids.map(id => rows[id].notes),
+      notTheOldId: !ids.includes('gone-2'),
+      // The card must point at the new entry.
+      links: window.__testCards.links(),
+    };
+  `);
+
+  check('a missing entry creates a new one when saved',
+    missingSave.after === missingSave.before + 1,
+    `before=${missingSave.before} after=${missingSave.after}`);
+  checkTrue('the new entry is not the id the link named',
+    missingSave.notTheOldId, JSON.stringify(missingSave.ids));
+  checkTrue('the new entry carries the title that was typed',
+    missingSave.titles.includes('给自己做一顿饭'),
+    JSON.stringify(missingSave.titles));
+  checkTrue('the new entry carries the card\'s requirement',
+    missingSave.notes.includes('摆盘'),
+    JSON.stringify(missingSave.notes));
+  check('the new entry is linked back to the card', missingSave.links.length, 1);
+  checkTrue('the link points at the card that was clicked',
+    missingSave.links.length && missingSave.links[0].id === 'draw-8',
+    JSON.stringify(missingSave.links));
+  checkTrue('the link points at the new entry',
+    missingSave.links.length && missingSave.ids.includes(missingSave.links[0].eventId),
+    JSON.stringify(missingSave.links));
+
+  // ---- 17. The card wall is paginated ------------------------------------
+  //
+  // The wall shows six cards at a time and reaches the rest through the
+  // shared pager. The page index is VIEW state, not URL state — it is not
+  // in the hash, so paging never pollutes the history — and any change to
+  // what the list holds (a search, a filter, a reset) takes the user back
+  // to the first page, so narrowing the list can never strand them on a
+  // page that no longer exists.
+  console.log('\n== 回忆事件分页 ==');
+  const pagerResult = await evalIn(win, `
+    window.__testRows.clear();
+    for (let i = 1; i <= 14; i++) {
+      window.__testRows.seed('pg-' + i, {
+        id: 'pg-' + i, kind: 'other', title: '第' + i + '条',
+        occurred_at: '2026-05-0' + ((i % 9) + 1) + ' 10:00:00',
+        background: 'light', contact_ids: ['c1'],
+        contact_names: ['小明'], photo_count: 0, notes: '正文' + i,
+      });
+    }
+
+    await window.__list.render([], {});
+    await new Promise(r => setTimeout(r, 150));
+
+    const q = (sel) => document.querySelector(sel);
+    const titles = () => Array.from(document.querySelectorAll('.memorial-card-title'))
+      .map(el => el.textContent.trim());
+    const pagerText = () => {
+      const m = q('.memorial-pager .meta');
+      return m ? m.textContent.trim() : '';
+    };
+
+    const first = {
+      cards: document.querySelectorAll('.memorial-card').length,
+      titles: titles(),
+      pager: pagerText(),
+      hasPrev: !!q('.memorial-pager [data-action="prev"]'),
+      prevDisabled: !!(q('.memorial-pager [data-action="prev"]') || {}).disabled,
+      nextDisabled: !!(q('.memorial-pager [data-action="next"]') || {}).disabled,
+    };
+
+    // Next page: the wall moves on, and the previous button wakes up.
+    q('.memorial-pager [data-action="next"]').click();
+    await new Promise(r => setTimeout(r, 150));
+    const second = {
+      cards: document.querySelectorAll('.memorial-card').length,
+      titles: titles(),
+      pager: pagerText(),
+      prevDisabled: !!(q('.memorial-pager [data-action="prev"]') || {}).disabled,
+      nextDisabled: !!(q('.memorial-pager [data-action="next"]') || {}).disabled,
+    };
+
+    // The last page holds the remainder — fourteen cards over six to a
+    // page is 6 / 6 / 2.
+    q('.memorial-pager [data-action="next"]').click();
+    await new Promise(r => setTimeout(r, 150));
+    const third = {
+      cards: document.querySelectorAll('.memorial-card').length,
+      pager: pagerText(),
+      nextDisabled: !!(q('.memorial-pager [data-action="next"]') || {}).disabled,
+    };
+
+    // A search narrows the list — it must take the user back to the
+    // first page, not leave them on the last page of a longer list.
+    const input = q('#memorial-q');
+    input.value = '第1条';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 250));
+    const afterSearch = {
+      cards: document.querySelectorAll('.memorial-card').length,
+      pager: pagerText(),
+      // One card matches — a single page, so there is no pager at all.
+      hasPager: !!q('.memorial-pager .meta'),
+    };
+
+    // And clearing it brings the whole wall back, starting at page one.
+    q('#memorial-clear').click();
+    await new Promise(r => setTimeout(r, 250));
+    const afterClear = {
+      cards: document.querySelectorAll('.memorial-card').length,
+      pager: pagerText(),
+      titles: titles(),
+    };
+
+    return { first, second, third, afterSearch, afterClear };
+  `);
+
+  check('the wall shows six cards on a page', pagerResult.first.cards, 6);
+  check('the pager counts every card, not just the page',
+    pagerResult.first.pager, '第 1 / 3 页 · 共 14 条');
+  checkTrue('the first page cannot go back', pagerResult.first.prevDisabled);
+  checkTrue('the first page can go forward', !pagerResult.first.nextDisabled);
+
+  check('the second page also holds six cards', pagerResult.second.cards, 6);
+  check('the second page is the second one', pagerResult.second.pager,
+    '第 2 / 3 页 · 共 14 条');
+  checkTrue('the second page can go back', !pagerResult.second.prevDisabled);
+  checkTrue('the pages hold different cards',
+    pagerResult.first.titles[0] !== pagerResult.second.titles[0],
+    JSON.stringify([pagerResult.first.titles, pagerResult.second.titles]));
+
+  check('the last page holds the remainder', pagerResult.third.cards, 2);
+  check('the last page is the last one', pagerResult.third.pager,
+    '第 3 / 3 页 · 共 14 条');
+  checkTrue('the last page cannot go forward', pagerResult.third.nextDisabled);
+
+  check('a search narrows the wall', pagerResult.afterSearch.cards, 1);
+  checkTrue('a search that fits on one page shows no pager',
+    !pagerResult.afterSearch.hasPager, pagerResult.afterSearch.pager);
+
+  check('clearing the search brings the whole wall back',
+    pagerResult.afterClear.cards, 6);
+  check('clearing the search goes back to the first page',
+    pagerResult.afterClear.pager, '第 1 / 3 页 · 共 14 条');
+
   console.log(`\n== ${pass} passed, ${fail} failed ==\n`);
   cleanup(win, fail === 0 ? 0 : 1);
 }).catch((e) => {

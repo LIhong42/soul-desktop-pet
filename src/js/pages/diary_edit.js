@@ -908,7 +908,10 @@ async function makePendingPhotos(files) {
 // the editor directly, the way the router does.
 export async function render(args, params) {
   const app = document.getElementById('app');
-  const isNew = !args.id;
+  // Whether the page is writing a NEW entry. It starts as "the URL named
+  // no id", but it can become true later: the URL may name an entry that
+  // no longer exists, and then the page writes a new one instead.
+  let isNew = !args.id;
   pageState.isNew = isNew;
   pageState.eventId = isNew ? null : args.id;
   pageState.selectedContactIds = new Set();
@@ -942,14 +945,42 @@ export async function render(args, params) {
     contact_ids: [],
     photos: [],
   };
+  // The entry the URL names may not exist — it was deleted, or the link
+  // was stale. Either way the editor does NOT dead-end on an error page:
+  // it becomes a NEW entry instead, so the user can write the memory the
+  // link was asking for.
+  //
+  // The id is kept in `pageState.eventId` only when the entry was really
+  // found. A missing entry leaves it null, so 保存 creates rather than
+  // overwrites.
+  let missing = false;
   if (!isNew) {
     ev = await api.memorialEvents.get(args.id);
     if (!ev) {
-      app.innerHTML = `<div class="empty">这篇回忆不存在或已被删除。</div>`;
-      return;
+      missing = true;
+      // The page becomes a new entry. `args.id` is deliberately NOT
+      // carried over — saving must not try to update a row that is gone.
+      isNew = true;
+      pageState.isNew = true;
+      pageState.eventId = null;
+      ev = {
+        kind: 'other',
+        title: '',
+        notes: '',
+        place: '',
+        food: '',
+        outfit: '',
+        activities: '',
+        occurred_at: '',
+        background: DEFAULT_THEME_ID,
+        content: null,
+        contact_ids: [],
+        photos: [],
+      };
+    } else {
+      pageState.existingPhotos = ev.photos || [];
+      for (const cid of (ev.contact_ids || [])) pageState.selectedContactIds.add(cid);
     }
-    pageState.existingPhotos = ev.photos || [];
-    for (const cid of (ev.contact_ids || [])) pageState.selectedContactIds.add(cid);
   }
   // 抽卡人生: the entry starts from the card that was drawn. The card's
   // title and requirement fill the page, and the entry is filed as
@@ -964,7 +995,7 @@ export async function render(args, params) {
     }
   }
   pageState.draw = draw;
-  if (isNew && draw) {
+  if ((isNew || missing) && draw) {
     ev.title = draw.title || ev.title;
     ev.notes = draw.requirement || ev.notes;
     ev.kind = 'card_draw';
@@ -981,9 +1012,15 @@ export async function render(args, params) {
 
   const themeVars = diaryThemeVars(theme);
 
+  // The back link says where it goes. It follows the page the user came
+  // from: the 抽卡人生 page, the 打卡墙, or the 回忆事件 list.
+  const backLabel = pageState.returnTo === '/card-life/stats'
+    ? '返回打卡墙'
+    : (pageState.returnTo === '/card-life' ? '返回抽卡' : '返回列表');
+
   app.innerHTML = `
     <div class="row between diary-topbar">
-      <a class="back-link" href="#${escapeHtml(pageState.returnTo)}"><span class="icon-arrow-left"></span>${pageState.draw ? '返回抽卡' : '返回列表'}</a>
+      <a class="back-link" href="#${escapeHtml(pageState.returnTo)}"><span class="icon-arrow-left"></span>${backLabel}</a>
       <div class="row" style="gap:8px;">
         ${!isNew ? '<button class="btn danger" id="del">删除</button>' : ''}
         <button class="btn" id="save">保存</button>
@@ -999,6 +1036,16 @@ export async function render(args, params) {
       <span>来自抽卡人生 · ${pageState.draw.source === 'custom'
         ? '我自己添加的卡片'
         : `第 ${escapeHtml(String(pageState.draw.card_no || '?'))} 张`} · ${escapeHtml(pageState.draw.week_key || '')} 那一周</span>
+    </div>` : ''}
+
+    <!-- The link named an entry that is gone — it was deleted, or the link
+         was stale. The page writes a NEW entry rather than dead-ending,
+         so the banner says so rather than letting the user wonder why
+         the page is empty. -->
+    ${missing ? `
+    <div class="diary-draw-banner diary-missing-banner">
+      <span class="diary-draw-badge">重写</span>
+      <span>原来那篇回忆已经不在了 —— 这里可以重新写一篇。</span>
     </div>` : ''}
 
     <div class="diary-layout">
