@@ -139,13 +139,65 @@ app.whenReady().then(async () => {
     ruleItems: document.querySelectorAll('.cl-rules-list li').length,
     ruleTitles: Array.from(document.querySelectorAll('.cl-rule-title'))
       .map((t) => t.textContent.trim()),
+    ruleNotes: document.querySelectorAll('.cl-rule-note').length,
+    // The header carries the title and the tagline that sits beside it.
+    title: (document.querySelector('.cl-head h1') || {}).textContent || '',
+    tagline: (document.querySelector('.cl-head-tagline') || {}).textContent || '',
+    // The old sub-line under the title is gone — the week range moved
+    // down to the card's note.
+    sub: !!document.querySelector('.cl-sub'),
+    // The heart sits BETWEEN the two texts, and the two texts are set in
+    // the same type. The gaps on either side of the heart are read off
+    // the laid-out boxes, so a symmetric header is measured, not assumed.
+    head: (() => {
+      const head = document.querySelector('.cl-head');
+      const h1 = document.querySelector('.cl-head h1');
+      const heart = document.querySelector('.cl-head-heart');
+      const tag = document.querySelector('.cl-head-tagline');
+      if (!head || !h1 || !heart || !tag) return null;
+      const hb = h1.getBoundingClientRect();
+      const rb = heart.getBoundingClientRect();
+      const tb = tag.getBoundingClientRect();
+      const hs = getComputedStyle(h1);
+      const ts = getComputedStyle(tag);
+      return {
+        // The heart is between the two texts, in that order.
+        order: hb.right <= rb.left && rb.right <= tb.left,
+        // The gaps on either side of the heart.
+        gapLeft: rb.left - hb.right,
+        gapRight: tb.left - rb.right,
+        // The type of the two texts.
+        size: [hs.fontSize, ts.fontSize],
+        weight: [hs.fontWeight, ts.fontWeight],
+      };
+    })(),
   }))()`);
   check('the page wrapper carries .cl-page', empty.page);
   check('the deck is rendered before anything is drawn', empty.deck);
   check('the deck is a stack of three cards', empty.deckStack === 3,
     `got ${empty.deckStack}`);
   check('the draw button is rendered', empty.drawBtn);
+  check('the title is 抽卡人生', empty.title.trim() === '抽卡人生',
+    JSON.stringify(empty.title));
+  check('the tagline sits beside the title', empty.tagline.trim() === '每周给生活一点刺激',
+    JSON.stringify(empty.tagline));
+  check('the sub-line under the title is gone', !empty.sub);
+  check('the heart sits between the title and the tagline',
+    !!(empty.head && empty.head.order));
+  check('the heart is centred between the two texts',
+    !!(empty.head && Math.abs(empty.head.gapLeft - empty.head.gapRight) <= 1),
+    empty.head
+      ? `gapLeft=${empty.head.gapLeft.toFixed(1)} gapRight=${empty.head.gapRight.toFixed(1)}`
+      : 'no header boxes');
+  check('the two texts are set in the same size',
+    !!(empty.head && empty.head.size[0] === empty.head.size[1]),
+    empty.head ? empty.head.size.join(' vs ') : 'no header boxes');
+  check('the two texts are set in the same weight',
+    !!(empty.head && empty.head.weight[0] === empty.head.weight[1]),
+    empty.head ? empty.head.weight.join(' vs ') : 'no header boxes');
   check('the rules card is rendered', empty.rules);
+  check('the rules carry no explanation line', empty.ruleNotes === 0,
+    `got ${empty.ruleNotes}`);
   check('the rules card lists three rules', empty.ruleItems === 3,
     `got ${empty.ruleItems}`);
   check('the rules are the three the game has',
@@ -235,9 +287,12 @@ app.whenReady().then(async () => {
     card.number !== '' && Number(card.number) > 0, card.number);
   check('the card shows a title', card.title.trim().length > 0, card.title);
   check('the card shows its requirement', card.req.trim().length > 0, card.req);
-  check('the card offers both actions', card.actions === 2, `got ${card.actions}`);
+  check('the card offers a single action', card.actions === 1, `got ${card.actions}`);
   check('the 记录这一张 button is present', card.recordBtn);
   check('the card states the week is drawn', card.note.includes('已抽取'),
+    card.note);
+  // The week range moved from the header's sub-line down to the note.
+  check('the note carries the week range', /\d{4}-\d{2}-\d{2}/.test(card.note),
     card.note);
 
   // -------------------------------------------------------------------------

@@ -100,21 +100,22 @@
 }
 
 /* ---- The header ---------------------------------------------------------
-   The title is the page's headline and it is set large and heavy, with a
-   hand-drawn underline flourish (the ::after curve) — the same "sketchbook
-   note" the 今日 page signs off its date with. */
+   The title is the page's headline and it is set large and heavy.
+
+   The title and the tagline sit on either side of a hand-drawn heart.
+   The heart is a real element between them rather than a flourish hung
+   off the title, so the two texts can be placed symmetrically around it
+   and read as a pair. */
 
 .cl-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   margin: 4px 0 18px;
 }
 
 .cl-head h1 {
-  position: relative;
-  display: inline-block;
   margin: 0;
-  /* The right padding leaves room for the heart flourish that hangs off
-     the title's edge (the ::after). */
-  padding: 0 48px 8px 4px;
   font-size: 34px;
   font-weight: 800;
   letter-spacing: 0.02em;
@@ -122,23 +123,18 @@
   color: var(--cl-ink);
 }
 
-/* The heart flourish next to the title.
+/* The heart flourish between the title and the tagline.
 
    It is a mask rather than a background image, so it takes the accent
    colour from `currentColor` — the same technique the app's other icons
    use (see `--icon-plus` in styles.css). The stroke is drawn in the SVG
    and left hollow, so the flourish reads as a pen mark rather than a
-   sticker.
-
-   It hangs off the title's right edge, so the title needs room for it —
-   hence the right padding on the h1 below. */
-.cl-head h1::after {
-  content: "";
-  position: absolute;
-  right: -36px;
-  top: 2px;
+   sticker. */
+.cl-head-heart {
+  flex: none;
   width: 30px;
   height: 30px;
+  margin: 0 14px;
   background: currentColor;
   color: var(--cl-accent);
   -webkit-mask: var(--icon-heart) center / contain no-repeat;
@@ -147,11 +143,19 @@
   pointer-events: none;
 }
 
-.cl-sub {
-  margin: 0;
-  color: var(--cl-ink-soft);
-  font-size: 13.5px;
+/* The tagline next to the title: 「每周给生活一点刺激」.
+
+   It is set in the SAME type as the title — same size, same weight,
+   same ink — because it is the other half of the headline: the two
+   texts are a pair around the heart, not a heading and its caption.
+   The heart between them is what separates them. */
+.cl-head-tagline {
+  color: var(--cl-ink);
+  font-size: 34px;
+  font-weight: 800;
   letter-spacing: 0.02em;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 
 /* ---- The error strip ---------------------------------------------------- */
@@ -398,10 +402,9 @@
   flex-wrap: wrap;
 }
 
-/* The page's two buttons. The primary one is a solid accent pill — the
-   same shape as the badge above it, so the card reads as one object
-   with a clear call to action. The secondary is a paper pill with a
-   hairline, so the two never compete. */
+/* The page's button. It is a solid accent pill — the same shape as the
+   badge above it, so the card reads as one object with a clear call to
+   action. */
 .cl-actions .btn {
   display: inline-flex;
   align-items: center;
@@ -411,19 +414,6 @@
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.04em;
-}
-
-.cl-actions .btn.secondary {
-  background: var(--cl-paper-list);
-  -webkit-backdrop-filter: blur(16px) saturate(125%);
-  backdrop-filter: blur(16px) saturate(125%);
-  border: 1px solid var(--cl-line-strong);
-  color: var(--cl-ink);
-}
-.cl-actions .btn.secondary:hover {
-  background: var(--cl-paper-solid);
-  border-color: var(--cl-accent);
-  color: var(--cl-accent-deep);
 }
 
 /* The play glyph in front of 「记录这一张」. It is a mask in the button's
@@ -564,21 +554,14 @@
   letter-spacing: 0;
 }
 
-/* The rule's title and its explanation. The title is bold, the
-   explanation is the soft ink underneath it. */
+/* The rule's title. Only the title is shown — the rules read as a
+   short list of statements, not a list of paragraphs. */
 .cl-rule-title {
   display: block;
   font-size: 14.5px;
   font-weight: 700;
   color: var(--cl-ink);
   line-height: 1.5;
-}
-.cl-rule-note {
-  display: block;
-  margin-top: 2px;
-  color: var(--cl-ink-soft);
-  font-size: 13px;
-  line-height: 1.65;
 }
 
 /* The foot note under the rules. */

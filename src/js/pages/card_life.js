@@ -23,8 +23,6 @@ import { api, escapeHtml, toast } from '../api.js';
 import { register, navigate } from '../router.js';
 import { pageSlice, pagerHtml, wirePager } from '../pager.js';
 
-const CARD_LIST_ROUTE = '/events/memorial';
-
 // How many of the user's own cards one page of the list shows.
 //
 // The list is paginated rather than endless for the same reason the app's
@@ -72,16 +70,15 @@ async function render() {
     <div class="cl-page">
       <div class="cl-head">
         <h1>抽卡人生</h1>
-        <p class="cl-sub">
-          每周给生活一点新的期待 · 本周 ${escapeHtml(state.weekLabel || '')}
-        </p>
+        <span class="cl-head-heart" aria-hidden="true"></span>
+        <span class="cl-head-tagline">每周给生活一点刺激</span>
       </div>
 
       ${state.deckError ? `<div class="cl-error">${escapeHtml(state.deckError)}</div>` : ''}
 
       <div class="cl-table">
         <div class="cl-stage" id="cl-stage">
-          ${state.card ? cardHtml(state.card) : deckHtml(state)}
+          ${state.card ? cardHtml(state.card, state.weekLabel) : deckHtml(state)}
         </div>
 
         ${rulesHtml()}
@@ -122,7 +119,7 @@ function deckHtml(state) {
 
 // The drawn card: its number, its title and its requirement — the same
 // three things a deck card holds.
-function cardHtml(card) {
+function cardHtml(card, weekLabel) {
   const recorded = !!card.memorial_event_id;
   const custom = card.source === 'custom';
   // The entrance animation plays once per draw — the flag is cleared as
@@ -151,11 +148,10 @@ function cardHtml(card) {
           <span class="cl-btn-play" aria-hidden="true"></span>
           ${recorded ? '查看这篇回忆' : '记录这一张'}
         </button>
-        <a class="btn secondary" href="#${CARD_LIST_ROUTE}">回忆事件</a>
       </div>
       ${recorded
-        ? '<p class="cl-card-note">这张卡已经记录过了。</p>'
-        : '<p class="cl-card-note">本周已抽取，下一周继续开启</p>'}
+        ? `<p class="cl-card-note">这张卡已经记录过了 · 本周 ${escapeHtml(weekLabel || '')}</p>`
+        : `<p class="cl-card-note">本周已抽取，下一周继续开启 · 本周 ${escapeHtml(weekLabel || '')}</p>`}
     </div>
   `;
 }
@@ -167,9 +163,8 @@ function cardHtml(card) {
 // back — and is always there, so nobody has to guess why the button says
 // 「抽一张卡」 and why it only works once a week.
 //
-// Each rule is a title plus the line that explains it, because a bare
-// sentence gives the reader no way to tell which part is the rule and
-// which part is the detail.
+// Each rule is just a title — the rules read as a short list of
+// statements, so there is no explanation line under them.
 function rulesHtml() {
   return `
     <section class="cl-rules">
@@ -181,15 +176,12 @@ function rulesHtml() {
         <ol class="cl-rules-list">
           <li>
             <span class="cl-rule-title">每周只能抽取一张卡</span>
-            <span class="cl-rule-note">每周一开启新一轮抽卡</span>
           </li>
           <li>
             <span class="cl-rule-title">官方卡片与自定义卡片混合</span>
-            <span class="cl-rule-note">每张卡片都有相同的抽取机会</span>
           </li>
           <li>
             <span class="cl-rule-title">完成后记录回忆</span>
-            <span class="cl-rule-note">自动归档到回忆事件</span>
           </li>
         </ol>
         <p class="cl-rules-foot">已经抽取的卡片会保留在历史记录中。</p>
