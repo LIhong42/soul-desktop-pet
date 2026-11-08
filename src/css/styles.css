@@ -3512,8 +3512,35 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 
 /* ---- Side panel -------------------------------------------------------- */
 .diary-side { display: flex; flex-direction: column; gap: 12px; }
+/* The global .card carries a bottom margin, which inside a flex column
+   would stack with the gap and leave the cards unevenly spaced. The gap
+   alone governs here. */
+.diary-side > .card { margin-bottom: 0; }
 .diary-side-card h2 { margin: 0 0 10px; font-size: 14px; }
 .diary-side-card .contact-picker { max-height: 220px; overflow-y: auto; }
+
+/* The editing guide. Every control of the document lives in a right-click
+   menu, so nothing on the page says so — this card is the only place that
+   tells the user how the page works.
+
+   It is a list of gestures, not prose: one line per rule, the gesture in
+   bold so the eye can find it, and the menu items it opens in the same
+   line. A user who reads the first line knows where the buttons are. */
+.diary-help-card h2 { margin-bottom: 8px; }
+.diary-help-list {
+  margin: 0;
+  padding: 0 0 0 16px;
+  /* Not --muted: that tone is right for a caption the user can skip, and
+     this is a guide the user has to read. The ink here is a soft text
+     colour, so the gesture still stands out from the rest of the line. */
+  color: #6b6558;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.diary-help-list li { margin: 0; }
+/* The gesture itself — 「右键文字」 — is the part the user has to
+   remember, so it is the part that gets the ink. */
+.diary-help-list b { color: var(--text); font-weight: 600; }
 
 /* ---- The 保存 dialog ----------------------------------------------------
    The metadata that is not part of the writing — the time, the cast and

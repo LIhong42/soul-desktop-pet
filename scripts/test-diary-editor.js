@@ -6,8 +6,9 @@
 //      header color, a page background, and three accent dots).
 //   2. The editor renders a title, a body, and the six style tiles, and
 //      picking a tile repaints the writing surface.
-//   3. Text and images interleave: inserting a picture at the caret
-//      splits the text block, and the saved document keeps that order.
+//   3. Text and images interleave: inserting a picture puts it after
+//      the text block and leaves the text whole — the paragraph is
+//      never cut in two — and the saved document keeps that order.
 //   4. Multi-image: one insertion point holds any number of photos, the
 //      layout can be switched, and every photo can be resized on its own.
 //   5. The photos in a gallery keep the order the user puts them in —
@@ -326,6 +327,13 @@ app.whenReady().then(async () => {
       dateAnywhere: !!document.getElementById('diary-occurred'),
       contactsInSide: !!document.querySelector('.diary-side #diary-contact-picker'),
       sideCards: document.querySelectorAll('.diary-side .diary-side-card').length,
+      // The editing guide: every control of the document lives in a
+      // right-click menu, so the side panel has to say so.
+      helpCard: !!document.querySelector('.diary-side .diary-help-card'),
+      helpHeading: (document.querySelector('.diary-side .diary-help-card h2') || {}).textContent || '',
+      helpItems: Array.from(
+        document.querySelectorAll('.diary-side .diary-help-list li')
+      ).map(li => li.textContent.trim()),
       // The title lives in the header bar, so the user types it right
       // there; the body below holds only the written document.
       titleInHeader: !!document.querySelector('.diary-page-header #diary-title'),
@@ -383,12 +391,24 @@ app.whenReady().then(async () => {
   checkTrue('the Tackbox page shows no date', !editorResult.dateOnPage);
   checkTrue('the date field is nowhere on the page', !editorResult.dateAnywhere);
   checkTrue('the contact picker is not in the side panel', !editorResult.contactsInSide);
-  check('the side panel has one card', editorResult.sideCards, 1);
+  check('the side panel has the style card and the guide', editorResult.sideCards, 2);
+  checkTrue('the editing guide is in the side panel', editorResult.helpCard);
+  check('the guide is headed 编辑规则', editorResult.helpHeading, '编辑规则');
+  // The guide has to name the gestures the menus answer to, or it is
+  // no guide at all.
+  checkTrue('the guide names the right-click gestures',
+    editorResult.helpItems.some(t => t.includes('右键文字'))
+    && editorResult.helpItems.some(t => t.includes('右键图组')));
+  checkTrue('the guide names the drag gestures',
+    editorResult.helpItems.some(t => t.includes('拖动图片'))
+    && editorResult.helpItems.some(t => t.includes('右下角')));
 
   // ---- 3. Text and images interleave ---------------------------------
   console.log('\n== 图文混排 ==');
   const mixResult = await evalIn(win, `
     // Type into the first text block and put the caret in the middle.
+    // The caret position must NOT matter: the picture goes after the
+    // whole text block, so the paragraph is never cut in two.
     const ta = document.querySelector('.diary-block-text');
     ta.value = '在防波堤上坐到天黑，看远处的灯一盏一盏亮起来。';
     ta.focus();
@@ -396,8 +416,8 @@ app.whenReady().then(async () => {
     ta.dispatchEvent(new Event('input'));
 
     // Simulate the user right-clicking that block and picking
-    // 「插入图片」, then picking a file. The editor splits the block at
-    // the caret.
+    // 「插入图片」, then picking a file. The editor drops the gallery
+    // after the block and leaves the text whole.
     //
     // The action opens the file picker. We can't drive a native picker
     // from the test, so we stub the click method to fire the change
@@ -443,8 +463,7 @@ app.whenReady().then(async () => {
     return {
       order,
       blockCount: blocks.length,
-      textBefore: blocks[0] && blocks[0].querySelector('.diary-block-text').value,
-      textAfter: blocks[2] && blocks[2].querySelector('.diary-block-text').value,
+      textWhole: blocks[0] && blocks[0].querySelector('.diary-block-text').value,
       hasGallery: !!document.querySelector('.diary-block-gallery'),
       galleryItems: document.querySelectorAll('.diary-gallery-item').length,
       content: row && row.content,
@@ -458,21 +477,20 @@ app.whenReady().then(async () => {
       navigated: location.hash,
     };
   `);
-  check('the document interleaves text and gallery blocks',
-    mixResult.order, ['text', 'gallery', 'text']);
+  check('the picture lands after the text block',
+    mixResult.order, ['text', 'gallery']);
+  check('the picture did not add a second text block',
+    mixResult.blockCount, 2);
   checkTrue('the gallery block is rendered', mixResult.hasGallery);
   check('the gallery holds the one picked photo', mixResult.galleryItems, 1);
-  // The caret was placed after 6 characters, so the split falls there.
-  check('the text before the caret stays above the image',
-    mixResult.textBefore, '在防波堤上坐');
-  check('the text after the caret moves below the image',
-    mixResult.textAfter, '到天黑，看远处的灯一盏一盏亮起来。');
+  // The caret was in the middle of the paragraph, and that must not
+  // matter: the text block stays one whole piece.
+  check('the text block is not cut in two by the picture',
+    mixResult.textWhole, '在防波堤上坐到天黑，看远处的灯一盏一盏亮起来。');
   check('the saved document keeps the block order',
-    mixResult.content.map(b => b.type), ['text', 'gallery', 'text']);
-  check('the saved document keeps the text before the image',
-    mixResult.content[0].text, '在防波堤上坐');
-  check('the saved document keeps the text after the image',
-    mixResult.content[2].text, '到天黑，看远处的灯一盏一盏亮起来。');
+    mixResult.content.map(b => b.type), ['text', 'gallery']);
+  check('the saved document keeps the whole text',
+    mixResult.content[0].text, '在防波堤上坐到天黑，看远处的灯一盏一盏亮起来。');
   checkTrue('the saved document references a gallery of photos',
     mixResult.content[1] && mixResult.content[1].type === 'gallery' &&
     mixResult.content[1].photos.length === 1 && !!mixResult.content[1].photos[0].photo_id);
@@ -480,7 +498,7 @@ app.whenReady().then(async () => {
     mixResult.content[1].layout, 'one');
   check('the plain text is mirrored into notes for search',
     mixResult.notes,
-    '在防波堤上坐\n\n到天黑，看远处的灯一盏一盏亮起来。');
+    '在防波堤上坐到天黑，看远处的灯一盏一盏亮起来。');
   check('the title is saved', mixResult.title, '第一次去海边');
   check('the chosen background is saved', mixResult.background, 'shadow');
   // The 保存 dialog asks for the metadata the page no longer carries.
@@ -667,8 +685,7 @@ app.whenReady().then(async () => {
     const ta = document.querySelector('.diary-block-text');
     ta.value = '那天拍了很多张。';
     ta.focus();
-    // The caret goes to the end, so the text is not split and the note
-    // stays one paragraph.
+    // The caret goes to the end, so the note stays one paragraph.
     ta.setSelectionRange(ta.value.length, ta.value.length);
     ta.dispatchEvent(new Event('input'));
 

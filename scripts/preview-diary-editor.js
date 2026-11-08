@@ -55,8 +55,8 @@ function clickMenu(sel) {
   if (btn) btn.click();
 }
 
-// Fill in the first text block, then split it with a gallery of three
-// photos so the screenshot shows the mixed layout.
+// Fill in the first text block, then put a gallery of three photos after
+// it so the screenshot shows the mixed layout.
 const ta = document.querySelector('.diary-block-text');
 ta.value = '海风很大，浪声一直没停。她把鞋提在手里，光脚踩在被太阳晒热的沙滩上。';
 ta.focus();
@@ -67,17 +67,6 @@ ta.dispatchEvent(new Event('input'));
 // pale body and a green decorative strip at the bottom.
 document.querySelector('.diary-theme-tile[data-theme-id="helena"]').click();
 await new Promise(r => setTimeout(r, 50));
-
-// A second, longer paragraph below the gallery, so the screenshot shows
-// the body layer growing past the point where the decorative strip used
-// to sit — the case that used to put the words on top of the decoration.
-await new Promise(r => setTimeout(r, 300));
-const tas = document.querySelectorAll('.diary-block-text');
-const lower = tas[tas.length - 1];
-lower.value = '傍晚风凉下来，我们沿着海岸线慢慢走回旅馆。她把鞋重新穿好，'
-  + '说下次要带一件外套。我把这句话记在了这里 —— '
-  + '这样下次想起这一天的时候，能连着想起海风、浪声，还有那双一直提在手里的鞋。';
-lower.dispatchEvent(new Event('input'));
 
 const fileInput = document.getElementById('diary-photos');
 fileInput.click = () => {
@@ -95,8 +84,24 @@ clickMenu('[data-ctx-act="insert-image"]');
 // The insert is async (the files are read into data URLs first).
 await new Promise(r => setTimeout(r, 400));
 
-// Switch the gallery to the two-up layout.
+// A second, longer paragraph below the gallery, so the screenshot shows
+// the body layer growing past the point where the decorative strip used
+// to sit — the case that used to put the words on top of the decoration.
+// The picture did NOT split the first paragraph, so the last text block
+// is a new one: add it under the gallery.
+await new Promise(r => setTimeout(r, 300));
 const gallery = document.querySelector('.diary-block-gallery');
+openMenu(gallery, 200, 240);
+clickMenu('[data-ctx-act="insert-after"]');
+await new Promise(r => setTimeout(r, 100));
+const tas = document.querySelectorAll('.diary-block-text');
+const lower = tas[tas.length - 1];
+lower.value = '傍晚风凉下来，我们沿着海岸线慢慢走回旅馆。她把鞋重新穿好，'
+  + '说下次要带一件外套。我把这句话记在了这里 —— '
+  + '这样下次想起这一天的时候，能连着想起海风、浪声，还有那双一直提在手里的鞋。';
+lower.dispatchEvent(new Event('input'));
+
+// Switch the gallery to the two-up layout.
 openMenu(gallery, 200, 240);
 clickMenu('[data-ctx-act="layout"][data-ctx-value="two"]');
 await new Promise(r => setTimeout(r, 100));

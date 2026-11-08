@@ -281,8 +281,10 @@ function makeTextBlock(text) {
 // the editing commands the browser's own right-click menu would have
 // offered (the custom menu replaces it, so they have to be here).
 //
-// The caret is captured when the menu opens: the picture lands where the
-// user pressed, not where the caret happened to be.
+// The caret is captured when the menu opens so the editing commands
+// (剪切 / 复制 / 粘贴) act on the text the user pointed at. The picture
+// does NOT land at the caret: it goes after the whole text block, so
+// the paragraph is never cut in two.
 function openTextMenu(block, e) {
   const ta = block.el;
   const start = ta.selectionStart;
@@ -316,11 +318,10 @@ function handleTextMenuAction(block, act, value, sel) {
   const ta = block.el;
   switch (act) {
     case 'insert-image': {
-      // The picture goes in at the caret: the text above it stays above,
-      // the text below moves under it.
+      // The picture goes in AFTER the whole text block: the words the
+      // user wrote stay one unbroken piece.
       const fileInput = document.getElementById('diary-photos');
       pendingInsertFor = block;
-      pendingInsertCaret = sel.start;
       ta.focus();
       if (fileInput) fileInput.click();
       break;
@@ -857,35 +858,37 @@ function renderBlocks() {
   }
 }
 
-// Insert a gallery at the caret of a text block, splitting it so the text
-// before the caret stays above the pictures and the text after stays
-// below. Every picked file lands in the SAME gallery — one insertion
-// point can hold any number of photos.
+// Insert a gallery right after a text block. The text block is NOT
+// split: the picture lands after the whole paragraph, so the words the
+// user wrote stay one unbroken block.
 //
-// `caretPos` is where the picture goes: the position the user pressed
-// at, when the insertion came from the block's right-click menu.
-async function insertGalleryAfterTextBlock(textBlock, files, caretPos) {
+// Splitting at the caret used to be the rule, but it cut the paragraph
+// in two around the picture — a sentence ended up with the picture in
+// the middle of it, and the two halves read as two paragraphs. A
+// picture is a thing of its own now, not a word in the middle of a
+// sentence.
+//
+// Every picked file lands in the SAME gallery — one insertion point can
+// hold any number of photos.
+async function insertGalleryAfterTextBlock(textBlock, files) {
   const idx = pageState.blocks.indexOf(textBlock);
   if (idx < 0) return;
-  const ta = textBlock.el;
-  const caret = (typeof caretPos === 'number') ? caretPos : ta.selectionStart;
-  const before = ta.value.slice(0, caret);
-  const after = ta.value.slice(caret);
 
-  // The upper half keeps the text before the caret.
-  textBlock.el.value = before;
-  // The gallery goes right after it.
+  // Where the caret was, BEFORE the redraw: the re-render takes the
+  // textarea out of the page and puts it back, and that can lose the
+  // selection.
+  const ta = textBlock.el;
+  const caret = ta.selectionStart;
+
+  // The gallery goes right after the text block.
   const photos = await makePendingPhotos(files);
   pageState.blocks.splice(idx + 1, 0, makeGalleryBlock(photos, null));
-  // The lower half holds the text that was after the caret.
-  pageState.blocks.splice(idx + 2, 0, makeTextBlock(after));
   renderBlocks();
 
-  // Put the caret in the lower half so the user keeps typing where they
-  // left off.
-  const newTa = pageState.blocks[idx + 2].el;
-  newTa.focus();
-  newTa.setSelectionRange(0, 0);
+  // Keep the caret in the text block, where it was, so the user keeps
+  // typing where they left off.
+  ta.focus();
+  try { ta.setSelectionRange(caret, caret); } catch (err) { /* no selection */ }
 }
 
 // Read the picked files into gallery photos and register them as pending
@@ -925,7 +928,6 @@ export async function render(args, params) {
   // A pending target from a previous visit to this page would send the
   // next file pick to the wrong place.
   pendingInsertFor = null;
-  pendingInsertCaret = null;
   pendingGalleryFor = null;
   // The back link and the post-save navigation follow the page the user
   // actually came from; the memorial list is the fallback.
@@ -1080,11 +1082,16 @@ export async function render(args, params) {
         <div class="diary-page-foot" aria-hidden="true"></div>
       </div>
 
-      <!-- The side panel holds the paper style only, and only as a
-           button: the six previews open in a popover when the button is
-           pressed. The time, the cast and the first-time flag are asked
-           for in the 保存 dialog — the press on 保存 is the moment the
-           entry becomes a record. -->
+      <!-- The side panel holds the paper style and a short guide to the
+           editing rules. The time, the cast and the first-time flag are
+           asked for in the 保存 dialog — the press on 保存 is the moment
+           the entry becomes a record.
+
+           The guide is here because every control of the document lives
+           in a right-click menu: nothing on the page says so. A user
+           who does not know that would hunt for a button that is not
+           there. The card lists the rules and nothing else — it is a
+           map of the gestures, not a tutorial. -->
       <aside class="diary-side">
         <section class="card diary-side-card">
           <h2>背景样式</h2>
@@ -1094,6 +1101,16 @@ export async function render(args, params) {
               ${themePickerHtml(theme.id)}
             </div>
           </div>
+        </section>
+
+        <section class="card diary-side-card diary-help-card">
+          <h2>编辑规则</h2>
+          <ul class="diary-help-list">
+            <li><b>右键文字</b>：插入图片、删除此段、剪切 / 复制 / 粘贴</li>
+            <li><b>右键图组</b>：单图 / 双图 / 三图 / 网格、加图、上下插入文字</li>
+            <li><b>右键某张图</b>：删除这张图片</li>
+            <li><b>拖动图片</b>换顺序，<b>拖右下角手柄</b>改大小</li>
+          </ul>
         </section>
       </aside>
     </div>
@@ -1233,12 +1250,9 @@ function wireThemePicker() {
 // ---- Photos --------------------------------------------------------------
 
 // The text block whose 「插入图片」 action was picked. When set, the next
-// file pick is inserted AT THE CARET inside that block (splitting it).
+// file pick becomes a gallery right after that block — the text is left
+// whole, the picture is not spliced into the middle of it.
 let pendingInsertFor = null;
-
-// Where in that block the picture goes: the position the user pressed at
-// when the action came from the block's right-click menu.
-let pendingInsertCaret = null;
 
 // The gallery whose "+ 加图" action was picked. When set, the next file
 // pick joins that gallery instead of starting a new one.
@@ -1266,15 +1280,13 @@ function wirePhotoInput() {
       return;
     }
 
-    // 「插入图片」 on a text block: split the block at the caret and drop
-    // the gallery in between. Every picked file goes into that one
-    // gallery.
+    // 「插入图片」 on a text block: drop the gallery right after that
+    // block. The text is left whole — the picture does not cut it in
+    // two. Every picked file goes into that one gallery.
     if (pendingInsertFor) {
       const target = pendingInsertFor;
-      const caret = pendingInsertCaret;
       pendingInsertFor = null;
-      pendingInsertCaret = null;
-      await insertGalleryAfterTextBlock(target, files, caret);
+      await insertGalleryAfterTextBlock(target, files);
       return;
     }
 
