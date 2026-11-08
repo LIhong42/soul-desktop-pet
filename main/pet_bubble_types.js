@@ -10,6 +10,7 @@
 const KINDS = Object.freeze({
   MEAL: 'meal',                  // 吃饭提醒
   BREAK: 'break',                // 休息提醒
+  UPDATE: 'update',              // 有新版本
 });
 
 // Human labels for the settings page. Kept here (not in the renderer) so a
@@ -17,6 +18,7 @@ const KINDS = Object.freeze({
 const KIND_LABELS = Object.freeze({
   [KINDS.MEAL]: '吃饭提醒',
   [KINDS.BREAK]: '休息提醒',
+  [KINDS.UPDATE]: '有新版本',
 });
 
 // Pick at most `limit` phrases from `list` and join them. Used for the

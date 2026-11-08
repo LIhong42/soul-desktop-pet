@@ -1,6 +1,6 @@
 {
   "name": "soul-desktop-pet",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "SoulDesktopPet — local-first relationship & reminders with a desktop pet",
   "main": "main/main.js",
   "author": "SoulDesktopPet",
@@ -23,6 +23,7 @@
     "verify:contact-design": "node scripts/run-electron.js scripts/test-contact-design.js",
     "verify:anniversary": "node scripts/verify-anniversary-carousel.js && node scripts/verify-anniversary-db.js && node scripts/run-electron.js scripts/shot-anniversary.js",
     "verify:pet-stats": "node scripts/verify-pet-stats.js",
+    "verify:update-bubble": "node scripts/verify-update-bubble.js",
     "shot:today": "node scripts/run-electron.js scripts/shot-today.js",
     "shot:contact": "node scripts/run-electron.js scripts/shot-contact.js",
     "shot:bg-pages": "node scripts/run-electron.js scripts/shot-bg-pages.js",

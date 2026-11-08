@@ -1105,10 +1105,10 @@ function rerenderActionTextsList() {
 // ---------------------------------------------------------------------------
 //
 // The card renders whatever `api.bubbles.getConfig()` returns. It has no
-// hard-coded knowledge of 吃饭提醒 / 休息提醒 — the labels, descriptions and
-// toggle ids all come from the main process's rule list (main/pet_bubbles.js
-// `describeRules`). Adding a rule there makes a new row appear here
-// automatically, with no change to this file.
+// hard-coded knowledge of 吃饭提醒 / 休息提醒 / 有新版本 — the labels,
+// descriptions and toggle ids all come from the main process's rule list
+// (main/pet_bubbles.js `describeRules`). Adding a rule there makes a new row
+// appear here automatically, with no change to this file.
 let _bubblesCfg = null;
 
 async function renderBubblesCard() {
@@ -1150,7 +1150,9 @@ async function renderBubblesCard() {
       `).join('')}
     </div>
     <p class="meta" style="margin-top:10px;">
-      气泡默认持续 1 小时；吃饭提醒会在你喂食后立即结束。
+      气泡默认持续 1 小时；吃饭提醒会在你喂食后立即结束；
+      有新版本不自己占气泡位，而是像桌宠自己的台词一样插播出来，窗口只开 10 分钟，
+      窗口结束这句就从台词池里撤掉，要等下一次检查才会再出现（下载请到下面的更新卡片）。
       ${Object.keys(fedWindows).length ? '今天的吃饭提醒已处理。' : ''}
     </p>
   `;
@@ -1180,9 +1182,11 @@ async function renderBubblesCard() {
     };
   });
 
-  // Preview — asks the main process what this rule would say right now and
-  // shows the answer inline. Useful for the time-window rules, where the
-  // answer outside the window is "not due right now".
+  // Preview — shows the bubble on the pet so the user can see what this rule
+  // actually looks like. The main process decides how: a rule that owns the
+  // bubble slot is painted directly, while a plug-only rule (「有新版本」)
+  // is spoken as one of the idle action's own lines — the same way it really
+  // appears, so the preview can't show a look the user never gets.
   body.querySelectorAll('[data-bubble-preview]').forEach((btn) => {
     btn.onclick = async () => {
       const name = btn.getAttribute('data-bubble-preview');
@@ -1190,7 +1194,17 @@ async function renderBubblesCard() {
         const r = await api.bubbles.preview(name);
         if (!r) { toast('无返回'); return; }
         if (r.error) { toast('读取失败：' + r.error); return; }
-        toast(r.due ? `现在会说：${r.text}` : `${r.label}：当前未到触发条件`);
+        const forced = await api.bubbles.force(name);
+        if (forced && forced.ok) {
+          if (r.sampleText && !r.due) toast(`${r.label}会这样说：${r.sampleText}`);
+          else if (r.due) toast(`现在会说：${r.text}`);
+          else toast(`${r.label}：已预览`);
+          return;
+        }
+        // 没到触发条件时，能给出样例文案的规则（「有新版本」）显示样例，
+        // 而不是一句对用户没意义的「当前未到触发条件」。
+        if (r.sampleText) { toast(`${r.label}会这样说：${r.sampleText}`); return; }
+        toast(`${r.label}：当前未到触发条件`);
       } catch (e) {
         toast('预览失败：' + ((e && e.message) || e));
       }
@@ -1702,12 +1716,61 @@ function paintUpdateCard() {
   const s = _updateState;
 
   if (!s.supported) {
+    // 开发模式。这里没有可安装的产物（下载一个安装包去替换
+    // node_modules/electron.exe 毫无意义），但「查」是可以的——而且查了
+    // 就能验证「桌宠提醒有更新」这条气泡的完整链路。
+    //
+    // 所以这里给三个入口：真查一次、手动造一条假的提醒（不用等真的有
+    // 新版本）、把假的收掉。
+    const dev = s.dev;
+    // 检查结果也要显示出来。这张卡片在开发模式下只会画调试面板，正常
+    // 那套「有更新 / 已是最新」的文案走不到——不单独显示结果的话，点完
+    // 「真的查一次」只有一个 toast，卡片看上去什么都没发生。
+    const devResult = (() => {
+      if (s.checking) return '<p class="meta" style="margin-top:8px;">正在检查…</p>';
+      if (s.error) return `<p class="meta" style="margin-top:8px; color:#b26a00;">${escapeHtml(s.error)}</p>`;
+      const info = s.info;
+      if (!info) return '';
+      if (info.hasUpdate) {
+        return `<p class="meta" style="margin-top:8px;">
+          发现新版本 <strong>${escapeHtml(info.version)}</strong>
+          <span style="color:var(--muted);">（当前 ${escapeHtml(s.currentVersion)}）</span>
+          —— 桌宠应该已经冒泡了。
+        </p>`;
+      }
+      return `<p class="meta" style="margin-top:8px;">已是最新版本（${escapeHtml(s.currentVersion || '')}）。</p>`;
+    })();
+    const devPanel = dev ? `
+      <div style="margin-top:12px; padding:10px 12px; border:1px dashed var(--border); border-radius:8px;">
+        <div class="meta" style="font-weight:600;">开发模式调试</div>
+        <div class="meta" style="margin-top:4px; color:var(--muted);">
+          用来验证「桌宠提醒有更新」这条气泡。模拟提醒不联网、不改任何文件。
+        </div>
+        <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn secondary" id="btn-dev-check" ${s.checking ? 'disabled' : ''}>
+            ${dev.canQuery ? '真的查一次 GitHub' : '当前平台不支持查询'}
+          </button>
+          <button class="btn secondary" id="btn-dev-fake">模拟「有新版本」</button>
+          <button class="btn secondary" id="btn-dev-clear">清除模拟提醒</button>
+        </div>
+        ${devResult}
+        <div class="meta" style="margin-top:8px; color:var(--muted);">
+          「真的查一次」会向 GitHub 发一个请求并读最新的 release；查到比当前
+          版本新的就会真的冒泡。「模拟」则是直接造一条提醒，不用等真的有
+          新版本——想反复看气泡就点它。
+        </div>
+      </div>` : '';
+
     body.innerHTML = `
       <p class="meta">当前版本 <strong>${escapeHtml(s.currentVersion || '—')}</strong>。</p>
       <p class="meta" style="margin-top:4px; color:#b26a00;">
         自动更新仅在打包安装版（Windows）可用；开发模式下请从
         <code>GitHub Releases</code> 手动下载。
-      </p>`;
+      </p>
+      ${devPanel}`;
+    // 早退，但按钮还是要绑——开发模式下这张卡片上就只剩调试按钮了，
+    // 不绑的话它们点了没反应。
+    wireUpdateCard();
     return;
   }
 
@@ -1852,6 +1915,71 @@ function wireUpdateCard() {
   const releasesBtn = document.getElementById('btn-open-releases');
   if (releasesBtn) {
     releasesBtn.onclick = () => openReleasesPage();
+  }
+
+  // ---- 开发模式调试按钮 ----
+  //
+  // 只在开发模式的那张卡片上出现（paintUpdateCard 的 !s.supported 分支），
+  // 打包版里 getElementById 找不到它们，这段代码也就不会执行。
+  //
+  // 三个按钮各自对应一件事，都是为了让「桌宠提醒有更新」这条气泡能被真的
+  // 看到：真查（走完整链路）、模拟（不联网也能冒泡）、清除（收工）。
+  const devCheckBtn = document.getElementById('btn-dev-check');
+  if (devCheckBtn) {
+    devCheckBtn.onclick = async () => {
+      devCheckBtn.disabled = true;
+      try {
+        const r = await api.app.checkUpdate();
+        _updateState = r.state || _updateState;
+        if (!r.ok) {
+          _updateState = { ..._updateState, error: r.reason || '检查更新失败' };
+          toast(r.reason || '检查更新失败');
+        } else if (r.hasUpdate) {
+          toast(`发现新版本 ${r.info.version}，桌宠应该已经冒泡了`);
+        } else {
+          toast('已是最新版本');
+        }
+      } catch (err) {
+        toast('检查失败：' + ((err && err.message) || err));
+      } finally {
+        paintUpdateCard();
+      }
+    };
+  }
+
+  const devFakeBtn = document.getElementById('btn-dev-fake');
+  if (devFakeBtn) {
+    devFakeBtn.onclick = async () => {
+      try {
+        // 版本号给个明显是假的，免得用户以为真有一个版本叫这个。
+        const r = await api.app.devFakeUpdate('0.0.0-dev');
+        if (!r || !r.ok) {
+          toast('模拟失败：' + ((r && r.reason) || '未知原因'));
+          return;
+        }
+        _updateState = r.state || _updateState;
+        toast('已模拟一条「有新版本」提醒，看桌宠头顶');
+      } catch (err) {
+        toast('模拟失败：' + ((err && err.message) || err));
+      }
+    };
+  }
+
+  const devClearBtn = document.getElementById('btn-dev-clear');
+  if (devClearBtn) {
+    devClearBtn.onclick = async () => {
+      try {
+        const r = await api.app.devClearUpdate();
+        if (!r || !r.ok) {
+          toast('清除失败：' + ((r && r.reason) || '未知原因'));
+          return;
+        }
+        _updateState = r.state || _updateState;
+        toast('已清除模拟提醒');
+      } catch (err) {
+        toast('清除失败：' + ((err && err.message) || err));
+      }
+    };
   }
 
   const updateBtn = document.getElementById('btn-update-now');

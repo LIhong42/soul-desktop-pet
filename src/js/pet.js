@@ -7,7 +7,7 @@ const sprite = document.getElementById('pet-sprite');
 const frame = document.getElementById('pet-frame');
 const badge = document.getElementById('pet-badge');
 const bubble = document.getElementById('pet-bubble');
-// Contextual bubble (吃饭提醒 / 休息提醒). Distinct from `bubble`
+// Contextual bubble (吃饭提醒 / 休息提醒 / 有新版本). Distinct from `bubble`
 // above, which is the reminder-queue speech bubble. Both are drawn above the
 // sprite; the contextual one carries a z-index so it wins when they collide.
 const ctxBubble = document.getElementById('pet-text-bubble');
@@ -301,7 +301,10 @@ bubble.addEventListener('click', (e) => {
 // stops ticking (e.g. the app is mid-quit and the interval is torn down
 // before the next tick that would clear it).
 //
-// The payload is `{ text, kind, rule }`; `text: null` means "clear".
+// The payload is `{ text, kind, rule, durationMs }`; `text: null` means
+// "clear". `durationMs` is the rule's own duration — it tells the
+// self-expiry backstop below how long this bubble is supposed to last, so
+// the 有新版本 bubble (10 minutes) doesn't fall back to the 1-hour default.
 //
 // Two producers share this one slot:
 //   * the rule engine (吃饭提醒 / 休息提醒), via `pet:bubble-changed`
@@ -718,6 +721,31 @@ function showContextBubble(payload) {
   }, ttl);
 }
 
+// ---- 气泡点击 ----
+//
+// 「有新版本」现在只走动态插拔这一条路：它被插进 default 动作的台词池，
+// 以一句普通台词气泡的样子出现（浅蓝色、pointer-events:none），不再画成
+// 一条独立的可点卡片。所以这里没有 kind 分支了——所有气泡都不可点。
+//
+// 这次改动之前，这条规则同时走规则路径，会画成一条 data-kind="update" 的
+// 琥珀色可点卡片，点一下跳 GitHub Releases。两条路并存时用户看到的是同一
+// 句话画了两次、一个黄一个蓝、只有一个能点，所以规则路径被去掉了。
+// 下载请到设置页的更新卡片里点。
+//
+// 点击处理保留着（而不是删掉整个监听），是为了以后再出现「点了有反应」
+// 的气泡时有地方挂：现在它在函数里先挡掉，避免点击冒到桌宠的拖拽逻辑上。
+//
+// 冒泡在桌宠**上方**（.pet-bubble 的 bottom 锚在 sprite 的顶边），和桌宠
+// 自己的点击/拖拽区域不重叠，所以这里 stopPropagation 不会影响拖动。
+if (ctxBubble) {
+  ctxBubble.addEventListener('click', (e) => {
+    // 所有气泡都不可点：它们只是陈述一句话（「今天吃撒」「坐太久了」），
+    // 点了没有任何事可做，所以 CSS 里 pointer-events:none。这里再挡一次，
+    // 免得以后有人给某个 kind 开了 pointer-events 却忘了写对应行为。
+    e.stopPropagation();
+  });
+}
+
 // ---- Drag implementation ----
 //
 // Four layers, because each naive version had a failure mode that made the
@@ -1028,10 +1056,15 @@ function countInputEvent(family) {
 
 // Is this element one the user has to be able to CLICK rather than drag?
 //
-// The reminder bubble is the only such element: clicking it closes the
-// reminder. It sits above the sprite, so it never covered the pet's body,
-// but now that the whole window is a drag target it has to be excluded
-// explicitly — otherwise a click on the bubble would start a drag and
+// Two elements qualify, and both carry `data-pet-interactive` in pet.html:
+//
+//   * the reminder bubble — clicking it closes the reminder;
+//   * the contextual text bubble — the 「有新版本」 kind is a link to the
+//     GitHub Releases page.
+//
+// Both sit above the sprite, so they never covered the pet's body, but now
+// that the whole window is a drag target they have to be excluded
+// explicitly — otherwise a click on one of them would start a drag and
 // swallow the click.
 function isInteractiveTarget(target) {
   try {

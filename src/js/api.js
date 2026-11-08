@@ -161,7 +161,7 @@ export const api = {
   contactBanner: {
     get: () => M.contactBanner?.get?.() || Promise.resolve(null),
   },
-  // 文本气泡配置（吃饭提醒 / 休息提醒）。规则由主进程
+  // 文本气泡配置（吃饭提醒 / 休息提醒 / 有新版本）。规则由主进程
   // main/pet_bubbles.js 单点定义，这里只做薄封装。
   bubbles: {
     getConfig:      ()     => M.bubbles?.getConfig?.() || Promise.resolve({ rules: [], feedWindows: {} }),
@@ -187,6 +187,14 @@ export const api = {
     installUpdate:    (opts) => M.app.installUpdate(opts || {}),
     revealInstaller:  (p)    => M.app.revealInstaller(p),
     openExternal:     (url) => M.app.openExternal(url),
+    // 开发模式调试入口：造一条假的「有新版本」提醒 / 收掉它。
+    // 打包版里主进程会拒绝，界面上也不会出现对应按钮。
+    //
+    // 用可选调用：老版本的 preload 里没有这两个方法，直接调会抛
+    // "is not a function"——那会让整个设置页的渲染挂掉，而它只是几个
+    // 调试按钮而已，不值得。
+    devFakeUpdate:    (v)   => M.app.devFakeUpdate?.(v) || Promise.resolve({ ok: false, reason: '当前版本不支持该调试入口' }),
+    devClearUpdate:   ()    => M.app.devClearUpdate?.() || Promise.resolve({ ok: false, reason: '当前版本不支持该调试入口' }),
   },
   backup: {
     export: () => M.backup.export(),

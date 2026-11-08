@@ -86,9 +86,35 @@ const STATE_KEY_PREFIX = 'pet_bubbles_state:';
 // Per-user toggle key (which kinds are on). Also pet-independent.
 const OPTS_KEY = 'pet_bubbles_enabled';
 
-// All three shipped rules run for one hour, per spec. A rule may override
-// per-intent via `build()`'s returned `durationMs`.
+// The two nagging reminders (吃饭 / 休息) run for one hour, per spec. A rule
+// may override per-intent via `build()`'s returned `durationMs` — the
+// 有新版本 rule does exactly that, with a shorter window of its own.
 const DEFAULT_DURATION_MS = 60 * 60_000;
+// 有新版本 is a notification rather than a nagging reminder, so it gets a
+// shorter window — long enough to read and act on, short enough that it
+// doesn't squat on the bubble slot and starve 吃饭提醒.
+//
+// 「有新版本」气泡挂多久。
+//
+// 机制和吃饭/休息提醒完全一致：都靠「时间窗」来取消，不是靠「消费一条
+// 通知」。一次检测到新版本 = 开一个 10 分钟的窗口；窗口没到之前 build()
+// 一直返回那句话，窗口一过 build() 就返回 null，气泡自然消失、也自动从
+// default 动作的候选池里摘掉（见 syncRuntime）。
+//
+// 需求：「请把检测更新气泡也改为时间取消，在检测后如果有版本更新，则将气泡
+// 绑定到default动作，10分钟后取消绑定」。
+const UPDATE_DURATION_MS = 10 * 60_000;
+// 「有新版本」气泡的文案。
+//
+// 只有这四个字：版本号和「去 GitHub 下载吧」都去掉了。气泡本身很小，
+// 塞一整句会撑破布局；而版本号在设置页的更新卡片里本来就写着，桌宠这
+// 边再说一遍是冗余。
+//
+// 这条规则是 plug-only 的（见 UPDATE_RULE 的注释）：这句话只会作为
+// default 动作的一句台词被插进去，不会画成一条独立的气泡。所以它不可
+// 点——下载请到设置页的更新卡片里点。
+const UPDATE_TEXT = '有新版本';
+
 const REFRESH_MS = 1000;   // tick cadence
 
 // ---------------------------------------------------------------------------
@@ -253,6 +279,108 @@ const BUILTIN_RULES = [
       state.dirty = true;
     },
   },
+
+  // ---------------------------------------------------------------------
+  // 有新版本 — "有新版本啦"
+  //
+  // Unlike the two rules above, this one is *event*-triggered rather than
+  // clock-driven: the window only opens after main/app_update.js has
+  // actually checked GitHub and found a newer release. The check runs on its
+  // own schedule (once a day, see app_update.js), so the window arrives as a
+  // push — `setUpdateNotice()` — rather than being polled by `build()`.
+  //
+  // Once the window is open, though, the mechanism is EXACTLY the meal
+  // rule's: `build()` asks "am I inside the window?" every tick, and the
+  // moment it isn't, the rule stops winning, the bubble disappears, and
+  // syncRuntime() takes the line back out of the `default` action's pool
+  // (动态插拔). There is no separate "showing" bookkeeping and no "consume
+  // the notice" step — the window's own expiry IS the cancellation.
+  //
+  // The window is a plain runtime value, not a DB read: it is a fact about
+  // "a newer release exists", and re-deriving it from the settings table
+  // every second would mean re-parsing JSON 3600 times an hour for a value
+  // that changes twice a day at most.
+  //
+  // ---------------------------------------------------------------------
+  // plugOnly — 这条规则只「插播」，不占气泡位
+  // ---------------------------------------------------------------------
+  //
+  // 这条规则以前是两条路同时走的：既赢得气泡位（广播自己的 kind，琥珀色、
+  // 可点 → GitHub Releases），又被 syncRuntime() 插进 default 动作的台词池
+  // （重播成一句动作台词，浅蓝色、不可点）。同一句话被画了两次，而且两次
+  // 的样子和能不能点都不一样 —— 用户看到的是一个黄的一个蓝的，只有黄色
+  // 那个能点。
+  //
+  // 现在只保留动态插拔这一条路：`plugOnly` 让它跳过 pickRule，不赢得气泡
+  // 位，只把那句话插进 default 的台词池。于是「有新版本」只会以动作气泡的
+  // 样子出现一次，一种颜色、一套行为。
+  //
+  // 代价要说清楚：动作气泡是 pointer-events:none，所以「点气泡跳 GitHub」
+  // 这个交互在插播路径上是失效的 —— 现在这句提示的作用变成了「告诉桌宠有
+  // 新版了」，跳转要走去设置页的更新卡片。
+  // 这是用户明确选择的方向（去掉规则路径，只保留动态插拔），所以这里照办，
+  // 而不是偷偷留一条规则路径兜底。渲染进程里那条可点分支（src/js/pet.js）
+  // 和对应的 CSS（.pet-bubble[data-kind="update"]）也一并删掉了。
+  //
+  // priority 只在 plugOnly 规则之间排序时才有意义（多条插播规则谁先插），
+  // 不再影响气泡位的竞争。
+  // ---------------------------------------------------------------------
+  {
+    name: 'update',
+    label: '有新版本',
+    kind: KINDS.UPDATE,
+    enabled: true,
+    priority: 100,
+    // 只插播，不占气泡位。见上面的说明。
+    plugOnly: true,
+    describe() {
+      return '检测到新版本时，由桌宠像说自己的台词一样冒一句（窗口 10 分钟后自动结束）';
+    },
+    // 用于设置页的「预览」按钮（bubbles:force）。这里给一条样例文案，
+    // 让用户能在真的等到新版本之前先看一眼气泡长什么样。
+    forceText() {
+      return UPDATE_TEXT;
+    },
+    // 激活锁（startedAt）用的是稳定的键 'update'，不是「这一次检测」的
+    // 序号。
+    //
+    // 为什么不需要按检测分键：这条规则的 onStart 什么都不做，锁存在的唯一
+    // 目的是别让 onStart 每秒都跑一遍。而「一次检测冒一次泡」这件事根本
+    // 不靠这个锁——它靠的是那个时间窗：窗口开着的时候 build() 返回那句
+    // 话，窗口一关就返回 null。没有第二次检测，就没有新的窗口，也就没有
+    // 第二次冒泡。
+    //
+    // 反过来，按检测分键（update:1、update:2……）是有代价的：startedAt
+    // 是**持久化**的，每检测一次就多一个键，永远不会被清掉——那个 JSON
+    // blob 会随着检测次数一直变大。稳定的键没有这个问题。
+    activationKey() {
+      return 'update';
+    },
+    build(state) {
+      // 窗口开着吗？没开就没话说。
+      //
+      // 取消完全靠时间：窗口的 untilAt 一过，build() 就返回 null，气泡
+      // 消失，default 动作里的那句也跟着被摘掉（见 syncRuntime）。这跟
+      // 吃饭提醒靠时间段收尾是同一个机制。
+      //
+      // 没有「消费通知」这一步，也没有「已提醒」的持久化锁——那两样都会把
+      // 第二次检测按死：同一个版本第二次被检出时，气泡就不会再出现。
+      const win = state.updateWindow;
+      if (!win || !win.version) return null;
+      if (state.nowMs >= win.untilAt) return null;
+      return {
+        text: UPDATE_TEXT,
+        durationMs: UPDATE_DURATION_MS,
+      };
+    },
+    onStart() {
+      // 这个规则不需要在 onStart 里记任何东西。
+      //
+      // 窗口的开关完全由「检测到新版本」这个事件驱动（setUpdateNotice
+      // 开窗），由窗口自己的 untilAt 关窗。onStart 如果再去写点什么，
+      // 就会变成第二份状态——而两份状态迟早会不一致。
+    },
+  },
 ];
 
 // Stable "due" ordering: priority descending, declaration order as the
@@ -310,6 +438,13 @@ function saveEnabled(dbRef, map) {
 //                    a stale "早饭已处理" doesn't suppress today's nag
 //   startedAt        rule name → epoch ms it was last activated, so `onStart`
 //                    fires once per bubble rather than once per tick
+//
+// 「有新版本」这条规则不在持久化状态里留任何东西——它的生命周期完全由
+// 那个时间窗决定：一次检测打开一个 10 分钟的窗口，窗口一关气泡就结束。
+// 不是一个跨重启的「已提醒」标记。曾经有过一个 updateNotifiedVersion 的
+// 锁和一个 updateShownCount 的计数，它们都会把第二次检测按死：用户升级到
+// 下一个版本之前，同一个版本再也不冒泡了。老库里残留的那两个字段会被
+// 读进来但不再被使用，也不写回去。
 
 function loadState(dbRef) {
   const raw = dbRef.getSetting(STATE_KEY_PREFIX);
@@ -320,12 +455,21 @@ function loadState(dbRef) {
       if (o && typeof o === 'object') parsed = o;
     } catch { parsed = {}; }
   }
+  const startedAt = (parsed.startedAt && typeof parsed.startedAt === 'object') ? parsed.startedAt : {};
+  // Older builds keyed the update rule's activation latch by detection
+  // ("update:3"), which left one dead entry behind per check — forever,
+  // because nothing ever pruned them. The key is now a stable "update", so
+  // those leftovers are dropped here; the next saveState() writes the
+  // trimmed map back and the blob stops growing.
+  for (const k of Object.keys(startedAt)) {
+    if (k.startsWith('update:')) delete startedAt[k];
+  }
   return {
     feedWindows: (parsed.feedWindows && typeof parsed.feedWindows === 'object') ? parsed.feedWindows : {},
     lastBreakNudgeAt: Number(parsed.lastBreakNudgeAt) || 0,
     breakNudgeCount: parsed.breakNudgeCount | 0,
     feedWindowsDay: parsed.feedWindowsDay || '',
-    startedAt: (parsed.startedAt && typeof parsed.startedAt === 'object') ? parsed.startedAt : {},
+    startedAt,
   };
 }
 
@@ -393,6 +537,86 @@ function setIdleSeconds(v) {
 }
 
 // ---------------------------------------------------------------------------
+// Runtime: 有新版本 time window
+// ---------------------------------------------------------------------------
+//
+// Set by main/app_update.js when a check finds a newer release on GitHub.
+// Kept in memory rather than in the settings table because it is a *fact
+// about the current release*, not a user preference: it goes stale on its
+// own as soon as the user upgrades or the check runs again.
+//
+// runtimeUpdateWindow 是一次「检测到更新」打开的**时间窗**：
+//   { version, openedAt, untilAt }
+//   version  —— 比本地新的那个版本号
+//   openedAt —— 窗口打开的时间
+//   untilAt  —— 窗口关闭的时间（= openedAt + UPDATE_DURATION_MS）
+//
+// 机制和吃饭提醒完全一致：窗口开着的时候 build() 一直返回「有新版本」，
+// 气泡就一直在；10 分钟一到，build() 返回 null，气泡消失，那句话也从
+// default 动作的候选池里被摘掉（动态插拔）。
+//
+// 下一次检测会把窗口重新打开（untilAt 顺延），于是又冒一次泡——哪怕是
+// 同一个版本，因为那是一次新的检测。窗口是整体替换的，不需要一个序号
+// 来区分「这是第几次检测」：没有任何逻辑需要同时持有两个窗口。
+//
+// 这里刻意不放持久化的「已提醒」锁：那个锁跨重启存在，会在用户升级到
+// 下一个版本之前把提醒按死——正是「检测到新版本但气泡不出现」的原因。
+let runtimeUpdateWindow = null;
+
+/**
+ * Tell the bubble engine a newer release exists.
+ *
+ * 每一次调用都代表一次独立的「检测到新版本」，所以每一次都会打开一个
+ * 新的时间窗——哪怕版本号和上一次完全一样。窗口 10 分钟后自己关上，气泡
+ * 随之结束；要再冒一次，必须有下一次检测。
+ *
+ * @param {string} version  the newer version, e.g. "0.2.0"
+ */
+function setUpdateNotice(version) {
+  const v = String(version || '').trim();
+  if (!v) return false;
+  const now = Date.now();
+  // 每次检测都重开窗口：untilAt 从「这一次检测」开始算 10 分钟。
+  //
+  // 如果上一次检测的窗口还开着（同一版本被检出了两次），相当于把剩余
+  // 时间顺延到从现在起算 10 分钟——这是「每次检测都提醒一次」的应有之义。
+  runtimeUpdateWindow = {
+    version: v,
+    openedAt: now,
+    untilAt: now + UPDATE_DURATION_MS,
+  };
+  return true;
+}
+
+/**
+ * Close the window. Called when the user has acknowledged it (e.g. opened
+ * the releases page) or when the update is no longer current.
+ */
+function clearUpdateNotice(version) {
+  if (!runtimeUpdateWindow) return false;
+  // With no version given, close unconditionally; with one, only close if it
+  // matches — so a stale ack for an old version can't wipe a fresher window.
+  if (version != null && runtimeUpdateWindow.version !== String(version)) return false;
+  runtimeUpdateWindow = null;
+  return true;
+}
+
+/**
+ * Forget everything about the 有新版本 reminder: close the time window.
+ *
+ * 这只给开发模式的调试入口用（main/app_update.js 的 devTools）。正常路径
+ * 永远不需要它——现在没有跨重启的「已提醒」锁，模拟出来的提醒本来就只在
+ * 内存里。
+ */
+function resetUpdateReminder() {
+  runtimeUpdateWindow = null;
+}
+
+function getUpdateWindow() {
+  return runtimeUpdateWindow;
+}
+
+// ---------------------------------------------------------------------------
 // Snapshot
 // ---------------------------------------------------------------------------
 
@@ -423,6 +647,21 @@ function buildSnapshot(state, now, idleSeconds) {
     idleSeconds: (typeof idleSeconds === 'number' && Number.isFinite(idleSeconds)) ? idleSeconds : -1,
     lastBreakNudgeAt: state.lastBreakNudgeAt,
     breakNudgeCount: state.breakNudgeCount | 0,
+    // The "有新版本" time window, opened by main/app_update.js when a check
+    // finds a newer release. Null whenever no newer release is known, or
+    // when the window has closed. The rule asks it "am I inside the window?"
+    // every tick — exactly like the meal rule asks "am I inside the meal
+    // window?" — and that question is the whole cancellation mechanism.
+    updateWindow: runtimeUpdateWindow,
+    // The live state object, by reference. `onStart` / `onEvent` get the
+    // snapshot, and a rule that needs to record a *scalar* (not a shared
+    // sub-object) has to write it somewhere that survives the tick —
+    // writing it on the snapshot would be silently discarded, because the
+    // snapshot is rebuilt from scratch on every tick.
+    //
+    // `feedWindows` above is shared by reference for the same reason; this
+    // is the general escape hatch for rules whose latch is a scalar.
+    liveState: state,
     // The framework's own mutation signal — set by rules to request a save.
     dirty: false,
   };
@@ -433,8 +672,12 @@ function buildSnapshot(state, now, idleSeconds) {
 // ---------------------------------------------------------------------------
 
 // The highest-priority rule that wants a bubble right now, or null.
+//
+// A rule marked `plugOnly` is skipped here — see the comment on the `update`
+// rule for why 有新版本 wants to be *said* but not to *own* the bubble slot.
 function pickRule(snapshot, enabledMap) {
   for (const rule of ORDERED_RULES) {
+    if (rule.plugOnly) continue;
     if (enabledMap[rule.kind] === false) continue;
     let intent;
     try {
@@ -450,13 +693,65 @@ function pickRule(snapshot, enabledMap) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Plug-only rules (动态插拔 only, no bubble slot)
+// ---------------------------------------------------------------------------
+//
+// A `plugOnly` rule never wins the bubble slot; it only feeds a line into the
+// `default` action's runtime pool, and the pet says it when that action
+// happens to play. The bubble that eventually appears is an *action* bubble,
+// so it wears the action accent rather than the rule's own.
+//
+// The reason 有新版本 works this way is that it used to work BOTH ways at
+// once, and the two ways disagreed: the rule path broadcast its own kind
+// (amber, clickable → GitHub Releases), while the 动态插拔 path replayed the
+// same sentence as an action line (blue, not clickable). The user saw the
+// same sentence in two different colours and could only click one of them —
+// the one that mattered.
+//
+// So the rule path is gone: 有新版本 is *only* spoken by the pet as one of
+// its own lines. One path, one look, one behaviour.
+//
+// Returned as a list rather than a single rule: several plug-only rules
+// could coexist, and the pool takes all of their lines at once.
+function collectPlugOnly(snapshot, enabledMap) {
+  const out = [];
+  for (const rule of ORDERED_RULES) {
+    if (!rule.plugOnly) continue;
+    if (enabledMap[rule.kind] === false) continue;
+    let intent;
+    try {
+      intent = rule.build(snapshot);
+    } catch (e) {
+      console.error(`[pet_bubbles] rule "${rule.name}" build failed:`, e && e.message ? e.message : e);
+      continue;
+    }
+    if (intent && typeof intent.text === 'string' && intent.text.trim()) {
+      out.push({ rule, intent });
+    }
+  }
+  return out;
+}
+
 // Run a rule's activation hook at most once per bubble. The latch is stored
 // on the persisted state so a restart doesn't re-nudge the break rule
 // mid-bubble.
+//
+// A rule may declare `activationKey(snapshot)` to make the latch finer than
+// "once per rule name" — e.g. per window rather than per rule. The 有新版本
+// rule declares one, but it settles on the stable "update": its `onStart`
+// does nothing, and the per-detection latch it used to carry was not just
+// unnecessary but harmful (it wrote one more key into the *persisted*
+// `startedAt` map on every check, forever).
 function maybeRunOnStart(rule, state, snapshot, durationMs, nowMs) {
-  const last = Number(state.startedAt[rule.name]) || 0;
+  // The latch key. Without activationKey it's the rule's own name, which
+  // keeps the old behaviour (one activation per bubble per rule).
+  const key = (typeof rule.activationKey === 'function')
+    ? (rule.activationKey(snapshot) || rule.name)
+    : rule.name;
+  const last = Number(state.startedAt[key]) || 0;
   if (nowMs - last < durationMs) return;
-  state.startedAt[rule.name] = nowMs;
+  state.startedAt[key] = nowMs;
   state.dirty = true;
   if (typeof rule.onStart !== 'function') return;
   try {
@@ -524,26 +819,33 @@ function plugRuntime(text, ttlMs) {
   runtimePlugged.push({ text, ttlMs: Number(ttlMs) || 0 });
 }
 
-// Reconcile the runtime pool with what's on screen right now. `text` is the
-// winning rule's line (null when nothing is showing). Returns true when the
+// Reconcile the runtime pool with what's on screen right now. `lines` is the
+// list of lines to have plugged right now — the winning rule's line plus
+// every plug-only rule's line (a list, because plug-only rules don't compete
+// for the bubble slot and so can all be live at once). Returns true when the
 // `default` action gained or lost a line, which the caller uses to force a
 // re-pick of the action's speech bubble.
-function syncRuntime(text, ttlMs) {
+function syncRuntime(lines) {
+  const want = [];
+  for (const l of (Array.isArray(lines) ? lines : [])) {
+    if (!l || !l.text) continue;
+    want.push({ text: l.text, ttlMs: Number(l.ttlMs) || 0 });
+  }
   const had = runtimePlugged.length > 0;
   // Remove everything we plugged on a previous tick, then re-add the current
-  // winner. Simpler (and safer) than trying to diff: the pool is at most a
+  // set. Simpler (and safer) than trying to diff: the pool is at most a
   // couple of entries, and a full reset can't strand a line we forgot about.
   for (const old of runtimePlugged) {
     petActionTexts.dequeueRuntime(RUNTIME_TARGET_ACTION, old.text);
   }
   runtimePlugged = [];
-  if (text) {
+  for (const l of want) {
     // The authoritative removal happens on the *next* tick once the rule
     // stops winning; this ttl only matters if the app is killed mid-bubble,
     // in which case the in-memory pool dies with it anyway.
-    plugRuntime(text, ttlMs);
+    plugRuntime(l.text, l.ttlMs);
   }
-  return had !== (text != null && text !== '');
+  return had !== (want.length > 0);
 }
 
 // Clear the pool on stop() so a line can't outlive the process that
@@ -554,6 +856,33 @@ function resetRuntime() {
   }
   runtimePlugged = [];
   petActionTexts.clearRuntime();
+}
+
+// ---------------------------------------------------------------------------
+// Previewing a plug-only rule
+// ---------------------------------------------------------------------------
+//
+// The settings page's 「预览」 button has to show the user what a rule looks
+// like. For a plug-only rule the honest preview is the thing itself: plug the
+// line into the pool and let the pet say it, exactly as a real detection
+// would. Painting a rule-bubble card instead would show a look the user
+// never sees in practice — a different colour, a different click behaviour —
+// which is the very inconsistency this rule was changed to remove.
+//
+// The line is inserted directly rather than going through `syncRuntime`, so
+// it survives until the next tick reconciles the pool. That is deliberate:
+// the next tick would otherwise immediately dequeue it again (its rule
+// isn't due), and the preview would never be spoken.
+//
+// Returns the text that was plugged, or null if the rule has nothing to say.
+function forcePlugOnly(rule) {
+  if (!rule || !rule.plugOnly) return null;
+  const text = (typeof rule.forceText === 'function') ? rule.forceText() : rule.name;
+  if (!text) return null;
+  // A generous ttl: the preview is a one-off, and the pool entry is
+  // reconciled away on the next tick anyway.
+  petActionTexts.enqueueRuntime(RUNTIME_TARGET_ACTION, text, petActionTexts.RUNTIME_TTL_MS);
+  return text;
 }
 
 function tick() {
@@ -570,23 +899,54 @@ function tick() {
   }
 
   const now = new Date();
+
   const snapshot = buildSnapshot(state, now, runtimeIdleSeconds);
   const picked = pickRule(snapshot, enabledMap);
 
-  let payload = { text: null, kind: null, rule: null };
+  let payload = { text: null, kind: null, rule: null, durationMs: DEFAULT_DURATION_MS };
   if (picked) {
     const { rule, intent } = picked;
     const durationMs = Number.isFinite(intent.durationMs) ? intent.durationMs : DEFAULT_DURATION_MS;
     maybeRunOnStart(rule, state, snapshot, durationMs, now.getTime());
-    payload = { text: intent.text, kind: rule.kind, rule: rule.name };
+    // durationMs travels with the payload so the renderer's self-expiry
+    // backstop matches the rule's own duration. Without it the renderer
+    // falls back to 1 hour — which for the 有新版本 bubble (10 minutes)
+    // would leave it on screen for an hour and a half if the main side's
+    // clear broadcast were ever missed.
+    payload = { text: intent.text, kind: rule.kind, rule: rule.name, durationMs };
   }
 
-  // Mirror the live rule line into the `default` action's speech pool for
-  // the duration of this bubble (动态插拔). When the winning rule changes —
-  // or stops winning entirely, e.g. after the user feeds the pet — this
-  // removes the stale line on the very next tick.
-  syncRuntime(payload.text, picked ? (Number.isFinite(picked.intent.durationMs)
-    ? picked.intent.durationMs : DEFAULT_DURATION_MS) : 0);
+  // Mirror the live lines into the `default` action's speech pool (动态插拔).
+  // Two sources feed it:
+  //
+  //   * the winning rule's line, for as long as that rule owns the bubble
+  //     slot;
+  //   * every plug-only rule's line (currently just 有新版本), for as long as
+  //     that rule's own window is open.
+  //
+  // When the winning rule changes — or stops winning entirely, e.g. after the
+  // user feeds the pet — or when a plug-only rule's window closes, the stale
+  // line is removed on the very next tick.
+  const plugLines = [];
+  for (const { rule, intent } of collectPlugOnly(snapshot, enabledMap)) {
+    plugLines.push({
+      text: intent.text,
+      ttlMs: Number.isFinite(intent.durationMs) ? intent.durationMs : DEFAULT_DURATION_MS,
+    });
+    // A plug-only rule still gets its activation hook, so `onStart` runs once
+    // per window rather than every tick.
+    maybeRunOnStart(rule, state, snapshot, plugLines[plugLines.length - 1].ttlMs, now.getTime());
+  }
+  const syncLines = [];
+  if (payload.text) {
+    syncLines.push({
+      text: payload.text,
+      ttlMs: picked && Number.isFinite(picked.intent.durationMs)
+        ? picked.intent.durationMs : DEFAULT_DURATION_MS,
+    });
+  }
+  for (const l of plugLines) syncLines.push(l);
+  syncRuntime(syncLines);
 
   if (snapshot.dirty || state.dirty) saveState(db, state);
 
@@ -643,6 +1003,10 @@ function stop() {
   // smoke tests) can't leave a 吃饭提醒 line stranded in the `default`
   // action's pool with no rule behind it to remove it.
   resetRuntime();
+  // The 有新版本 time window is a runtime value, so it dies with the engine
+  // that owns it. Nothing about it is persisted: every detection opens a
+  // fresh window, and the bubble ends when that window closes.
+  runtimeUpdateWindow = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +1024,10 @@ function describeRules(dbRef) {
       priority: r.priority,
       enabled: enabled[r.kind] !== false,
       description: (typeof r.describe === 'function') ? r.describe() : '',
+      // A plug-only rule doesn't own the bubble slot — it only feeds a line
+      // into the idle action's pool. Surfaced so the settings page can say
+      // so, and so the preview button knows to preview it the plug way.
+      plugOnly: !!r.plugOnly,
     })),
     // Surfaced so the settings page can show "今日已喂食" without waiting
     // for the bubble to appear.
@@ -670,6 +1038,8 @@ function describeRules(dbRef) {
 module.exports = {
   BROADCAST_CHANNEL,
   DEFAULT_DURATION_MS,
+  UPDATE_DURATION_MS,
+  UPDATE_TEXT,
   REFRESH_MS,
   BUILTIN_RULES,
   KINDS,
@@ -682,6 +1052,13 @@ module.exports = {
   setIdleSeconds,
   emit,
   invalidateRuleBox,
+
+  // 有新版本 time window (opened by main/app_update.js on every detection)
+  setUpdateNotice,
+  clearUpdateNotice,
+  getUpdateWindow,
+  // 开发模式调试用：把模拟出来的提醒收掉。
+  resetUpdateReminder,
 
   // config / introspection
   loadEnabled,
@@ -697,6 +1074,9 @@ module.exports = {
   // re-exported so the settings page can show them without reaching into
   // pet_action_texts directly.
   listRuntime: petActionTexts.listRuntime,
+  // Preview a plug-only rule by plugging it, rather than by painting a
+  // rule-bubble card the user would never see for real.
+  forcePlugOnly,
 
   // internals, exported for tests
   _internals: {
@@ -704,6 +1084,7 @@ module.exports = {
     saveState,
     buildSnapshot,
     pickRule,
+    collectPlugOnly,
     parseHhmmToMinutes,
     currentMealWindow,
     dayKeyOf,

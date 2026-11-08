@@ -824,6 +824,36 @@ class PetController {
     }
   }
 
+  // Say a specific line right now, bypassing the random pick.
+  //
+  // This exists for the 动态插拔 preview (settings → 预览 on a plug-only
+  // rule like 「有新版本」). The normal path picks a line at random from the
+  // action's pool, so a preview that just waited for the next action roll
+  // would usually show *nothing* — the "no text" entry is always in the pool,
+  // and the plugged line is only one of several candidates.
+  //
+  // So the preview says the line directly. It is broadcast on the same
+  // channel, with the same action name and the same box resolution as a real
+  // line, so what the user sees is exactly what the real thing looks like.
+  //
+  // `action` defaults to the idle action, which is where plug-only lines
+  // live (main/pet_bubbles.js RUNTIME_TARGET_ACTION).
+  sayLine(text, action) {
+    if (!this.win || this.win.isDestroyed()) return false;
+    const line = String(text == null ? '' : text).trim();
+    if (!line) return false;
+    const act = action || 'default';
+    this.win.webContents.send('pet:action-changed', {
+      petId: this.petId,
+      action: act,
+      direction: this.actionDirection > 0 ? 'right' : 'left',
+      text: line,
+      // The box travels with its line, same as every other broadcast.
+      box: this._resolveActionBox(act),
+    });
+    return true;
+  }
+
   // Which 文本框 this action's speech should be drawn in, as a `file://` URL,
   // or null to keep the CSS-drawn bubble.
   //

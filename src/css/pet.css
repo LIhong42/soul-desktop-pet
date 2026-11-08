@@ -166,10 +166,21 @@ html, body {
   transition: opacity 600ms ease;
   /* Same window-fitting geometry as .pet-bubble — see its comment block. */
   box-sizing: border-box;
+  /* Hug the text, for the same reason .pet-bubble does: without `fit-content`
+     this absolute box shrink-to-fits against the space left of `left: 50%`
+     (half the window), so a short reminder was drawn into a window-wide
+     panel. `max-width` is the cap that makes a long line wrap instead. */
+  width: fit-content;
   max-width: 100%;
+  /* Same floor as .pet-bubble — a one-word reminder still has to read as a
+     bubble, not a sliver. */
+  min-width: 88px;
   max-height: calc(var(--size-h) - var(--sprite-h));
   white-space: pre-wrap;
   word-break: break-word;
+  /* The text is a direct child here (no wrapper span), so centring it inside
+     the box is `text-align`'s job. */
+  text-align: center;
   overflow: hidden;
 }
 .reminder-bubble.hidden { display: none; }
@@ -246,13 +257,22 @@ html, body {
   /* Window-fitting, same as the other two bubbles — see .pet-bubble. Without
      this this one had no max-width at all and was the worst offender. */
   box-sizing: border-box;
+  /* Hug the text, same as the other two bubbles — without `fit-content` this
+     absolute box shrink-to-fits against the space left of `left: 50%` (half
+     the window), so a short "来贴贴~" was drawn into a window-wide panel. */
+  width: fit-content;
   max-width: 100%;
+  /* Same floor as .pet-bubble — a short "来贴贴~" still has to read as a
+     bubble, not a sliver. */
+  min-width: 88px;
   /* Bubble sits above the sprite; the headroom above it is the only room
      it has, so cap the height there rather than at the root's full
      height (which would let a tall bubble grow down over the pet). */
   max-height: calc(var(--size-h) - var(--sprite-h));
   white-space: pre-wrap;
   word-break: break-word;
+  /* Direct text child (no wrapper span), so `text-align` is what centres it. */
+  text-align: center;
   /* Hidden, not auto — `overflow-y: auto` was drawing a scrollbar arrow on
      the right edge of a purely decorative bubble (this is the artifact that
      made the bubbles look clumsy). The max-height above already keeps
@@ -319,7 +339,28 @@ html, body {
   pointer-events: none;
   opacity: 1;
   transition: opacity 400ms ease;
+  /* Hug the text, exactly like the artwork mode below does.
+     Without this the box is an absolutely positioned shrink-to-fit box, and
+     shrink-to-fit resolves its "available width" against the space *left of*
+     `left: 50%` — i.e. half the window — so a two-character line was drawn
+     into a box as wide as the window and as tall as the whole headroom. The
+     bubble stopped being a bubble and became a panel with two characters
+     floating in the middle of it.
+     `fit-content` sizes to the text's own max-content width instead, and the
+     `max-width` below is the cap that makes a long line wrap rather than
+     overflow the window. This is the same declaration the artwork mode uses
+     (see .pet-bubble.has-art) — the two modes are meant to size alike, and
+     the artwork mode is the one that was already right. */
+  width: fit-content;
   max-width: 100%;
+  /* Grid + centring, again mirroring .pet-bubble.has-art: the text is an
+     inline <span>, so without a block-ish container it sits flush at the
+     start of the box and never centres inside it. The explicit
+     `grid-template-columns` + the text's `justify-self: stretch` below are
+     what make `place-items: center` actually centre the glyphs. */
+  display: grid;
+  place-items: center;
+  grid-template-columns: minmax(0, 1fr);
   white-space: pre-wrap;
   word-break: break-word;
   /* Hidden, not auto: a visible scrollbar on a decorative bubble is ugly and
@@ -335,6 +376,21 @@ html, body {
 }
 .pet-bubble.hidden { display: none; }
 .pet-bubble.fade   { opacity: 0; }
+/* The smallest the DEFAULT card may get — a one- or two-character line still
+   has to read as a bubble rather than a sliver with a glyph rattling around
+   in it. Matches the artwork mode's ART_MIN_W (88px) so both modes have the
+   same smallest bubble.
+
+   Deliberately NOT on the base rule: the artwork mode's width is set inline
+   by applyArtGeometry, and that number is the box the artwork is cropped to
+   — a CSS min-width that disagreed with it would desync the drawing from the
+   box it was scaled into. The artwork mode enforces the same floor in JS
+   (ART_MIN_W), where the crop can be kept in agreement with it.
+
+   `min-width` is a floor, not a target: `width: fit-content` still sizes the
+   box, and min-width only clamps the bottom end, so a longer line widens the
+   bubble past this. */
+.pet-bubble:not(.has-art) { min-width: 88px; }
 /* Tail pointing down at the pet. Sits 1px INTO the bubble so its base covers
    the bottom edge (including the 1px ring) rather than leaving a seam. The
    triangle is 5px wide at the base — small, so it reads as a speech tail
@@ -381,6 +437,16 @@ html, body {
 }
 .pet-bubble[data-kind="action"]::after { border-top-color: #f2f5fa; }
 
+/* 有新版本（main/app_update.js + pet_bubbles.js 的 update 规则）。
+   这条规则是 plug-only 的：它不占气泡位，只把「有新版本」插进 default
+   动作的台词池，所以画出来的是一句普通台词气泡（下面的 action 色），
+   不会走这里。
+
+   以前它同时走规则路径，会画成一条琥珀色、可点的卡片，点一下跳 GitHub
+   Releases。那条路已经去掉了——同一句话出现两次、两个颜色、只有一个能点。
+   现在只有插播这一条路，下载请到设置页的更新卡片里点。
+   */
+
 /* ---- 文本框 artwork mode (resources/text_boxes) ----
    When the user picks a text box for an action, the bubble stops being a CSS
    card and becomes that PNG instead.
@@ -403,7 +469,18 @@ html, body {
    The CSS ::after tail is dropped in this mode: the artwork draws its own and
    ours would land on top of it. */
 
-.pet-bubble > .pet-bubble-text { position: relative; }
+.pet-bubble > .pet-bubble-text {
+  position: relative;
+  /* Fill the grid track so `place-items: center` has something to centre
+     within — same reason the artwork mode sets this (see the .has-art block
+     below). Without it the inline <span> shrink-wraps to its longest line and
+     sits at the start of the track, and the text is left-aligned in a box
+     that is now exactly as wide as the text anyway. */
+  justify-self: stretch;
+  /* Centred, so a line that has wrapped because it hit `max-width` reads as
+     a centred label rather than a ragged left-aligned block. */
+  text-align: center;
+}
 
 /* Hidden unless has-art, so both modes share one text node and nothing is
    duplicated. */

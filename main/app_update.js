@@ -16,7 +16,8 @@
 //     html> 嗅探
 //   .new/.old 重命名替换             启动 NSIS 安装包（Windows 无法热替换
 //                                   正在运行的 exe）
-//   is_non_updateable()             isSupported()（开发模式不可更新）
+//   is_non_updateable()             isSupported()（开发模式不可安装）
+//                                   + canQueryReleases()（开发模式仍可查询）
 //   「未校验不自动重启」             「未通过校验一律拒绝安装」（更严格，
 //                                   见 verifyDownloaded）
 //
@@ -150,10 +151,76 @@ function detectVariant() {
 // 自动更新在当前环境下是否可用。对应 yt-dlp 的 is_non_updateable()：
 // 开发模式下 process.execPath 指向的是 node_modules 里的 electron.exe，
 // 拿它当更新目标毫无意义，所以直接拒绝并说明原因。
+//
+// 注意这里的语义是「能不能**安装**」——能不能**查询**是另一件事，见
+// canQueryReleases()。开发模式下查不了装，但可以查：查一次 GitHub 看看
+// 有没有新版本，正是开发模式下唯一能做的事。
 function isSupported() {
   if (!app.isPackaged) return false;
   if (process.platform !== 'win32') return false;
   return !!detectVariant();
+}
+
+// 能不能去 GitHub **查**有没有新版本。
+//
+// 和 isSupported() 分开，是因为「查」和「装」的风险完全不同：
+//
+//   查 —— 只发一个 GET 请求，读一份公开的 release 元数据。开发模式下做这
+//        件事是安全的，而且很有用：不然开发时永远看不到「有新版本」这条
+//        气泡长什么样，唯一的验证方式就只能靠 mock。
+//   装 —— 要下载 64MB 的安装包、校验 SHA-256、然后**替换掉正在运行的
+//        可执行文件**。开发模式下 process.execPath 指向 node_modules 里的
+//        electron.exe，拿它当更新目标毫无意义（还会把依赖目录搞坏），
+//        所以这条路必须继续拒绝。
+//
+// 平台限制两边的请求都一样（现在只发 Windows x64 的安装包），所以这里
+// 沿用 detectVariant()。
+function canQueryReleases() {
+  if (process.platform !== 'win32') return false;
+  return !!detectVariant();
+}
+
+// 开发模式下的调试能力。给「桌宠有新版本气泡」一条能真正走通的验证链路：
+// 不用 mock、不用改版本号，也能看到真实的检查 → 提醒 → 气泡的全过程。
+//
+// 只在开发模式下存在（isPackaged === false），打包版里这个对象是空的，
+// 界面上也就不会出现对应的按钮。
+function devTools() {
+  if (app.isPackaged) return null;
+  return {
+    // 能不能真的去 GitHub 查一次。
+    canQuery: canQueryReleases(),
+    // 「假装有一个新版本」——不走网络，直接造一条提醒，让桌宠冒泡。
+    // 用来验证气泡本身的显示、点击、持久化，而不受「现在到底有没有新版」
+    // 限制。
+    fakeNotice(version) {
+      const v = String(version || '0.0.0-dev').trim();
+      if (!v) return { ok: false };
+      // 先把之前模拟的那条收掉，免得它还挂在桌宠头上、把新的那条挡住。
+      // （模拟提醒是「开一个窗口」，旧窗口不清掉的话，新窗口的文案虽然
+      //  一样，但用户看到的是没有变化的一条。）
+      notifyResetNotice();
+      notifyUpdateNotice(v, {
+        version: v,
+        tag: `v${v}`,
+        name: `开发模式模拟版本 ${v}`,
+        notes: '这是一条开发模式下手动触发的模拟提醒。',
+        publishedAt: new Date().toISOString(),
+        assetName: null,
+        assetUrl: null,
+        assetSize: null,
+        currentVersion: app.getVersion(),
+        downloadable: false,
+        hasUpdate: true,
+      });
+      return { ok: true, version: v };
+    },
+    // 清掉模拟出来的提醒，回到「没有新版本」的状态。
+    clearNotice() {
+      notifyClearNotice();
+      return { ok: true };
+    },
+  };
 }
 
 // ---- HTTP ----
@@ -375,6 +442,13 @@ function publicState(db) {
     ...state,
     currentVersion: app.getVersion(),
     supported: isSupported(),
+    // 开发模式下的调试开关。打包版里是 null，界面上的调试入口也就不会出现。
+    // 单独列出来而不是复用 supported，是为了让渲染进程能区分「这台机器
+    // 能装」（supported）和「这是开发模式，有额外的手动入口」（dev）。
+    dev: (() => {
+      if (app.isPackaged) return null;
+      return { canQuery: canQueryReleases() };
+    })(),
     // 用户意图默认开。首次启动没表态过时，按「开」处理——和 autostart
     // 的 syncOnLaunch 是同一个约定。
     enabled: db ? db.getSetting(SETTING_ENABLED) !== '0' : true,
@@ -386,6 +460,59 @@ function publicState(db) {
 // 渲染进程监听更新状态变化。
 let statusListener = null;
 function onStatus(cb) { statusListener = cb; }
+
+// ---------------------------------------------------------------------------
+// 「有新版本」提醒的出口
+// ---------------------------------------------------------------------------
+//
+// 检查到新版本时，除了把状态记下来（设置页会显示），还要让桌宠冒个泡
+// 提醒用户——气泡本身由 main/pet_bubbles.js 渲染。
+//
+// 这里不直接 require pet_bubbles：两个模块都互相不依赖（app_update 不需要
+// 知道气泡长什么样，pet_bubbles 也不需要知道更新源是 GitHub），耦合点收
+// 敛成一个回调，由 ipc.js 接线（那里本来就已经持有这两个模块）。
+//
+// 回调收到 { version, info }，version 是「比本地新的那个版本号」。
+let updateNoticeHook = null;
+function onUpdateNotice(fn) { updateNoticeHook = fn; }
+
+// 清掉「有更新」的提醒。用户在设置里关掉「自动检查更新」时用——既然不再
+// 检查，就不该还留着一条「有新版」的泡在桌宠头上。
+let clearNoticeHook = null;
+function onClearNotice(fn) { clearNoticeHook = fn; }
+
+// 把「有新版」的提醒整个忘掉（连同那个时间窗）。只给开发模式的调试入口
+// 用：正常路径永远不需要——模拟出来的提醒本来就只在内存里。
+let resetNoticeHook = null;
+function onResetNotice(fn) { resetNoticeHook = fn; }
+
+function notifyResetNotice() {
+  if (!resetNoticeHook) return;
+  try {
+    resetNoticeHook();
+  } catch (e) {
+    console.error('[app_update] reset notice hook failed:', e);
+  }
+}
+
+function notifyUpdateNotice(version, info) {
+  if (!updateNoticeHook) return;
+  try {
+    updateNoticeHook({ version: String(version || ''), info: info || null });
+  } catch (e) {
+    console.error('[app_update] update notice hook failed:', e);
+  }
+}
+
+function notifyClearNotice() {
+  if (!clearNoticeHook) return;
+  try {
+    clearNoticeHook();
+  } catch (e) {
+    console.error('[app_update] clear notice hook failed:', e);
+  }
+}
+
 function emit() {
   if (statusListener) {
     try { statusListener(); } catch (e) { console.error('[app_update] status listener failed:', e); }
@@ -403,8 +530,10 @@ async function checkForUpdate(db) {
   if (state.checking) {
     return { ok: false, hasUpdate: false, reason: '正在检查更新，请稍候' };
   }
-  if (!isSupported()) {
-    return { ok: false, hasUpdate: false, reason: '当前环境不支持自动更新（开发模式下请从 GitHub Releases 手动下载）' };
+  // 这里问的是「能不能查」，不是「能不能装」——开发模式下查得了、装不了，
+  // 但查一次正是开发模式唯一能做的事，也是验证「有新版本」气泡的入口。
+  if (!canQueryReleases()) {
+    return { ok: false, hasUpdate: false, reason: '当前环境不支持自动更新（请从 GitHub Releases 手动下载）' };
   }
   state.checking = true;
   state.error = null;
@@ -446,6 +575,17 @@ async function checkForUpdate(db) {
       db.setSetting(SETTING_LAST_CHECK, String(Date.now()));
       db.setSetting(SETTING_LAST_INFO, JSON.stringify(state.info));
     }
+
+    // 通知桌宠冒泡。只在「真的有比本地新的版本」时通知。
+    //
+    // 「每一次检测冒一次泡」由 pet_bubbles 侧的时间窗负责：一次推送就
+    // 打开一个 10 分钟的窗口，窗口一关气泡就结束（和吃饭提醒一样的取消
+    // 机制）。所以这里每次检查都可以放心地推——哪怕推的是同一个版本
+    // （那是一次新的检测，理应再冒一次泡）。
+    if (!upToDate) {
+      notifyUpdateNotice(latestVersion, state.info);
+    }
+
     return { ok: true, hasUpdate: !upToDate, info: state.info, reason: null };
   } catch (err) {
     // 记录检查时间，哪怕这次检查失败了。不记录的话，失败的联网请求会在
@@ -483,6 +623,14 @@ function describeCheckError(err) {
 async function downloadUpdate(db, onProgress) {
   if (state.downloading) {
     return { ok: false, reason: '更新正在下载中' };
+  }
+  // 下载 = 准备安装，所以这里问的是「能不能装」，不是「能不能查」。
+  //
+  // 开发模式下 checkForUpdate() 是能成功的（那正是验证气泡的入口），所以
+  // 这一道必须在这里重新拦一次：否则开发模式下点一下「检查更新」就可能
+  // 顺着去下载 64MB 的安装包。开发模式只查不装。
+  if (!isSupported()) {
+    return { ok: false, reason: '开发模式下不能自动更新（请从 GitHub Releases 手动下载）' };
   }
   if (!state.info || !state.info.hasUpdate) {
     return { ok: false, reason: '当前已是最新版本' };
@@ -683,6 +831,9 @@ function setEnabled(db, enabled) {
   db.setSetting(SETTING_ENABLED, enabled ? '1' : '0');
   if (!enabled) {
     stopDailyCheck();
+    // 关掉自动检查 = 不再关心有没有新版本了。把桌宠头上那条「有新版」的
+    // 泡一并收掉，否则它会一直挂到用户手动处理为止。
+    notifyClearNotice();
     return { ok: true, enabled: false };
   }
   if (enableToggledHook) enableToggledHook(true);
@@ -697,10 +848,15 @@ module.exports = {
   CHECK_INTERVAL_MS,
   detectVariant,
   isSupported,
+  canQueryReleases,
+  devTools,
   isAtLeastVersion,
   versionTuple,
   publicState,
   onStatus,
+  onUpdateNotice,
+  onClearNotice,
+  onResetNotice,
   emit,
   checkForUpdate,
   downloadUpdate,

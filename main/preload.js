@@ -178,7 +178,7 @@ contextBridge.exposeInMainWorld('mp', {
   contactBanner: {
     get: () => ipcRenderer.invoke('contact_banner:get'),
   },
-  // 文本气泡（吃饭提醒 / 休息提醒）配置。规则本身由
+  // 文本气泡（吃饭提醒 / 休息提醒 / 有新版本）配置。规则本身由
   // main/pet_bubbles.js 单点定义，/settings 只能读它的自描述列表并切
   // 换开关——新增一条规则时这里不需要改动。
   //   getConfig()  → { rules: [{name,label,kind,description,enabled}], feedWindows }
@@ -219,6 +219,12 @@ contextBridge.exposeInMainWorld('mp', {
     // 打开外部链接（当前只有 GitHub Releases 页面）。限制为 http/https，
     // 否则渲染进程可以拿它去打开 file:// 或自定义 scheme。
     openExternal:       (url)   => ipcRenderer.invoke('app:open_external', url),
+    // 开发模式调试入口。造一条假的「有新版本」提醒 / 把它收掉——用来验证
+    // 桌宠的「有新版本」气泡。打包版里主进程会直接拒绝，所以这里留着也
+    // 调不通；接口留着是为了让渲染进程不用判断自己是不是开发版（判断在
+    // 主进程做，那里才知道 app.isPackaged）。
+    devFakeUpdate:      (v)     => ipcRenderer.invoke('app:dev_fake_update', v),
+    devClearUpdate:     ()      => ipcRenderer.invoke('app:dev_clear_update'),
   },
   // Backup / restore. Two-step import (pick → apply) so the renderer can
   // surface a confirm() dialog between picking the zip and overwriting the

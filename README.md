@@ -57,6 +57,13 @@
 - Right click opens the **Cozy interaction menu** — all 6 actions are customizable per character animation;
 - **The whole window is the drag handle**: a press anywhere in the window starts a drag — you never have to hit the artwork itself.
 
+### 💬 Pet Bubble Reminders
+- The pet floats a **text bubble** above its head to remind you. Three kinds, each toggled separately under **Settings → Text Bubbles**:
+  - **Meal reminder** — fires in the breakfast / lunch / dinner windows and ends as soon as you feed the pet;
+  - **Break reminder** — fires after an hour of continuous computer use, then once every 3 hours;
+  - **New version** — when an update is found, the pet **says 「有新版本」 like one of its own lines** (a blue action bubble; it does not take over the reminder bubble slot). A check that finds a new version opens a **10-minute window**; for that window the line stays plugged into the pet's speech, and it is withdrawn when the window closes — the same time-based cancellation the meal reminder uses. It comes back only on the next check. To download, use the update card in Settings.
+- Every bubble kind can wear a user-picked "text box" artwork.
+
 ### 💞 Intimacy System
 - **Bond (permanent bond)**: settled daily across 10 dimensions, upgrading quarterly;
 - **Cozy (short-term warmth)**: decays over time, a little more with each play session;
@@ -71,7 +78,7 @@
 - Built-in **background removal**, **outline stripping** and **batch image resize** tools. Imported frames come in two kinds: *opaque* PNGs (cut out automatically) and *transparent* PNGs (the cutout is skipped).
 
 ### 🔄 Auto-Update · 🔐 Privacy
-- Updates come from **GitHub Releases** — check manually, or let the app check silently once a day. Installers are verified with **SHA-256** before execution;
+- Updates come from **GitHub Releases** — check manually, or let the app check silently once a day. When a new version is found, the pet says so (「有新版本」, for 10 minutes per check). Installers are verified with **SHA-256** before execution;
 - The main window requires a 4-digit PIN to unlock (default `8888`), changeable under "Settings → Access Password";
 - **Fully local database** (sql.js, zero native dependencies), with one-click export / import of zip backups for painless whole-machine migration.
 
@@ -93,6 +100,20 @@ npm install
 npm run dev
 ```
 > Starts Electron with the main window and its DevTools; the pet window appears on top.
+
+#### Debugging the "new version" pet bubble
+
+The new-version line is event-driven — it only appears after the app actually finds a newer release, so in dev mode (where there is no installable artifact) it would normally never appear. The update card in **Settings** therefore grows a **开发模式调试** panel in dev builds only, with three buttons:
+
+- **真的查一次 GitHub** — a real query against the latest release. If it is newer than the running version, the pet really does say the line.
+- **模拟「有新版本」** — fabricates a `0.0.0-dev` notice without touching the network, so the line can be inspected on demand. Can be repeated as often as you like.
+- **清除模拟提醒** — clears the simulated notice again.
+
+Every check that finds a new version raises the line — including when it is the same version as last time (that is a new detection too). Each detection opens a 10-minute window; the line is withdrawn from the pet's speech when that window closes, and comes back only on the next check.
+
+In dev builds the app may also query GitHub once ~60 seconds after startup (the same daily check as a packaged build) — that is why the line can appear on its own during development.
+
+> These entries exist only in unpackaged builds. A packaged build rejects them at the main-process level, so they are unreachable from the renderer.
 
 ### Production run
 ```bash

@@ -176,6 +176,38 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
   petBubbles.setIdleSeconds(currentIdleSeconds());
   petBubbles.start({ broadcast: broadcastBubble });
 
+  // ---- 「有新版本」气泡的接线 ----
+  //
+  // app_update.js 检查到新版本时把版本号推过来，pet_bubbles.js 的 update
+  // 规则负责决定要不要冒泡。两个模块互不依赖，连接点就在这里。
+  //
+  // 「每一次检测 = 一次冒泡」由 pet_bubbles 侧的时间窗负责：一次推送就
+  // 打开一个 10 分钟的窗口，窗口一关气泡就结束。取消机制和吃饭提醒一致
+  // ——纯靠时间，没有「消费通知」这一步。所以这里每次检查都可以放心地推
+  // ——包括同一个版本被重复检出的情况（那是一次新的检测，理应再冒一次）。
+  appUpdate.onUpdateNotice(({ version }) => {
+    petBubbles.setUpdateNotice(version);
+    // 立刻重算一次，不用等下一个 1s tick：更新检查是低频事件，等一秒让
+    // 用户看到气泡「慢半拍」是没必要的。
+    petBubbles.tick();
+  });
+
+  // 用户关掉「自动检查更新」时，把桌宠头上那条「有新版」的泡收掉。
+  appUpdate.onClearNotice(() => {
+    petBubbles.clearUpdateNotice();
+    petBubbles.tick();
+  });
+
+  // 开发模式的调试入口用：把模拟出来的那条提醒收掉。正常路径永远不该触发
+  // 这个。
+  appUpdate.onResetNotice(() => {
+    petBubbles.resetUpdateReminder();
+    // The window is gone, so the line it was feeding to the idle action's
+    // pool has to go too — otherwise the pet keeps saying it until the next
+    // tick reconciles the pool.
+    petBubbles.tick();
+  });
+
   // ---- Bond / Cozy / Mood glue ----
   // One-line helper called from existing CRUD handlers so we never forget
   // a dimension. Errors are swallowed because bond tracking is best-effort
@@ -2129,6 +2161,44 @@ function normFreeText(s) {
     return { ...r, state: appUpdate.publicState(db) };
   });
 
+  // ---- 开发模式调试入口 ----
+  //
+  // 存在的理由：「有新版本」这条气泡是事件驱动的——它只可能在真的查到了
+  // 新版本之后才出现。而开发模式（app.isPackaged === false）本来是没有可
+  // 安装的产物的，所以这条气泡在开发期根本等不来：既没法靠真实的更新
+  // 触发，也没法靠 mock 覆盖（那等于没测到真链路）。
+  //
+  // 这里开两个口子，让开发期能真的走通整条链路：
+  //
+  //   app:dev_fake_update  —— 不联网，直接造一条「有新版本 0.0.0-dev」的
+  //                           提醒，让桌宠冒泡。验证的是气泡本身：显示、
+  //                           点击跳转、挂多久、跨重启记不记得。
+  //   app:dev_clear_update —— 把上面造出来的提醒收掉，回到「没有新版本」。
+  //
+  // 另外主进程那边把「能不能查」和「能不能装」拆开了（canQueryReleases
+  // vs isSupported），所以开发模式下「真的查一次 GitHub」也是可以的——
+  // 查到比当前版本新的 release 就会真的冒泡。
+  //
+  // 两个 handler 都在打包版里直接拒绝（app.isPackaged 为 true 时
+  // appUpdate.devTools() 返回 null），所以界面上不会有按钮、也不会有人
+  // 能从渲染进程调到它们。
+  ipcMain.handle('app:dev_fake_update', (_e, version) => {
+    const dev = appUpdate.devTools();
+    if (!dev) return { ok: false, reason: '仅开发模式可用' };
+    const r = dev.fakeNotice(version);
+    // 立刻重算一次气泡，不用等下一个 1s tick。
+    if (r.ok) petBubbles.tick();
+    return { ...r, state: appUpdate.publicState(db) };
+  });
+
+  ipcMain.handle('app:dev_clear_update', () => {
+    const dev = appUpdate.devTools();
+    if (!dev) return { ok: false, reason: '仅开发模式可用' };
+    const r = dev.clearNotice();
+    petBubbles.tick();
+    return { ...r, state: appUpdate.publicState(db) };
+  });
+
   // 下载安装包。下载进度走 `app:update-progress` 单向推送，模式与
   // tools:progress 一致（见 preload 的 allowed 列表）。
   ipcMain.handle('app:download_update', async () => {
@@ -2380,6 +2450,11 @@ function normFreeText(s) {
 
   ipcMain.handle('bubbles:set_enabled', (_e, map) => {
     const saved = petBubbles.saveEnabled(db, map || {});
+    // 关掉「有新版本」气泡时，把那个时间窗也一并关掉：用户明确说了
+    // 不想被这个提醒打扰，留着它只会在下次勾选时又冒出来。
+    if (saved && saved[petBubbles.KINDS.UPDATE] === false) {
+      petBubbles.clearUpdateNotice();
+    }
     // Re-evaluate immediately so unchecking a rule makes its bubble vanish
     // without waiting up to a full tick for the change to be observed.
     petBubbles.tick();
@@ -2413,12 +2488,34 @@ function normFreeText(s) {
       due: !!(intent && intent.text),
       text: (intent && intent.text) || null,
       durationMs: (intent && intent.durationMs) || null,
+      // A sample line for the rules whose trigger isn't time-based. The
+      // 「有新版本」 bubble only exists once GitHub has been checked, so
+      // "当前未到触发条件" would be true almost always — the sample is
+      // what the user actually wants to see.
+      sampleText: (typeof rule.forceText === 'function') ? rule.forceText() : null,
     };
   });
 
   ipcMain.handle('bubbles:force', (_e, ruleName) => {
     const rule = petBubbles.BUILTIN_RULES.find((r) => r.name === ruleName);
     if (!rule) return { ok: false };
+    // A plug-only rule (「有新版本」) has no bubble slot to force — it only
+    // ever speaks as one of the `default` action's own lines. Forcing it here
+    // would paint a bubble the user can never see in normal use, wearing a
+    // kind (and a colour) that the real path never produces. So the preview
+    // goes through the same route the real thing takes: plug the line into
+    // the pool and let the pet say it.
+    if (rule.plugOnly) {
+      const text = petBubbles.forcePlugOnly(rule);
+      // Say it right away. A plug-only rule has no bubble slot to force, and
+      // the idle action picks its line at random — so without this the
+      // preview would usually show nothing at all (the pool always contains a
+      // "stay silent" entry).
+      if (text && petController && petController.sayLine) {
+        petController.sayLine(text, petBubbles.RUNTIME_TARGET_ACTION);
+      }
+      return { ok: true, plugOnly: true };
+    }
     if (petWin()) {
       petWin().webContents.send(petBubbles.BROADCAST_CHANNEL, {
         text: (typeof rule.forceText === 'function') ? rule.forceText() : rule.name,
