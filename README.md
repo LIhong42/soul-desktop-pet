@@ -23,142 +23,57 @@
 
 ### 👥 Contact Management
 - Create / edit / delete contacts, with custom avatars, nicknames, and relationships;
-- Bind three tag categories per contact — **likes · taboos · gifts** — each one managed on that contact's own detail page, behind a tab of the same name;
-- Record important dates in the Gregorian or the **Chinese lunar calendar**, either one-off or recurring yearly;
-- Each important date can set **how many days ahead to start reminding** (a week by default). The pet then reminds you once a day while the window is open, and tells you how many days are left.
+- Bind three tag categories per contact — **likes · taboos · gifts** — each managed on that contact's own detail page, behind a tab of the same name;
+- Record important dates in the Gregorian or the **Chinese lunar calendar**, either one-off or recurring yearly, with a configurable **how many days ahead to start reminding**;
 
-### 📅 Recurring Reminders
-- Birthdays, anniversaries, and festivals trigger on a cycle;
-- Repeat options: **one-off / daily / weekly / every N days / monthly / yearly**. "Every N days" is counted from the start date you pick and advances on a fixed stride, so re-saving an event never shifts the schedule;
-- The list shows **both the title and the description**. An untagged reminder's title is generated for you (e.g. "爷爷的提醒"), and whatever you typed in the description field follows it — "爷爷的提醒 — 打电话" — so you never see a bare label with the actual content hidden;
-- **Lunar (traditional Chinese) calendar dates are supported**, with a built-in festival library: Valentine's Day, Teacher's Day, Qixi, Christmas, Father's Day… including floating festivals that are computed automatically;
+### 📅 Reminders
+- **Recurring reminders**: birthdays, anniversaries and festivals trigger on a cycle — **one-off / daily / weekly / every N days / monthly / yearly**;
+- **Work event reminders**: one-off or cron-scheduled, shown on a separate channel from personal events;
+- A built-in festival library, **lunar calendar** dates and floating festivals are all computed automatically;
 - The pet shows an unread reminder badge in the corner and wakes you up when the time comes.
 
 ### 📷 Memory Events & Album Export
-- "Memory events" record moments on a timeline, keeping every important highlight;
-- **A diary, not a form** — "新建" opens a dedicated diary page where the title, the body and the photos all live on one sheet of paper. Write first, save second. The title is typed straight into the coloured header bar, so the sheet itself holds nothing but the title and the text;
-- **The metadata is asked for when you save** — the time, the linked contacts and the "was this the first time?" flag are not on the page. Pressing **保存** opens a small dialog that asks for all three, because that press is the moment the entry becomes a record: a record has a time, a cast and a first-time flag. The dialog starts from what the entry already says, so pressing 保存 again only asks about what changed — and dismissing it writes nothing;
-- **Text and images interleave** — the body isn't one big text box but a sequence of text and image blocks. **Right-click** that text block and pick "插入图片"; the picture lands **after** the block and the paragraph is left whole — it is never cut in two. Keep writing under the image. The saved document keeps the page order exactly;
-- **The controls stay off the page** — a block's buttons no longer sit between the writing and the pictures. **Right-click a text block** for 插入图片 / 删除此段; **right-click a gallery** (or one of its pictures) for the layout switch, the photo counter and the text insertions. The page itself holds nothing but the title, the words and the pictures;
-- **The editing rules are at hand** — since every control lives in a right-click menu, nothing on the page hints at it. So the side panel carries an **「编辑规则」 card** under the paper style: right-click the text, right-click the gallery, right-click one picture, drag a picture to reorder it, drag its bottom-right handle to resize it. A new user does not go hunting for buttons;
-- **Multi-photo galleries** — pick several pictures at once and they land in one gallery. The gallery's right-click menu offers **one / two / three / grid**, so the whole group re-arranges in one click;
-- **Per-photo sizing** — drag the handle in a picture's bottom-right corner to resize it freely. Every picture keeps its own size, independent of the others;
-- **Any order** — **drag a picture onto another one** to swap their places. The order is stored with the page;
-- **Photo drags survive sleep and hibernation** — the album editor's gestures run through the same shared guard as the pet window (`src/js/gesture_guard.js`). A pointer gesture is a latch: it is set on `pointerdown` and cleared on `pointerup`, and if the `pointerup` never arrives the latch stays set. The `pointerup` goes missing when the machine sleeps (the OS re-creates the pointer device, so the browser never delivers an `pointerup` for the old pointer id) or when the button is released outside the window. The guard treats "an event from a **different** pointer id" as **proof that the gesture is dead** and tears it down. That matters here more than elsewhere: a stale photo drag would otherwise **commit a real photo swap** on the user's next unrelated click — a picture silently jumping into a slot it was never dropped on. `scripts/test-gesture-guard.js` and `scripts/test-album-gesture.js` guard both the guard itself and the album editor's behaviour;
-- **Select and view are separate** — a click **selects** a picture, a **double click** opens it full screen. The full-screen view covers the whole page, so it doesn't pop up on every click and the pictures stay draggable;
-- **Six paper styles** — Light / Dark / Shiro / Shadow / Helena / Poonam, each painted in three layers (a coloured header bar, the body surface and a decorative strip at the bottom) with three accent dots, matching the reference artwork. The three are separate layers rather than strips of one background: the body layer takes its height from the text and the photos it holds, so the decoration stays below it and is never covered, however much you write. They're pure CSS colors, so no image assets are involved. Every style carries its own text colors, and a regression test checks that the body text, the hints and the title all stay readable (WCAG AA, 4.5:1) against their background;
-- One event can hold multiple photos — perfect for ritual moments like *"our first trip together"*;
-- **The list is a wall of cards** — every memory shrinks to one card, and the card **is** that diary page in miniature: the same coloured header bar, the same paper, and the same decorative strip at the bottom. Nothing is wrapped around it — no panel, no frame — so browsing the list feels like browsing a stack of diaries;
-- **The wall shows six cards at a time** — a page holds at most six memories (six cards make two tidy rows of three in the reading column, so a page reads like opening a set of diary pages), and the pager under them reaches the rest: **← 上一页** on the left, **第 1 / 3 页 · 共 14 条** in the middle, **下一页 →** on the right. It is the app's shared pager (`src/js/pager.js`), so it looks like every other list's. **The page index is view state, not URL state** — paging never litters the browser history — while **anything that changes the list (a search, a filter change, a filter reset) takes you back to the first page**, so narrowing the list can never strand you on a page that no longer exists;
-- **The cards are thumbnails, not redrawings** — the page is laid out at its own proportions and then scaled down as one piece: a photo keeps its own shape instead of being cropped into a uniform frame, and the words keep the size they have relative to the paper and the pictures. The card's edge cuts the page the way a photograph of a page would — a picture shows its top half, and the words below it have not appeared yet. The list reads as a neat row of pages instead of a ragged list of different heights;
-- The photos on a card are **laid out by the gallery's own arrangement** (单图 / 双图 / 三图 / 网格) — the card and the editor share one width formula (`src/js/diary_layout.js`), so a photo sits exactly where the page put it;
-- **The card's foot carries the date alone** — the coloured strip at the bottom holds nothing but the date, set in the title's own size and weight, so it reads as a second line of the title rather than as a footnote in a smaller voice. The date is the one fact a reader looks for on every card, so it is the one fact that stays on the paper;
-- **The rest of the details wait for the pointer** — the contacts, the kind and the photo count no longer sit on the card at rest. They appear only while the pointer rests on a card, as a translucent layer (a 虚影) floating over the lower edge of the paper, with the entry's own text showing faintly through it, and they vanish when the pointer leaves. A screen of thumbnails does not have to carry a string of annotations each; only the card being read opens them;
-- **A filter row sits above the cards** — three dropdowns, **时间** (all time / last 7 days / 30 days / 3 months / a year / this year / last year / earlier), **联系人** and **类型** (是第一次 / 不是第一次 / 抽卡事件). They compose with the search box: the conditions are ANDed, and an entry has to satisfy all four to stay. A counter tells you how many the dropdowns kept, and **重置筛选** puts them all back;
-- **The filter state lives in the URL** — the time range, the contact, the kind and the search text all ride along in the address bar (`#/events/memorial?time=30d&contact=…`), so a filtered view can be shared and survives a reload;
-- One-click export to a **PDF album** or an **MP4 video album**, with multiple templates and a live WYSIWYG preview;
-- **Annual album**: automatically gathers all memories from a given year for a year-in-review.
+- "Memory events" record moments on a timeline — in a **diary-style editor**, where the title, the body and the photos all live on one sheet of paper. Write first, save second;
+- **Text and images interleave**: right-click a text block to insert a picture and it lands *after* that block. Several pictures can form a **gallery**, whose layout switches in one click between **one / two / three / grid**. Drag a picture to reorder it, drag its bottom-right handle to resize it;
+- The metadata — the time, the linked contacts and the "was this the first time?" flag — is asked for when you save;
+- **The list is a wall of cards**: every memory shrinks to one card, which *is* that diary page in miniature, with search and **time / contact / kind** filters;
+- One-click export to a **PDF album** or an **MP4 video album**, with multiple templates and a live WYSIWYG preview. An **annual album** gathers all the memories of a given year.
 
-### 🃏 Card Draw Life
-- A new **抽卡人生** page in the navigation bar: **one card a week**, drawn from `resources/intersting-list/list.md` — a plain-text deck you extend by adding a `### NN. Title` section;
-- **You can add cards of your own** — a title and a requirement, written on the page itself. They are stored **apart from the official deck** (in the database, so they travel with the backup) and are **drawn from the same pool**: the weekly card can be one of your own;
-- **One draw per week** is enforced by the main process (`main/card_draws.js`): the week starts on Monday, and once the week has a card, pressing the button again just shows the card you already drew. The drawn cards live in the local database, so they are still there after a restart;
-- The drawn card becomes a **card**: its number, its title and its requirement (the 「要求：…」 line from the deck);
-- **The page wears the background too**: the same warm room picture the 今日 page uses (`resources/ui/today-background.png`), with its own design system (`src/css/card_life.css`) that turns the cards into **translucent sheets of paper laid over the painting** — the artwork comes through as a hazy wash of colour, rather than as white boxes pasted on top of it;
-- The drawn card is a **sheet of paper**: a paperclip in the top-left corner, an orange 「★ 本周挑战」 badge, and 「本周第 **30** 号卡片」 on the right — the **number is the largest type on that line**, because which card you drew is the only new thing in the week. The requirement sits in its own tinted panel below, so 「what the challenge is」 and 「what to do about it」 stay apart;
-- A **rules card** sits right beside it, on the same row — the same paper, but quieter (a dashed edge), with the three rules on one line each: **每周只能抽取一张卡 / 官方卡片与自定义卡片混合 / 完成后记录回忆**;
-- Below that is **我的专属卡片**: there is **only one list** of the cards you added (envelope icon, title, a 自定义卡片 tag, and the requirement), and **every card carries its own delete button** on the right — there is no second list to hunt through;
-- The list is **paginated**: at most 3 cards a page, with the app's shared pager underneath (← 上一页 / 第 1 / 2 页 · 共 6 条 / 下一页 →) — however many cards you write, the block cannot grow longer than the page, and **no card is ever hidden**: the next page reaches it, delete button and all;
-- The **添加卡片** button sits right under the list; clicking it opens the form for writing a new one;
-- **记录这一张** jumps straight into the memory-event diary editor with the **title and the requirement already filled in** — you only have to write your own part;
-- The entry you write is filed under a **new 分类 — 抽卡事件**. The memory list's **类型** filter gains that entry, and the card's own tag reads 抽卡事件;
-- Below the card sits the **history of the cards you drew**: an unrecorded one can still be written up, a recorded one opens the entry it became.
-
-#### 🧱 The Check-In Wall
-- The 抽卡人生 page has a **door to the check-in wall** — its own page (`#/card-life/stats`), answering a question nothing used to answer: **you drew for five weeks; how many of them did you actually write down?**
-- **There is exactly one completion rule**, and it lives in the main process (`main/card_progress.js`): a week counts as **finished** when its card was really turned into a memory entry, and that entry satisfies **either** of these —
-  - it **has a photo** (图文并茂), **or**
-  - its **text runs past 30 characters** (the body document plus the five fields — 地点 / 食物 / 穿着 / 活动 / 备注).
-    - Exactly 30 characters is **not** enough; 31 is. Only the characters you actually typed count — the separators and the padding do not.
-- Four **summary tiles** sit at the top: **已抽周数 / 完成 / 完成率 / 连续完成**. The streak tile is the **brightest** one, because it is the only number still in motion.
-- In the middle is **one square per week**: a filled orange square with a check mark for a week you wrote up, an empty one for a week you did not. So **how many weeks you wrote in a row is something you see**, not something you read off a number. The current week carries a ring around it, so 「drawn this week, not written yet」 and 「not drawn at all」 stay apart.
-- **Clicking any square puts that week's card on the table below** — drawn in **exactly the same card style as the 抽卡人生 page**: the same paper, the same paperclip, the same badge, the same button. Where the old page had a table of one row per week, a click now shows **the card itself** — its title, its requirement, and a line saying **why it does (or does not) count** (「有 2 张照片 · 正文 42 字」).
-- The button on that card **behaves exactly like the 抽卡人生 page's own button**: 「查看这篇回忆」 when the week was written up, 「记录这一张」 when it was not (the editor opens with the card's title and requirement already filled in). **A card you never finished three months ago is still open** — the wall is not a museum; it just moved the table.
-- There is **no one-row-per-week list**. The grid IS the index and the card IS the detail — saying the same thing twice is slower and pushes the card off the screen. Clicking the same square again puts the card away.
-- The rule exists in **one place only**. The renderer (`src/js/pages/card_life_stats.js`) holds no threshold and does no counting — change the rule and every number on the page follows, so the grid and the tiles can never disagree.
-- A memory entry that gets **deleted** leaves its week on the wall: it goes back to unfinished, and is never quietly erased.
-- Clicking 「查看这篇回忆」 when that entry is **gone** does not land on a cold 「这篇回忆不存在或已被删除」. The editor **becomes a new entry instead**, with a banner saying 「原来那篇回忆已经不在了 —— 这里可以重新写一篇」, the card's title and requirement **already filled in**, and saving **links it back to that card**. The same holds from the 抽卡人生 page, the wall, and the memory list.
-
-### 💼 Work Event Reminders
-- One-off or **cron-scheduled recurring** work reminders;
-- Shown on a separate channel from personal events — never in the way, never missed.
+### 🃏 Card Draw Life & Streak Wall
+- **Draw one card a week** from the built-in card library — and you can add your own cards too; both live in the same pool;
+- The card you drew becomes a paper card (number, title, requirement), and **记录这一张** opens the diary editor with the title and requirement already filled in;
+- The **streak wall** answers "out of the five weeks I drew, how many did I actually write up?" A week counts as done only if that week's card really became a memory entry — **with a photo**, or **with more than 30 characters of text**;
+- Four stats (weeks drawn / completed / completion rate / streak) sit above a wall of one square per week. A completed week is a filled orange square, so **you can see the streak at a glance**.
 
 ### 📝 Quick Record (right-click → 记录)
 - **Right-click the pet → 📝 记录** opens a small dedicated window listing the six record kinds: **likes · taboos · gifts · reminder dates · memory events · work events**;
 - Pick a kind and the matching form appears right there — fill it in and **保存** writes the record immediately;
-- **The forms are field-for-field the same as the main window's** — the same labels, options, defaults and validation rules. Reminders get 启用提醒 / 重复 / **每 N 天间隔** / **阳历·农历切换** / 农历月·日 / 提醒时间; memory events get 穿着 / 活动 / **照片上传（带缩略图预览）**. A record captured from the pet is indistinguishable from one captured in the main window;
-- **Not kept in sync by hand** — both windows build their forms from one shared module (`src/js/form_fields.js`), so a new field only has to be added once, and a regression test compares the two renderings field by field;
-- **Lunar (traditional Chinese) calendar dates are supported** here too — pick 农历 and the date becomes a lunar month/day anchor, exactly as in the main window;
-- **No main window, no PIN.** The whole point is to capture something in a few seconds without unlocking anything. The window is **write-only**: it shows no lists and no browsing surface, so it can't be used to peek at the data the PIN protects;
-- Likes / taboos / gifts require a **linked contact** (the first contact is pre-selected — one click on 保存 is enough), matching the main window's own form;
-- Records are written through the **same IPC handlers** the main window uses, so validation, search indexing and intimacy tracking stay in one place;
-- After saving, the window **stays open** on the same form so several things can be logged in a row.
+- The forms are **field-for-field the same as the main window's** — the same labels, options, defaults and validation rules;
+- **No main window, no PIN.** The whole point is to capture something in a few seconds without unlocking anything. The window is write-only, so it can't be used to peek at the data the PIN protects.
 
 ### 🐾 The Pet Itself
 - Translucent, borderless, always-on-top window that walks, idles, and falls asleep on its own;
 - **Single click / double click / right click** interactions: pet the head, pat the head, feed, play, sleep, hug;
-- Right click opens the **Cozy interaction menu** — all 6 actions are customizable per character animation.
-- **The whole window is the drag handle**: the character is smaller than the transparent window, so a press *anywhere* in the window starts a drag — you never have to hit the artwork itself. The only exception is the reminder bubble, which carries its own controls and is therefore excluded from the drag;
-- **The drag accepts both pointer events and legacy mouse events** — after a sleep, Chromium can stop delivering pointer events while the mouse events keep coming, and the pet has to stay draggable either way (see the sleep-recovery notes below).
+- Right click opens the **Cozy interaction menu** — all 6 actions are customizable per character animation;
+- **The whole window is the drag handle**: a press anywhere in the window starts a drag — you never have to hit the artwork itself.
 
-### 💞 Intimacy System (three-layer architecture)
-- **Bond (permanent bond)**: settled **daily** across 10 dimensions (the day before is settled when the clock crosses midnight), upgrading quarterly — your long-term relationship with the pet;
+### 💞 Intimacy System
+- **Bond (permanent bond)**: settled daily across 10 dimensions, upgrading quarterly;
 - **Cozy (short-term warmth)**: decays over time, a little more with each play session;
-- **Mood (emotion)**: driven by **Cozy alone**, and no longer bound to a sprite variant — five moods map to the five bands of the cozy score (黏人 ≥70 / 平静 ≥40 / 想你陪 ≥20 / 难过 ≥10 / 有点低落 <10), each with its own **word colour**, while the pet's own picture is brightened or dimmed along the same ladder.
+- **Mood (emotion)**: driven by Cozy alone — five moods map to the five bands of the cozy score, each with its own word colour.
 
 > Advanced interactions such as double-click head patting unlock at intimacy tier ≥ 5.
-
-> **Days together** (the third column of the 今日 page's 陪伴状态 panel): any accepted interaction with the pet on a given day counts that day, and the counter **only ever goes up** — missing a day never deducts. It is a different thing from the consecutive-days streak, which resets to zero the moment you miss one.
-
-`scripts/verify-pet-stats.js` (`npm run verify:pet-stats`) guards both rules: every rung of the mood ladder must land on the right mood at the boundary values (±1 included), and **no other input may move the mood** — the bond tier, the weekly score, the hours alone, the pending reminders, the weekend flag and the "did something noteworthy today" flags all stay out of it; and days-together must count a day exactly once, only ever go up, and not credit a click the cooldown swallowed.
-
-> **The two numbers never share a field name.** 亲密度 is `bond_value` and 舒适度 is `cozy`, everywhere — in the `bond:get_full_state` payload, in the `pet:status-changed` push, and in the page's own normalized state. The bond and cozy snapshots each carry a bare `value` key meaning a *different* number, so the composite snapshot flattens them explicitly instead of merging them, and the bare `value` is left out of the payload entirely. This is deliberate: when the two were merged blindly, 亲密度 rendered the 舒适度 number on the first paint and only snapped to the real value on the first interaction — the "jump" users reported.
 
 ### 🎨 Customization & Pluggable Characters
 - Every pet can be configured independently: click action / idle loop action / 6 cozy actions in the right-click menu;
 - Upload a frame-animation PNG package and **a new pet is generated automatically and ready to use**;
-- **Only imported pets get a delete button** in the pet list; built-in pets (the ones under `resources/pets/`) offer no delete action. Whether a pet is deletable is decided by **where it actually lives on disk**, not by the shape of its id — so promoting an imported pet to a built-in no longer leaves behind a delete button that does nothing.
-- **Deleting a pet takes its data with it**: the bond score, the cozy meter, the daily tallies, the interaction history, the days-together counter, and the pet's own action bindings and bubble texts are all removed too — no orphaned rows are left behind in the database pointing at a pet that no longer exists. The app also sweeps up any such leftovers from earlier versions on every startup.
-- Built-in frame splitter: cut a video into a PNG sequence and zip it — DIY your own desktop pet;
-- **Background removal** ("Tools → Image Background Removal") turns a picture's backdrop transparent. It decides what counts as background by *connectivity* plus *edge strength*, not by colour alone: every pixel is priced by how far its colour is from the backdrop **and** how strong an edge it sits on, and the background is whatever can be walked to from the image border without crossing a pixel that is too expensive. The anti-aliased fringe around the character sits on a strong edge, so the flood stops there instead of chewing into the character — which is why the black hair, clothing and outlines survive even when the backdrop is black. The same cutout runs automatically on every frame of an imported pet package, and produces byte-identical output to the tool's default setting.
-- **Two kinds of imported frames are accepted**: *opaque* PNGs (the default — flat backdrop, cut out automatically on upload) and *transparent* PNGs (already cut out — the cutout is **skipped**, so the edges are left exactly as you exported them). The type is detected per frame, so a single package may mix both.
-- **Live import progress**: uploading a package shows a progress bar with a "processed N / total images" counter and a percentage, ticking up after every finished frame — no blind waiting while the frames are cut out one by one.
-- **Batch image resize** ("Tools → Batch Image Resize") shrinks every image in a folder by a chosen factor and writes the results into a folder you pick — **your originals are never modified**. The factor can be 1/2, 1/3, 1/4, 1/8 or a custom value (decimals allowed). The source folder's **sub-directory structure is mirrored** into the output, so frame sets organised per action stay organised after shrinking. Scaling uses the lanczos algorithm, which keeps quality high; **the alpha channel survives intact**, so cut-out character art shrinks without gaining white fringes or jagged edges. Images with transparency are always written as PNG; plain JPEGs and the like keep their own format. The output folder may not be the source folder, nor live inside it — so a mis-click can never destroy the originals.
-- **Outline stripping & hole repair**: many Live2D-style sprites are exported with a bright "sticker" stroke around the character. The cut removes that stroke too — and it locates it by *geometry*, not by brightness alone: the stroke is the narrow bright band hugging the cut edge, while the character's own white hair, shirt and skin are enclosed hundreds of pixels deep. So the black hat, cape, vest and boots survive, the enclosed white areas survive, and the halo is gone. A character that is simply *bright* at its edge is left alone — the bright band has to peak and fall again to count as a stroke. Any hole the cut opens inside the character is then closed again, so an imported package can never come out with a black hole in it.
-- **Black-edge removal**: artwork that draws the character with its own black contour comes out of the cut wearing that contour — a dark rim following the silhouette, over a desktop it reads as a black halo. The cut therefore grows the transparent region **5 pixels outward** past the boundary it found, so the rim is swallowed with the backdrop. The growth is gated on the backdrop *colour* and on *connectivity* — it re-runs the same flood with the edge-strength term switched off, so it can only reach pixels that still look like backdrop — and it is bounded by the 5-pixel radius, so it can never eat more than a hairline of the character. Measured on the shipped pet frames, **0%** of the character's interior is touched, while roughly 7,000 outline pixels per frame are cleaned away.
-- **Small black dot removal**: a handful of leftover background specks can survive the cut — a few pixels of backdrop trapped behind a thin strand of the character's line art. Those are found by looking for kept pixels that are still **backdrop-coloured** and grouping them into blobs; any blob small enough to be noise (and flat enough to be leftover material rather than drawn detail) is made transparent. Larger detached fragments — a sword, a stray hair — are left alone.
+- A built-in frame splitter cuts a video into a PNG sequence you can zip up yourself;
+- Built-in **background removal**, **outline stripping** and **batch image resize** tools. Imported frames come in two kinds: *opaque* PNGs (cut out automatically) and *transparent* PNGs (the cutout is skipped).
 
-### 🔄 Software Auto-Update
-- Updates come from **GitHub Releases** and can be checked manually under "Settings → Software Update";
-- Checks run **automatically once a day**, silently, without interrupting your pet;
-- Downloaded installers are verified with **SHA-256** before execution — a file that fails verification is never installed;
-- User data (contacts / reminders / memories / photos) lives in `%APPDATA%\SoulDesktopPet\`, separate from the install directory, so **upgrading never deletes it**.
-
-### 🔐 Privacy & Security
-- The main window requires a 4-digit PIN to unlock (default `1234`), changeable under "Settings → Access Password";
-- **Fully local database**: uses sql.js (pure-JS SQLite), zero native dependencies, and never calls any cloud API;
-- One-click export / import of zip backups for painless whole-machine migration.
-
-> **One database detail**: `PRAGMA foreign_keys` is **per-connection**, and
-> sql.js's `export()` (what a save calls) **closes and reopens the underlying
-> connection** — the new one does not inherit the pragma the schema executed at
-> CREATE time. Foreign-key enforcement therefore **silently switches off after
-> the first auto-save**, and every `ON DELETE CASCADE` stops firing: deleting a
-> contact would leave its dates and events behind as orphaned rows. `save()` in
-> `main/db.js` therefore re-asserts `PRAGMA foreign_keys = ON` after each
-> export, so the cascades keep working for the life of the connection.
-
-> Auto-update is only available in the **packaged Windows build**; in development mode the app points you to GitHub Releases to download manually. The repository address is the `REPO` constant at the top of `main/app_update.js`.
+### 🔄 Auto-Update · 🔐 Privacy
+- Updates come from **GitHub Releases** — check manually, or let the app check silently once a day. Installers are verified with **SHA-256** before execution;
+- The main window requires a 4-digit PIN to unlock (default `8888`), changeable under "Settings → Access Password";
+- **Fully local database** (sql.js, zero native dependencies), with one-click export / import of zip backups for painless whole-machine migration.
 
 ---
 
@@ -172,13 +87,12 @@
 ```bash
 npm install
 ```
-A `postinstall` hook automatically pulls in the helper modules needed at runtime.
 
 ### Development mode
 ```bash
 npm run dev
 ```
-> Launches Electron; the main window opens automatically with DevTools attached, and the pet window stays on top.
+> Starts Electron with the main window and its DevTools; the pet window appears on top.
 
 ### Production run
 ```bash
@@ -189,218 +103,65 @@ npm start
 ```bash
 npm run build
 ```
-> Output lands in `dist/` as an NSIS installer, which automatically creates desktop and Start menu shortcuts (named: SoulDesktopPet).
-
----
-
-## 📂 Where Data Lives
-
-All data is stored in the OS user directory:
-
-```
-%APPDATA%\SoulDesktopPet\
-  ├─ soul-desktop-pet.db       ← SQLite database (sql.js)
-  ├─ avatars\<contact_id>      ← custom avatars for contacts
-  ├─ photos\<event_id>\        ← memory event photos
-  └─ pets\                     ← built-in + user-imported pet packages
-```
-
-Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on import.
-
----
-
-## 🗂 Project Structure
-
-```
-.
-├─ main/                ← Electron main process (database, scheduling, IPC, pet engine)
-│  ├─ main.js             entry point
-│  ├─ db.js               sql.js wrapper + SQLite schema
-│  ├─ scheduler.js        reminder queue + 1Hz intimacy pipeline
-│  ├─ ipc.js              all IPC handlers
-│  ├─ diary_content.js    the diary document validator (text blocks + galleries)
-│  ├─ card_draws.js       the 抽卡人生 deck (resources/intersting-list/list.md) + the once-a-week draw rule
-│  ├─ card_progress.js    the check-in wall's completion rule and statistics (the one copy of the rule)
-│  ├─ bond_engine.js      intimacy (tier 1+2) algorithm
-│  ├─ cozy_engine.js      cozy (tier 3) algorithm
-│  ├─ pet_controller.js   pet auto-behavior state machine
-│  ├─ pet_registry.js     pet asset registry
-│  ├─ pet_zip_import.js   user zip pet import
-│  ├─ png_border_cutout.js  the shared cutout pipeline (mask, defringe, boundary expansion, hole repair, speck removal)
-│  ├─ png_bottleneck_flood.js  cost field + edge-aware background flood
-│  ├─ png_colorkey.js     PNG transparency wrapper (uses the cutout above)
-│  ├─ png_alpha.js        detects frames that are already transparent
-│  ├─ image_bg_remove.js  background-removal tool pipeline
-│  ├─ image_batch_resize.js  batch image-resize tool pipeline (ffmpeg scale, alpha-preserving)
-│  ├─ album_pdf.js        PDF album export
-│  ├─ album_video.js      MP4 video album export
-│  ├─ app_update.js       auto-update (GitHub Releases + SHA-256 verification)
-│  ├─ quick_record.js     the 快速记录 window (right-click → 📝 记录)
-│  ├─ pet_resume.js       suspend/resume recovery for the pet drag (a fallback — the renderer heals itself first)
-│  ├─ pet_input_probe.js  watches the pet window's input path after a wake (is it alive but deaf?)
-│  ├─ app_relaunch.js     kills the process and starts a new one (the last-resort wake recovery)
-│  ├─ pet_state.js        the pet reminder-state payload (one shape for the broadcast and `pet:get_state`)
-│  ├─ anniversaries.js    the 纪念日 carousel's query (merges the contact's dates and the 提醒日期 list)
-│  ├─ ui_artwork.js       the shared resources/ui/ artwork catalogue (which page owns which picture)
-│  ├─ page_background.js  the shared background artwork (which pages wear it, and the user's choice)
-│  └─ festivals.js        festival library
-├─ pet/                 ← pet window preload
-├─ src/                 ← renderer process (main window)
-│  ├─ index.html
-│  ├─ pet.html           ← pet window HTML
-│  ├─ quick_record.html  ← 快速记录 window HTML
-│  └─ js/
-│     ├─ main.js, api.js, router.js, auth.js, pet.js
-│     ├─ form_fields.js   ← shared form builders / wiring / validation (main window + 快速记录)
-│     ├─ page_background.js  ← the shared background artwork (which pages wear it, and how)
-│     ├─ gesture_guard.js  ← shared pointer-gesture guard (survives sleep / lost pointerup)
-│     ├─ diary_themes.js  ← the six diary paper styles (single source of truth)
-│     ├─ diary_layout.js  ← the diary document's shared vocabulary (gallery layouts + photo widths), used by the editor and the list cards
-│     ├─ diary_kinds.js  ← the 分类 vocabulary (是第一次 / 不是第一次 / 抽卡事件)
-│     ├─ diary_filters.js  ← the 回忆事件 list's filter vocabulary (time ranges / contacts / kinds) and its predicates
-│     ├─ diary_meta_form.js  ← the 保存 dialog (the time, the cast, the 分类)
-│     ├─ quick_record.js  ← 快速记录 window renderer
-│     └─ pages/            router pages (today / contacts / events / export …)
-│                        ├─ diary_edit.js  ← the diary editor (/diary/new, /diary/:id)
-│                        ├─ events_memorial.js  ← the 回忆事件 list (a wall of cards)
-│                        ├─ card_life.js  ← the 抽卡人生 page (draw a card → record it)
-│                        └─ card_life_stats.js  ← the check-in wall (/card-life/stats: stats, one square per week, and the card you click)
-│  ├─ css/
-│  │  ├─ styles.css       ← global styles (top bar, cards, forms …)
-│  │  ├─ today.css        ← the 今日 page's own design system (scoped to .today-*)
-│  │  ├─ contact.css      ← the 联系人详情页's own design system (scoped to .cd-*)
-│  │  ├─ page_bg.css      ← the 联系人 / 提醒日期 / 工作事件 pages over the artwork (scoped to .bg-page)
-│  │  └─ card_life.css    ← the 抽卡人生 page's own design system (scoped to .cl-*)
-├─ scripts/             ← utility scripts (incl. `verify-cutout.js`, the cutout regression check)
-│  ├─ verify-diary-db.js       ← DB regression check for the diary fields (background / content)
-│  ├─ verify-card-draws.js     ← the 抽卡人生 rules (deck / one draw a week / the 抽卡事件 分类)
-│  ├─ verify-card-progress.js  ← the check-in wall's completion rule and streak statistics
-│  ├─ test-diary-editor.js     ← UI regression check for the diary editor
-│  ├─ verify-work-bulk.js      ← bulk-select round trip on the 工作事件 page
-│  ├─ test-today-design.js     ← UI regression check for the 今日 page's design system
-│  ├─ test-card-life-design.js ← UI regression check for the 抽卡人生 page's design system
-│  ├─ test-card-stats-design.js ← UI regression check for the check-in wall's design system
-│  ├─ test-contact-design.js   ← UI regression check for the 联系人详情页's design system
-│  ├─ test-contact-tabs.js     ← UI regression check for the 联系人详情页's tabs / rows
-│  ├─ test-page-background.js  ← UI regression check for the shared background artwork
-│  ├─ test-page-column.js      ← UI regression check for the shared centred reading column
-│  ├─ verify-anniversary-carousel.js ← date-count checks for the 纪念日 carousel
-│  ├─ verify-anniversary-db.js ← DB-level checks for the carousel's query
-│  ├─ shot-anniversary.js      ← renders the 纪念日 carousel and saves a PNG
-│  ├─ shot-today.js            ← renders the 今日 page and saves a PNG
-│  ├─ shot-bg-pages.js         ← renders the three pages that wear the artwork, and saves PNGs
-│  ├─ shot-contact.js          ← renders the 联系人详情页 and saves a PNG
-│  ├─ shot-card-life.js        ← renders the 抽卡人生 page and saves a PNG
-│  ├─ shot-card-stats.js       ← renders the check-in wall and saves a PNG
-│  └─ shot-pages.js            ← renders several pages, to check shared styles didn't spill
-├─ docs/                ← documentation
-│  └─ 角色制作与更换指南.md   ← character creation / replacement tutorial (Chinese)
-├─ icons/               ← application icons (icon.ico + per-size PNGs)
-├─ resources/           ← pet frame assets (several built-in pets included)
-│  ├─ intersting-list/  ← the 抽卡人生 deck (list.md: one `### NN. Title` section = one card)
-│  └─ ui/               ← artwork for the app's pages (drop a PNG in and it shows up)
-│                        ←   user-detail-background.png is the 联系人详情页's banner
-└─ package.json
-```
-
-### Module highlights
-
-- **Main process** (`main/`): all database / filesystem / scheduling logic lives here; the renderer can only reach it through the whitelisted IPC exposed by `preload.js`;
-- The **pet window** runs in its own process with a transparent, borderless, always-on-top window that never steals focus;
-- **Dragging is driven from the main process**: the pet window is only ~220 px across and never takes focus, so the renderer's `mousemove` only fires while the pointer is *inside* that rectangle — the moment it leaves, the drag appears to freeze, and the lost `mouseup` leaves the drag state stuck forever (the pet becomes undraggable for the rest of the session). The gesture is therefore still detected in the renderer (press, 4 px threshold, release), but the **window position is followed by the main process via `screen.getCursorScreenPoint()`**, so the drag keeps working across the whole desktop. While a drag is in progress the main process also holds the autonomous-walk state machine still, so it doesn't fight the user for the window position;
-- **The drag protocol is order-independent**: `pet:drag_start` cannot be sent synchronously — the renderer has to ask the main process where the window is before it can measure the grab offset, and that answer comes back asynchronously. A quick flick (press, move, release) is therefore over before the reply lands, and after a resume the main process can be slow to answer at all. When that happened the `pet:drag_end` **overtook** its own start: the main process processed the end first, then started following the cursor with nothing left to stop it. The pet was glued to the pointer (it could not be dragged anywhere) and the walk mutex stayed held, so the pet never walked on its own again — while the right-click menu kept working, because it does not go through the drag protocol at all. Two things make the protocol safe now:
-  - The renderer **always sends the start and defers the end** onto the start's promise, so the two can never arrive swapped. The start is still sent for a flick that has already ended — skipping it would make the flick do nothing at all;
-  - Both messages carry a **monotonic gesture id**, so the main process can recognise a message that belongs to a gesture it has already finished: a start whose id it has seen is refused, and an end for an older gesture does not stop the drag that is running now. The ids have to stay unique across a renderer reload, so the main process hands out its current high-water mark (`pet:gesture_base`) and the renderer offsets its own count by it — otherwise a reloaded renderer would have every drag refused as a replay and the pet would be undraggable until the app was restarted. `scripts/test-pet-drag-order.js` drives the real renderer and the real main-process handlers together, with an artificially slow main process, and asserts that the pet is *not* left glued to the cursor;
-- **The grab offset is measured from the press, and in the window's own coordinates (`clientX`/`clientY`)**: the main process places the window with `window = cursor - offset`, so whatever the offset folds in is movement the pet *refuses* to make. The offset used to be taken from the pointermove that crossed the 4 px threshold, which quietly folded in everything the pointer had travelled since the press. The threshold is tiny, so the loss was a few pixels and went unnoticed — until a resume, when the renderer is slow to hand over pointer events and the **first move it delivers already carries everything the mouse did while the renderer was stalled**. The offset then swallowed the whole movement, the pet stayed exactly where it was, and the drag was dead while the right-click menu kept working. The offset is now taken from the press, in the window's own coordinates (`downClientX`/`downClientY`): that number *is* "where inside the window the pointer is", which is exactly what the main process needs, and it has no second term that can drift. The old form (`e.screenX - window.screenX`) mixed in "where the window is on the desktop" — an independent number the two can disagree about after the OS has moved the window during the sleep, so the pet ended up grabbed by a part of itself it was not on. It also saves an IPC round-trip (the renderer no longer has to ask the main process where the window is), so the takeover is no longer delayed and can no longer be lost when the main process was frozen. An offset that lands outside the window is rejected and the pet is grabbed by its centre instead. `scripts/test-pet-drag.js` (the offset is the grab point) and `scripts/test-pet-drag-live.js` (the pet follows the cursor by exactly the distance the pointer travelled) guard this;
-- **The drag threshold is measured in the window's own coordinates too** (`clientX`/`clientY`): the threshold only has to answer "did the pointer move far enough?", and the client coordinates answer that with no reference to anything outside the window. The screen coordinates would answer it just as well — as long as they still track the pointer, which is exactly what cannot be assumed after the machine has been asleep: a renderer that was frozen across the sleep may deliver a first move whose screen coordinates are stale, and then the distance never reaches the threshold and the pet simply cannot be dragged;
-- **Dragging survives sleep and hibernation** — this is a **self-healing** chain that does not rely on the OS delivering a notification:
-  - *Why it broke*: a system suspend tears down and re-creates the pointer device, so on wake the mouse reports a **new `pointerId`**. The gesture still named the old (now dead) id, and the old "ignore pointer events that aren't mine" guard then **permanently rejected** every event from the new mouse. The pet was not stuck mid-drag — it was wedged in a state where no pointer event could ever start a new gesture, which is why it dragged fine at startup and could never be dragged again after a sleep;
-  - *Renderer self-heal* (the primary fix): when `src/js/pet.js` receives a pointer event that **does not belong to the gesture it is holding**, it now handles two cases differently. **The gesture has not crossed the threshold yet** (the pet has not moved) → this is the system rebuilding the pointer device, so the gesture is **rebound** to the new device (the old capture is released, the new one taken, the new id remembered) and the drag starts as usual; the pet has not moved, so following a different pointer cannot make it jump. **The drag is already under way** (the pet is being moved by the user) → the gesture is torn down (the pointer capture is released, the pointer id cleared), because a second device must not take the drag over — the next press starts a clean one. The old code tore down in both cases, so the "press (old id) → move (new id)" pair always killed each other and the pet was wedged into a state where it could not be dragged at all. A `lostpointercapture` listener was added too — when the platform revokes the capture (a suspend rebuilds the device), the gesture is wound up instead of leaving a dangling pointer id;
-  - *Mouse-event fallback* (the **actual culprit**, found in the real machine's log): after the wake, Chromium can stop delivering **pointer events** altogether while the **legacy mouse events** keep coming. The two are not the same pipeline: a pointer event is built from the raw input by `PointerEventFactory`, which needs a **registered pointer device**, while the legacy mouse events are built straight from the raw mouse input and need no device. A suspend tears the pointer device down and the OS brings it back as a new one, and the device registry can end up not knowing about it — so the raw input produces mouse events but no pointer events. **The symptom is exactly what the user reported**: the pet cannot be dragged (the drag was built on pointer events), but the right-click menu still opens (`contextmenu` is a mouse event) and a click on the pet still plays its action (`click` is a mouse event too). So the drag now accepts **both** families: whichever one delivers the press drives the gesture (`dragFamily`), the other one is ignored. In a healthy browser the pointer family always wins — `pointerdown` is dispatched before the compatibility mouse events, and the sprite's `pointerdown` handler calls `preventDefault()`, which suppresses the compatibility `mousedown` entirely — so the fallback costs nothing when the pointer events work. Note that **a new window cannot fix this**: the pointer device registry lives in the **browser process** and is shared by every window, so a replacement window inherits the broken registry — which is exactly what the real machine's log showed ("the window was restarted and the pet still could not be dragged"). `scripts/test-pet-drag.js` (a complete drag driven by mouse events alone) and `scripts/test-pet-drag-e2e.js` (the same in a real Chromium renderer) guard the fallback. A mouse gesture has **no pointer capture**, so a release that happens outside the window is never delivered — the gesture is then closed on `mouseleave` (and on a `mouseout` whose `relatedTarget` is null), otherwise it would stay open forever, swallow the next press and the pet could never be dragged again. Assertions 29 and 30 in `scripts/test-pet-drag.js` guard that;
-  - *The family can change hands in the middle of a gesture*: the failure does not always happen between two gestures — it can happen **inside** one. The press arrives as a pointer event, the moves never do (the device was torn down between the two), and the gesture would sit there with a press and no movement: a click, and no drag. So while the pet has not moved yet, a move from the *other* family hands the gesture over (`family_switch` in the log): the mouse family takes over a pointer press whose moves never arrive, and the pointer family takes over a mouse press whose moves never arrive. The handover is only allowed **before** the threshold is crossed — once the pet is actually moving, a second device must not be allowed to grab it. The **compatibility mouse echo** that every pointer press produces is explicitly *not* a handover: it is recognised by identical screen coordinates (±2 px) and a timestamp under 100 ms, so a healthy browser never switches families. And the pet's own walk is **paused for two seconds on the press**, so it cannot walk out from under the pointer while the user is holding it. `scripts/test-pet-drag.js` asserts all three (assertions 35–38);
-  - *Main-process fallback*: `main/pet_resume.js` listens for the system's `resume` / `unlock-screen` events and **unconditionally tears the drag down**: it stops the cursor poller, releases the walk mutex, re-asserts the window's visibility and mouse state, pulls the pet back into the visible work area, and tells the renderer to forget its gesture;
-  - *Clock-jump watchdog* (the real safety net): Windows 11's Modern Standby **freezes the whole process** while the machine is asleep, so the wake notification is often never delivered at all (electron/electron#47739) — listening for power events alone is not enough. Timers do not replay the ticks missed during a sleep, but the **wall clock jumps forward** by the length of the sleep. Both the main process and the renderer therefore run a heartbeat that compares the gap between two ticks; a gap far larger than the heartbeat period proves the process was frozen, and the recovery runs. This path depends on **no OS event whatsoever**;
-  - The threshold must be **larger** than the heartbeat period (a healthy gap is already ≈ the period), otherwise the watchdog would fire on every tick. `scripts/test-pet-resume.js` has a dedicated regression assertion for that relationship;
-  - *The pet is restarted on every wake* (the user's explicit request): if the two layers above do not manage it, the pet ends up in a state where it simply cannot be dragged — so the pet is **restarted outright**, putting it back into the clean, freely draggable state it was in before the machine slept. What that means is **destroying the pet window and creating a new one** (`recreatePetWindow` in `main/main.js`), not merely reloading the page. **Why a new window and not a reload:** the diagnostic log from the real machine (2026-10-31) showed that after a reload the renderer still received IPC — it answered `pet:resume`, so it looked perfectly alive — but it never received a single pointer event again. A new window means a new native window, a new renderer and a new input registration. **Preserved:** the window's position and size, the main window, the database and the pet's identity. **Rebuilt:** the pet's page — which is the whole point. **It does not cure the pointer-event failure** — the pointer device registry lives in the browser process, so a replacement window inherits the broken one (the real machine's log proved that), which is why the **mouse-event fallback** above is what actually makes "still draggable after the wake" true; this layer is kept because the user asked for it explicitly, and it also clears any other unknown wedge. Both wake paths — the `resume` / `unlock-screen` events and the clock-jump watchdog — feed the same recovery function, so the restart happens even when the OS delivers no power event at all. It is de-duplicated to **one restart per wake** (10 s), because one sleep is usually reported more than once and the pet blinking twice for one sleep reads as a glitch. The de-duplication uses a **monotonic clock** (`performance.now()`) rather than the wall clock: the wall clock can jump backwards (a clock change, an NTP correction), and a negative gap would suppress the restart and leave the pet broken for the next ten minutes;
-- **The last resort is to kill the process and start a new one** (the user's explicit fallback request): a window restart cannot repair the input path, because the pointer-device registry lives in the **browser process** — so the only cure is a new browser process. `main/app_relaunch.js` does exactly that: `app.relaunch({ args: process.argv.slice(1) })` followed by `app.exit(0)`. `exit` rather than `quit`, because `quit` can be vetoed by a `before-quit` handler and would leave a half-finished restart behind; `exit` cannot be vetoed, so the old process always dies and the new one always starts with the same launch arguments;
-  - **A refused single-instance lock is retried, not fatal.** The relaunched process asks for the same lock the old process held. If the old one has not released it yet, the new one is told "another instance is already running" — and `main/main.js` used to quit on that answer, which would have left the user with **no app at all**, a worse outcome than the bug this mechanism exists to fix. The lock is now asked for again for up to six seconds, and a refusal that persists is retried rather than treated as "the app is already running, quit". `scripts/test-app-relaunch.js` proves the whole sequence against a **real** Electron: the lock is exclusive, a refused lock can be asked for again, and a real `app.relaunch()` + `app.exit(0)` really does bring the app back;
-  - **The probe is what keeps a healthy wake from costing the user their main window** (`main/pet_input_probe.js`): it watches the pet window's input path and declares it dead only when three things hold at once: the **OS cursor moved** (the main process can read the cursor whether or not the renderer can), the cursor **is inside the pet window's bounds**, and the **renderer has reported nothing** (it reports `pet:input_alive` the first time it sees any input event after a wake). A renderer that is merely idle is never mistaken for a deaf one, and a cursor that moves elsewhere on the desktop proves nothing. It is the gate for the `auto` mode;
-  - **The renderer is the only witness that can tell "alive" from "alive but deaf"** — it keeps answering IPC across the wake (so it looks perfectly healthy) while no mouse event ever reaches it. That is why the probe asks it;
-  - **The mode is a setting** (`pet_restart_app_on_wake`, in 设置 → 睡眠唤醒后的恢复): **每次唤醒都重启应用** (the default — restart on every wake, no questions asked), **自动检测** (restart only when the probe proves the input path is dead) and **从不重启** (never). **The default is the blunt one on purpose**: the in-process recovery below does not cure every case — on the real machine (2026-10-31) the pet was still undraggable after a wake *with* a live input path (the pointer events arrived, the right-click menu opened, and the pet simply did not move) — and a fresh process is the only state that is known to work, because it is exactly the state `npm start` produces. One sleep is reported more than once (the `resume` event, the `unlock-screen` event and the clock-jump watchdog all fire for it), so the restart is de-duplicated to **one per wake** (10 s, on the monotonic clock). `scripts/test-pet-input-probe.js` guards the probe and the three modes;
-  - **The in-process recovery still runs first, and it cannot swallow the restart**: the drag is torn down, the window is re-shown, the renderer is told to forget its gesture, the pet is clamped back into the visible work area, the pet's position is written to the database **and flushed to disk** (the database is normally written on a five-second timer, and the process is about to die — a `setPosition` whose `moved` event fires too late would be lost, and the pet would come back where it was before the clamp), and only then is the process replaced. The restart sits in a `finally`, so a step that throws cannot eat it;
-- **The takeover has a timeout fallback**: handing the drag to the main process is an IPC round-trip, and the answer may never come when the main process was frozen across the sleep. The renderer does not wait forever — after 400 ms it drives the window position itself, measuring the movement in the window's own coordinates and from the press point (the window is not following the pointer in that mode, so the pointer's movement inside the window *is* its movement on the screen; measuring from the press point keeps the delta from feeding back into itself). So the pet still drags when the main process does not answer;
-- **There is a diagnostic log for "the pet cannot be dragged"**: the bug only reproduces on real hardware (it needs an actual sleep), and two earlier fixes looked right on paper and were both wrong. The app therefore writes the drag process to `<userData>/pet-diagnostics.log` (append-only JSON Lines, written by both processes): every press (with its pointer id, screen coordinates, window coordinates and the element that was hit), every move (the first move and the one that crossed the threshold carry the full coordinates), the drag's start / takeover / end and the reason it ended, the main process's takeover record, the wake events, the renderer's **boot** (`boot`), the pet window's **creation and load** (`pet_window_loaded` / `pet_window_load_failed`), the pet's **restart** (`pet_window_recreated`) and every **mouse press / right-click menu** (`mouse` / `context_menu`). The log tells "the move events never arrived" apart from "the move arrived but never crossed the threshold" at a glance — and those two need completely different fixes; it also tells "the pet's page was never rebuilt" apart from "the page was rebuilt but the pointer events still do not arrive", and **"the pointer events are gone but the mouse events are not"** (mouse records but not a single `pointerdown` is exactly that). Every gesture also carries a **census** — `family` (which family drove it), `pointerMoves` and `mouseMoves` (how many moves each family delivered) and every handover (`family_switch`) — because "the pointer pipeline died mid-gesture" and "the user never moved the mouse" look exactly the same from the outside, and the log is the only thing that can tell them apart;
-- The **今日 page has its own design system** (`src/css/today.css`): it wants a warm, paper-like landing surface — translucent paper cards laid over the artwork, hairline rules, bold dark section headings, a hand-drawn underline under the date — while every other page shares the app's `.card` / `.list-row` / `.h1` primitives, which a global rewrite would break. So the whole design lives **scoped under `.today-page`**, in **its own stylesheet** (loaded after `styles.css`): one page's design stays in one file and applies to that page only. The cards are **translucent** (`rgba(255, 253, 250, 0.34)` plus a `backdrop-filter: blur(22px)`) rather than opaque: an opaque near-white card cuts a hard edge across the pastel artwork and reads as a foreign UI panel pasted on top of it, while a translucent sheet lets the painting continue through the card so the whole page reads as one material. The reminder list, which carries small text, sits on a denser sheet (`0.58`) than the large-type status cards. The page also sits in a centred **1080 px reading column**: a dashboard stretched across a 2000 px window leaves a 300 px gulf between the two status panels, and the cards end up competing with the artwork for attention — narrowing the column is what actually stops it feeling cramped. Everything the live status updates touch carries a `data-bind` hook (`mood-icon`, `bond-value`, `cozy-fill`, …), and a status push **patches those nodes in place** instead of re-rendering the page — so the progress bar's width transition still animates and a list you are reading is never re-shuffled mid-scroll. `scripts/test-today-design.js` guards the design: that the stylesheet loads, that the markup renders, that the computed radius / paper colour / numeral size are the intended ones, that the cards are still **translucent** and still **blur** what's behind them, that the page carries **no decorative icons** (only the mood portrait and the per-reminder category chip may hold a glyph — an emoji in front of every heading turned the page into a row of badges competing with the data), that the reading column is really capped and centred, that all fifteen `data-bind` hooks are present, that the mood portrait really shows the active pet's own sprite (a `file://` URL that the browser decoded, not a broken image) **whole** — fitted, not cropped, and not stretched — **on a transparent ground** (no disc, no tint, no ring behind it) with the mood carried by the picture's **brightness** rather than by a colour wash, that each of the five moods paints the mood word in its own distinct colour, that switching the active pet swaps the portrait, and that a real status push repaints the page in place. The suite also unlocks the PIN gate before measuring, because the gate hides `#app` — a hidden element has no layout, so every size assertion against it would pass vacuously.
-- The **回忆事件 page's top is one warm control panel**: the title, the search field and the filter strip are not three unrelated widgets but three rows of **a single peach rounded panel** (`.memorial-toolbar`) — so they read as one control surface rather than as parts scattered over the page background. The panel covers **only the top**: the card grid below still sits on the app's plain surface, because those cards **are** the diary pages, and putting a frame around them would frame every single one. The search field is a **white pill** — the magnifier rides inside it on the left and a round 「×」 on the right, both **inside** the pill rather than flanking an input; the WebKit-native cancel button is explicitly switched off so the pill carries exactly one cross. The filter strip is a **white rounded card** led by a funnel icon and the words 筛选条件, with the three dropdown groups divided by **hairline rules** (painted as pseudo-elements, so the markup needs no extra nodes), and 重置筛选 pushed to the far right — it changes the view, so it does not belong wedged among the filters. The dropdowns carry the app's own chevron instead of the platform's. A **hand-drawn little heart with two flourishes** trails the title (an inline SVG that recolours from `currentColor` and costs nothing in the bundle); the 批量删除 entry sits **outside** the flourish, because it acts on the list and is not part of the wordmark. `scripts/test-diary-editor.js` guards the panel: that it is there, that it is that peach tone, that the three rows all live inside it in order, that the search field really is a pill, that the magnifier and the cross are **inside** it, that the three dropdowns are separated by hairlines, and that the title still carries its heart.
-- The **bulk-select toolbar is re-bound on every redraw**: the list subtree is rewritten, and the bulk toolbar (`退出选择` / `删除选中`) is part of that subtree — so the button the user clicks is a **new node**. Binding it once at mount time left the button dead. `events_memorial.js` and `events_work.js` therefore call `wireBulkToolbar` from the redraw path and re-bind it after every repaint. `scripts/test-diary-editor.js` and `scripts/verify-work-bulk.js` guard this: after one trip in and out of select mode, the toolbar and the checkboxes must be gone, and the title's heart, the export button and the bulk entry must all come back intact.
-- **Every page sits in a centred reading column, and the width is shared**: on a wide window the scroll container is a full-bleed strip, so a page that stretches its cards across it reads as a wall of panels rather than as a page. The **今日** page (`.today-page`), **联系人 / 提醒日期 / 工作事件** (`.bg-page`) and now the **回忆事件** grid and the **具体事件 / 重要日期 / 属性 / 联系人** detail-and-edit forms, **设置**, **导出回忆** and the **工具** pages (`.page-column`) all cap their content at **1080 px** and centre it, so the same side margin appears on every page and a card never runs edge to edge. The one number lives in `--page-column-max` in `src/css/styles.css`; `.bg-page` and `.today-page` carry the same width in their own stylesheets, because each of those pages owns a separate design system and must not depend on the global rule to be centred. `scripts/test-page-column.js` guards it: it drives a window **wider** than the column (so a page whose cap stopped working measures too wide) and checks, for every page, that the column is capped, that it is **centred** (the same margin on both sides), and that the margin is real rather than two symmetric zeroes.
-- The **three-layer intimacy model** is described under [Core Features](#-core-features) above;
-- The **quick-record window** is a separate 400×640 window rather than a popup inside the pet window: the pet window is only ~220 px wide and could not physically hold a form with a contact picker and date fields. It asks the main process *which* kind to open with a **pull** (`quick-record:get_kind`) rather than a push on `did-finish-load` — the renderer is an ES module, so its listener is registered after that event fires and a pushed message would be dropped;
-- **Both windows' event and memorial forms come from one module** (`src/js/form_fields.js`): the markup, the show/hide rules (启用提醒, 间隔天数, 阳历/农历) and the validation all live there, so the quick-record form is the main-window form rather than a copy of it. Adding a field means editing one file. `scripts/test-form-parity.js` compares the two windows' rendered forms field by field, so a field added to one and forgotten in the other fails the build.
-- **Closing a pet reminder**: the nag has four ways out, and they all behave identically — clicking the pet, clicking its speech bubble, the right-click menu's **🔕 关闭提醒**, and the top bar's **桌宠提醒** pill (which opens the dialog, where 完成 does the same thing). They all end in one main-process action, `completeReminderForToday`: it writes a `reminder_acks` row, marks the queue item completed for today, and flips the pet back to NORMAL — so the badge counts down to zero, the sprite stops shaking, and the pill reads 桌宠正常 again. The reminder itself is **not deleted**: it stays on **Today** marked 已完成, so it can be revisited. For that to work the pet window has to know *which* reminder it is nagging about, so both `pet:state-changed` and `pet:get_state` carry `head.source` / `head.source_id`; the payload's shape is built in one place (`main/pet_state.js`) so the broadcast and the initial read cannot drift. `scripts/test-reminder-dismiss.js` and `scripts/test-reminder-pill.js` guard the pet-side and the top-bar paths.
+> The artifact lands in `dist/` as an NSIS installer, with desktop and Start-menu shortcuts (named SoulDesktopPet).
 
 ---
 
 ## 📖 Getting Started
 
 ### 1. Unlock the main window
-- On launch you get the desktop pet plus a PIN unlock screen (default PIN `8888`);
-- Change the 4-digit PIN under **Settings → Access Password**.
+On startup you get the pet and a PIN prompt (default `8888`). Change it under **Settings → Access Password**.
 
 ### 2. Add a contact
-- Go to **Contacts → New Contact**, fill in a name and relationship, pick or upload an avatar;
-- The contact detail page has a tab bar: **概览 / 喜好 / 忌讳 / 礼物**. The overview carries the important dates and memory events — a contact's important dates and their reminders share one list, ordered by how soon each one comes up; each kind tab is where that contact's likes / taboos / gifts live — search them, add new ones, page through them, or delete a batch.
-- The contact detail page is **its own design system** (`src/css/contact.css`), scoped under `.cd-page` exactly the way the 今日 page's is under `.today-page` — one page's design lives in one file and applies to that page only. It opens on a **full-bleed photo banner** (`resources/ui/user-detail-background.png`) with the avatar tile, the name and relationship, and the 编辑基本信息 pill on a white-to-transparent wash, so the artwork shows through on the right where nothing has to be read. Below it the tab row sits on warm cream paper, and the sections are **white rounded cards**: a section title carries a short orange bar on its left, each row leads with a tinted icon tile, and the right-hand side holds a peach **date chip** with the countdown underneath it (`● 2027-3-1` / `还有 3 个月`). A memory event shows its first photo in the tile, a 「第一次」 tag and a clock chip. `scripts/test-contact-design.js` guards all of it: that the stylesheet loads *after* `styles.css` (otherwise the page's own rules lose the specificity fight against the global primitives), that the artwork really arrives as a `file://` URL and really decodes, that the computed paper colour / card radius / accent bar / date chip are the intended ones, that nothing leaks onto the 今日 page — and that the 今日 page's background picker does **not** offer this banner, because the picture is **owned** by this page.
+Go to **Contacts → New contact**, fill in a name and a relationship, pick or upload an avatar. The contact's detail page carries a row of tabs: **概览 / 喜好 / 忌讳 / 礼物**, and the overview holds that person's important dates and memory events.
 
 ### 3. Write a diary entry
-- **Memory Events → New** → a diary page opens; write the title. The side panel on the right holds the paper style as **one button** — it shows the style in use as a miniature of the page; press it and the six styles open in a popover, and picking one closes it again. Under it sits an **「编辑规则」 card** listing the right-clicks and the drags. The page and the panel sit in a centred column, so the two keep the same distance apart on a wide monitor as on a narrow one;
-- Type the body directly. To add a picture, **right-click** that text block and pick "插入图片" — the picture lands **after** the block and the paragraph is kept whole; keep writing under the image;
-- You can pick several pictures at once; they form one gallery. **Right-click** the gallery and choose **one / two / three / grid** to change the arrangement, and drag the handle in a picture's bottom-right corner to resize it. To change the order, **drag the picture onto another one** — they swap places;
-- Click **保存** → a dialog asks for **when it happened**, **who was there** and **whether it was the first time**. Fill it in and press **确认保存** — the mixed text-and-image document is stored in page order, ready for a one-click PDF / MP4 album export. Press **取消** and nothing is written.
-- Back on the **Memory Events** list, the top is one warm panel: the title (with a little hand-drawn heart), a white pill search field, and a **filter card** (a funnel icon plus the **时间 / 联系人 / 类型** dropdowns, each group separated by a hairline, with **重置筛选** at the far right). The search and the filters compose — an entry has to satisfy the query *and* all three dropdowns to stay in the list; **重置筛选** puts everything back.
+**Memory Events → New** opens the diary page — write a title, pick a paper style, then write. To insert a picture, **right-click** that paragraph and choose "插入图片". Several pictures can form a gallery: **right-click** the gallery to switch its layout, drag a picture to reorder it, and drag the bottom-right handle to resize it. Press **保存** → a dialog asks for the **time**, the **linked contacts** and whether it was **the first time**; confirm and the entry is stored, ready to export as a PDF / MP4 album.
 
 ### 4. Wait for pet reminders
-- The pet shows an unread reminder count in the corner and pops up automatically when the time comes;
-- **Close a reminder whenever you like** — the nag never traps you: click the pet or its speech bubble, use **right-click → 🔕 关闭提醒**, or click the **桌宠提醒** pill in the top bar (it opens the same dialog with 完成 / 稍后 30 分钟 / 明天再提醒). Closing it only silences it for today; the entry stays on **Today** marked 已完成;
-- Check everything for the day under **Today**.
-- **Today** is a warm, paper-like landing page: the day's date and weekday on top (set in the same size, weight and ink, separated by a soft middot, with the hand-drawn underline running under both), then the two sections the day is *about* — **纪念日** (a strip that shows one anniversary at a time and rotates to the next every minute) and **当前提醒** (the list of today's reminders) — and then the pet's own state: **当前心情** (the pet's portrait, its mood word and a note), **关系成长** (a large 亲密度 number, the tier badge and a progress bar) and **陪伴状态** (今日互动 / 舒适度 / 陪伴天数 in three columns). The panels are **translucent sheets over the background artwork** rather than solid cards, so the picture shows through and the page reads as one material; the section headings and stat columns are plain text, with only the pet's portrait and the per-reminder category chip carrying a glyph. The **当前心情** portrait is the **actual pet in use**, shown whole — the sprite's own transparent cut-out stands on the paper with no disc, no tint and no ring behind it, so the character keeps the shape and the colours it was drawn with. The mood is **not bound to a sprite variant**: the picture is always the pet in its own colours, and the mood is read from the picture's **brightness** (a bright pet is a cheerful one, a dimmed pet is a low-spirited one) together with the mood **word's own colour** — each of the five moods gets a distinct one, so they are told apart at a glance. **今日互动** counts the interactions the user actually made with the pet today (the cozy actions, summed), not the number of pending reminders; **陪伴天数** counts how many days the two have spent together and only ever goes up. Every panel is live — when the pet's mood changes or the intimacy grows, the page repaints in place; you never have to reopen it. The whole page sits in a centred 1080 px reading column, so on a wide monitor the cards keep room to breathe instead of stretching into a crowded row.
-- The **纪念日** strip is a **rotating carousel** over the anniversaries you have recorded — and it shows **exactly one card at a time**, not a row of them. The cards are stacked in the same place and the rotation cross-fades between them, so the section never changes height and the eye is never pulled sideways to a card that is half off the edge. The strip advances one card **every minute**; the dots underneath mark the current card and can be clicked to jump straight to one.
-- **What counts as an anniversary.** The strip reads **two** places, because there are two and users reach for either one: the **contact's own dates** (anniversaries, 忌日 and custom dates, added from the contact's detail page) **and** the **提醒日期** list (a yearly reminder tagged 纪念日 — which is the page in the nav bar, and for most people the only one they ever use). **Birthdays are not in the strip** — a birthday is its own kind of thing, with its own place (the 当前提醒 panel surfaces it on the day, and the contact's detail page lists it), so it does not take a slot here. A 节日, an untagged reminder and a one-off appointment are left out for the same reason.
-- Each card is **one line**: whose date it is (`和小雨的结婚纪念日`), **how many days until the next one** (`还有 75 天` / `就是今天` / `就在明天`), and **how many days it has been going on so far** (`纪念日至今 2882 天`). The name leads with the **contact**, and a label that repeats that contact's own name (a date called "小绮的纪念日" on a contact called 小绮) has the repetition dropped, so the card never reads "和小绮的小绮的纪念日". The rotation **pauses while you are engaged with it** — hovering it, or focusing it with the keyboard — and resumes once you let go, so the card you are reading never gets yanked away. Clicking a card opens that date's own page — the important-date detail page, or the 提醒日期 detail page for a row that came from there — where it can be edited or deleted. The two numbers are counted on separate rules: **"纪念日至今 N 天"** is the exact day count from the date's **origin date** to today (it never resets on the anniversary — it only ever grows), while **"还有 N 天" restarts the day *after* the anniversary has passed**. A date with no year recorded has no origin date, and so no "至今" clause at all (saying "至今 0 天" would be meaningless), and a date whose *reminder* is switched off still appears in the strip — silencing a reminder is about being left alone, not about hiding the date. A **农历** anniversary works the same way, but its solar date shifts every year, so the countdown is resolved through the lunar calendar; the 提醒日期 form only ever captured a month and a day for it, so such a card carries the countdown without a "至今" clause.
-- **Four pages share one background picture**: **Today**, **Contacts**, **Reminder Dates** and **Work Events** wear the same artwork behind their content. The picture lives in `resources/ui/` — drop a PNG in and it shows up under **Settings → 页面背景**, where you can pick one, follow the default, or turn the background off entirely (turning it off takes it off all four pages at once). The **Today** page keeps its own warm, paper-like treatment (large translucent panels, big type); the three list pages get a denser one — their rows are **translucent sheets of paper over the picture** rather than the app's opaque white cards, so the artwork reads through as a soft wash instead of being cut into hard-edged slabs, and the list sits in a centred 1080 px reading column so a row does not stretch across a wide monitor. Pictures can be **owned** by a page: `user-detail-background.png` belongs to the contact detail page (it is its banner), so it is deliberately kept out of the picker — the shared catalogue in `main/ui_artwork.js` is what decides. The contact **detail** page does not inherit the list artwork either: it has its own full-bleed banner.
-- **One artwork, one composition on every page.** The picture is pinned to the **viewport** (`background-attachment: fixed`), not to the content. This matters because `background-size: cover` measures against the background positioning area: with the default `local` attachment that area is the scroll container's *content* box, so a page with more content scaled the artwork **up** and cropped more of it away. The 提醒日期 page (1059 px of content) zoomed the picture 18% more than 今日 (898 px), which pushed the plant on the left of the frame out of the crop entirely — the same file, a different picture. Pinning to the viewport makes the scale and the crop identical everywhere. The trade-off is that the picture no longer scrolls with the content, which suits an artwork that reads as a room rather than as a texture.
-- **The list pages are paginated** — 提醒日期, 工作事件 and 联系人 each show 8 rows per page, with a pager (`第 1 / 5 页 · 共 33 条`) underneath. Besides keeping a long list readable, this keeps the rows inside the frame the artwork is painted in: an endless list ran past the bottom of the picture, so the artwork behind it was showing a slice that no longer matched the other pages. The pager repaints only the list subtree, so the filter bar, the search box and their dropdowns are never rebuilt — an IME composition in progress survives a page turn. All three pages share one implementation (`src/js/pager.js`), so the page size, the pager's styling and the edge-case handling cannot drift apart between them.
-- **The 回忆事件 card wall is paginated too** — six cards a page, reached through the same shared pager. Its page size differs (6 rather than 8) because six cards make two tidy rows of three in the reading column, but the *implementation* is the shared one, so the clamping, the edge cases and the "the index is view state, not URL state" rule behave exactly as they do on the other lists. The pager's **styling** is the one thing that had to be written again: the shared `.section-page` rules live in `page_bg.css` and are scoped to `.bg-page`, which the card wall is not — so the wall dresses the pager in its own warm palette (`.memorial-pager`), the same way the 抽卡人生 page dresses it in its own (`card_life.css`). The same reasoning applies to the bulk-select toolbar: **全选 only ticks the cards on the page you are looking at**, while the counter beside it counts the whole filtered set — which is what `bulk_delete.js` already promised.
+The pet shows an unread reminder badge and pops up when the time comes. **Reminders can be dismissed at any time** — click the pet or the bubble above its head, **right-click the pet → 🔕 关闭提醒**, or click the **桌宠提醒** badge in the top bar. Dismissing only stops the nagging for today; the entry stays on the **Today** page, marked as done.
 
 ### 5. Interact with the pet
-- **Single click**: triggers the "single-click action" configured for that pet (default: a gentle pet);
-- **Double click**: triggers the "double-click action" (default: head pat, unlocked at intimacy tier ≥ 5);
-- **Right click**: opens the cozy interaction menu — pet / pat head / feed / play / sleep / dance, plus **📝 记录** for a quick record;
-- Under **Settings → Character Actions** you can freely switch the character animation bound to each trigger.
+- **Single click**: triggers the pet's configured click action (default: a little pat);
+- **Double click**: triggers the double-click action (default: head pat, unlocks at intimacy tier ≥ 5);
+- **Right click**: opens the Cozy interaction menu — pat / head-pat / feed / play / sleep / dance, plus **📝 记录** for quick capture;
+- Switch any of these animations under **Settings → Character Actions**.
 
 ### 6. Record something without unlocking anything
-- **Right-click the pet → 📝 记录** → pick a kind (likes / taboos / gifts / reminder dates / memory events / work events) → fill in the form → **保存**;
-- The window never asks for the PIN, and never shows your existing records — it only writes;
-- Liked this? Add a contact first (step 2), since likes / taboos / gifts must be attached to one.
+**Right-click the pet → 📝 记录** → pick a kind → fill the form → **保存**. This window asks for no password and shows no existing records — it only writes. Add your contacts first, since likes / taboos / gifts must hang off somebody.
 
 ### 7. Switch pets / import a new pet
-- **Settings → Desktop Pet Appearance** → pick one from the dropdown, or upload a frame-animation archive;
-- 📘 Want to build your own? 👉 See the **[Character Creation & Replacement Guide](docs/角色制作与更换指南.md)**.
+**Settings → Desktop Pet** → pick one from the dropdown, or upload a frame-animation package.
+📘 Want to make your own? 👉 **See the [Character Authoring Guide](docs/角色制作与更换指南.md)**.
 
 ### 8. Back up and migrate
-- **Settings → Data Migration → Export Backup** produces a zip with the database, all photos, and settings;
-- **Import Backup** on another machine restores everything.
+**Settings → Data Migration → Export backup** produces a zip containing the database, all photos and the settings; **import** it on another machine to restore everything.
+
+---
+
+## 📂 Where Data Lives
+
+All data is stored in your operating system's user directory:
+
+```
+%APPDATA%\SoulDesktopPet\
+  ├─ soul-desktop-pet.db       ← SQLite database (sql.js)
+  ├─ avatars\<contact_id>      ← custom contact avatars
+  ├─ photos\<event_id>\        ← memory event photos
+  └─ pets\                     ← built-in + imported pet packages
+```
+
+The backup zip is rooted at `soul-desktop-pet.db` too, and is replaced atomically on import.
 
 ---
 
 ## 📚 Documentation
 
-- 📘 **[Character Creation & Replacement Guide](docs/角色制作与更换指南.md)** (Chinese) — build a brand-new pet from scratch: split frames → sort PNGs → pack into a zip → import in one click.
+- 📘 **[Character Authoring Guide](docs/角色制作与更换指南.md)** — how to build a pet from scratch: split frames → sort the PNGs → zip it → import it in one click.
 
-> More documentation is on its way……
+> More documents are on the way…
 
 ---
-
 
 ## 🧰 Tech Stack
 
@@ -408,33 +169,33 @@ Backup zips are rooted at `soul-desktop-pet.db` and are restored atomically on i
 |---|---|
 | Desktop shell | Electron 32 |
 | Database | sql.js (pure-JS SQLite, zero native dependencies) |
-| Rendering | Vanilla HTML + ES Modules + hash router (no framework) |
+| Rendering | Plain HTML + ES Modules + hash routing (no framework) |
 | Packaging | electron-builder + NSIS |
 | Video frame splitting | ffmpeg-static + fluent-ffmpeg |
 | PDF generation | pdfkit |
 | Lunar calendar | lunar-javascript |
 
-> No cloud dependencies; no tracking; the network is used only when the OS updates Electron itself.
+> No cloud dependencies; no tracking; the network is used only when Electron updates itself via the OS.
 
 ## 📸 Community Chat
 
-Want to chat with the author and other users about pet tricks, report bugs, and share your own characters?
+Want to trade pet tricks, report bugs, or share the characters you make?
 
 👉 Join the QQ group (scan the QR code below):
 
-![QQ community group](assets/qq交流群.jpg)
+![qq交流群](assets/qq交流群.jpg)
 
 ---
 
 ## 🙏 Acknowledgements
 
-This project was designed and implemented with inspiration from several excellent open-source projects:
+This project was inspired by several fine open-source works, and we gratefully acknowledge them:
 
 - [desktop-pet](https://github.com/TonyNa-code/desktop-pet)
 - [Monica](https://github.com/monicahq/monica)
 - [Immich Memories](https://github.com/sam-dumont/immich-memories)
 - [PhotoBook Studio](https://github.com/romaruss/ImmichPhotoBook)
-- and other open-source works that provided inspiration……
+- and other open-source works that sparked ideas…
 
 ---
 
