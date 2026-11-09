@@ -62,7 +62,7 @@
   - **Meal reminder** — fires in the breakfast / lunch / dinner windows and ends as soon as you feed the pet;
   - **Break reminder** — fires after an hour of continuous computer use, then once every 3 hours;
   - **New version** — when an update is found, the pet **says 「有新版本」 like one of its own lines** (a blue action bubble; it does not take over the reminder bubble slot). A check that finds a new version opens a **10-minute window**; for that window the line stays plugged into the pet's speech, and it is withdrawn when the window closes — the same time-based cancellation the meal reminder uses. It comes back only on the next check. To download, use the update card in Settings.
-- Every bubble kind can wear a user-picked "text box" artwork.
+- Every bubble kind can wear a user-picked "text box" artwork. The box **sizes itself to the text**: a short line gets a small box, a longer one widens the box (or scales the whole box up proportionally when it no longer fits), and the text stays centred inside it.
 
 ### 💞 Intimacy System
 - **Bond (permanent bond)**: settled daily across 10 dimensions, upgrading quarterly;

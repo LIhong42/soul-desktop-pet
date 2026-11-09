@@ -24,6 +24,7 @@
     "verify:anniversary": "node scripts/verify-anniversary-carousel.js && node scripts/verify-anniversary-db.js && node scripts/run-electron.js scripts/shot-anniversary.js",
     "verify:pet-stats": "node scripts/verify-pet-stats.js",
     "verify:update-bubble": "node scripts/verify-update-bubble.js",
+    "verify:bubble-sizing": "node scripts/run-electron.js scripts/test-bubble-sizing.js",
     "shot:today": "node scripts/run-electron.js scripts/shot-today.js",
     "shot:contact": "node scripts/run-electron.js scripts/shot-contact.js",
     "shot:bg-pages": "node scripts/run-electron.js scripts/shot-bg-pages.js",

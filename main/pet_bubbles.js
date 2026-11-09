@@ -198,9 +198,15 @@ const BUILTIN_RULES = [
     kind: KINDS.MEAL,
     enabled: true,
     priority: 30,
-    // Same line for every window, per spec. The window label is prepended so
-    // the user can tell which window is nagging them without the text
-    // growing into a sentence: "午饭：今天吃撒".
+    // Same line for every window, per spec.
+    //
+    // The window label ("早饭" / "午饭" / "晚饭") used to be prepended, giving
+    // "早饭：今天吃撒". That prefix is gone: it made the line longer than the
+    // sentence needed, and the user asked for the plain four characters. The
+    // window is still visible in the settings page's one-line summary
+    // (see describe() below), so nothing is actually lost — and the bubble
+    // itself is the wrong place for it, because the bubble is small and every
+    // extra glyph pushes it toward wrapping.
     text: '今天吃撒',
     windows: [
       { id: 'breakfast', label: '早饭', from: '06:30', to: '09:30' },
@@ -212,6 +218,17 @@ const BUILTIN_RULES = [
       return this.windows.map((w) => `${w.label} ${w.from}-${w.to}`).join(' · ')
         + '（喂食后自动结束）';
     },
+    // The sample line the settings page's 「预览」 button shows when the
+    // meal window isn't open right now.
+    //
+    // Without this the preview fell back to the rule's *name* — the literal
+    // string "meal" — because `bubbles:force` uses `forceText()` when the
+    // rule has one and the rule name otherwise. So the preview drew a bubble
+    // reading "meal" while the real bubble reads "今天吃撒": the user was
+    // looking at a picture of something the pet would never say.
+    forceText() {
+      return this.text;
+    },
     build(state) {
       const win = state.activeMealWindow;
       if (!win.id) return null;
@@ -219,7 +236,7 @@ const BUILTIN_RULES = [
       // up for an hour or thirty seconds.
       if (state.feedWindows[win.id]) return null;
       return {
-        text: petBubbleTypes.textAtLeastOneOf([win.label, this.text], 2, '：') || this.text,
+        text: this.text,
         durationMs: DEFAULT_DURATION_MS,
       };
     },

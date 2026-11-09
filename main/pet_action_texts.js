@@ -36,7 +36,7 @@
 //     with a ttl, and returns a handle. pet_bubbles calls it when a rule
 //     starts (`onStart`) and calls `dequeueRuntime` when the bubble is
 //     cleared. That's the "动态插拔" the user asked for: the default
-//     action's pool gains "午饭：今天吃撒" exactly while that bubble is on
+//     action's pool gains "今天吃撒" exactly while that bubble is on
 //     screen, and loses it the instant the bubble goes away.
 //   - The runtime pool is merged in front of the user's saved texts when
 //     the pool is read, so a rule-driven line can never be persisted or
@@ -124,7 +124,7 @@ function dequeueRuntime(action, text) {
 
 // Current runtime entries, optionally filtered to one action. Exposed so
 // /settings can show the user what's temporarily wired in (e.g. "当前插播:
-// 午饭：今天吃撒"), which makes the plug/unplug behaviour visible instead of
+// 今天吃撒"), which makes the plug/unplug behaviour visible instead of
 // mysterious.
 function listRuntime(action) {
   pruneRuntime(Date.now());

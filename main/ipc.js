@@ -2521,6 +2521,15 @@ function normFreeText(s) {
         text: (typeof rule.forceText === 'function') ? rule.forceText() : rule.name,
         kind: rule.kind,
         rule: rule.name,
+        // The 文本框 travels with the line, exactly as it does on the real
+        // path (main/pet_bubbles.js `push` stamps it onto every bubble).
+        //
+        // Without it the preview drew the plain CSS card while the real
+        // bubble wears the user's chosen artwork — and since the artwork is
+        // what carries the *size*, the preview showed a differently-shaped
+        // bubble than the one the user actually gets. The user is checking
+        // the bubble's look in this preview, so it has to be the real one.
+        box: petBubbles.loadRuleBox(),
       });
     }
     return { ok: true };

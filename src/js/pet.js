@@ -449,6 +449,41 @@ function applyArtGeometry(box) {
   b.style.width = '';
   b.style.height = '';
 
+  // The bubble has to be **laid out** while it is measured.
+  //
+  // `.pet-bubble.hidden` is `display: none`, and a `display: none` element has
+  // no layout at all: `range.getClientRects()` comes back empty and
+  // `getBoundingClientRect()` is all zeros. So measuring a hidden bubble
+  // silently produced `textW = 0` / `textH = 0`, and every number downstream
+  // fell through to the character-count *estimate* below.
+  //
+  // That estimate is what made the 吃饭提醒 bubble look wrong: 「早饭：今天吃撒」
+  // is 7 characters, and the estimate's slack-free line fit works out to 5
+  // characters per line — so the bubble was sized for TWO lines and the text
+  // wrapped, even though the artwork had room for one. The 更新提醒 looked fine
+  // only by accident: it travels the *action* path, which re-paints the bubble
+  // on every action play, so its second paint measured a visible bubble and
+  // got a real layout measurement.
+  //
+  // The rule path has no such second chance — its broadcast is de-duplicated,
+  // so the bubble is measured once and then sits there for the whole hour.
+  //
+  // So the bubble is un-hidden for the duration of the measurement and put
+  // back afterwards. `fade` is dropped too: `opacity: 0` still lays out, but
+  // the class is what the caller re-applies on the next paint, and keeping the
+  // two in step here avoids a bubble that flashes at full opacity for a frame
+  // and then goes back to transparent.
+  const wasHidden = b.classList.contains('hidden');
+  const wasFaded = b.classList.contains('fade');
+  if (wasHidden || wasFaded) {
+    b.classList.remove('hidden', 'fade');
+    // Forcing a reflow here is what makes the measurement below see the
+    // *new* layout. Without it the browser is free to batch the style change
+    // and hand back the pre-unhide geometry — the exact bug this whole block
+    // exists to fix, one level up.
+    void b.offsetWidth;
+  }
+
   // Start from the widest the bubble may get and let the text's own measured
   // width pull it back down. The text node is stretched to the grid track (see
   // `justify-self: stretch` in pet.css — that's what makes centring work), so the
@@ -568,6 +603,18 @@ function applyArtGeometry(box) {
   b.style.width = `${finalW}px`;
   b.style.height = `${finalH}px`;
   setArtScale(b, g, finalW, finalH);
+
+  // Put the visibility back the way it was found. The caller
+  // (showContextBubble) un-hides the bubble right after this returns, so
+  // restoring here keeps the element's state consistent with what the caller
+  // expects to find — and, more importantly, keeps a bubble that was *fading
+  // out* from snapping back to full opacity just because it was measured.
+  //
+  // The width/height are left in place: they are the measurement's result, and
+  // the caller's own `classList.remove('hidden', 'fade')` is what makes the
+  // bubble appear.
+  if (wasHidden) b.classList.add('hidden');
+  if (wasFaded) b.classList.add('fade');
 }
 
 // The canvas-to-bubble conversion, shared by the measured and fallback paths.
