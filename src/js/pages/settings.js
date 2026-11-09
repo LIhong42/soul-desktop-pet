@@ -1,7 +1,12 @@
-// src/js/pages/settings.js — pet selection, walk toggle, pack import / remove,
-// backup, quit
+// src/js/pages/settings.js — the settings page: a section nav rail on the
+// left, one section's settings on the right.
+//
+// The page is split into eleven sections (see SETTINGS_SECTIONS below), each
+// with its own route (`#/settings/pet`, `#/settings/pin`, …). The rail is
+// the only thing that is always on screen; the panel shows just the selected
+// section, so the page's height doesn't grow as features are added.
 import { api, escapeHtml, toast } from '../api.js';
-import { register, navigate } from '../router.js';
+import { register } from '../router.js';
 
 // The pages that wear the background artwork, with their Chinese names.
 // The settings page shows this list so the user knows where the picture
@@ -129,7 +134,49 @@ function ensureImportSubscribed() {
   });
 }
 
-async function render() {
+// ---------------------------------------------------------------------------
+// 设置页的分区
+// ---------------------------------------------------------------------------
+//
+// 设置页原来是一长条卡片：桌宠、动作、文本、气泡、开机启动、唤醒恢复、背景、
+// 更新、数据迁移、密码、退出——十一个功能从上到下排开，页面越加越长，常用
+// 的那几项被压在中间，滚动找起来很费劲。
+//
+// 现在页面分成两块：左边一列分区导航，右边只显示选中的那一块。每块的标题
+// 就是一个分区名，所以下方的卡片不再需要各自重复一遍小标题。
+//
+// 分区表是这个页面的唯一结构来源：加一项新设置，就在这里加一条，
+// 导航栏和路由会自动跟上；删一项设置，这里删掉，对应的代码一并清理。
+const SETTINGS_SECTIONS = [
+  { key: 'pet',      label: '桌宠',     icon: '🐾', title: '桌面宠物形象' },
+  { key: 'actions',  label: '角色动作', icon: '🎬', title: '角色动作' },
+  { key: 'texts',    label: '动作文本', icon: '💬', title: '动作文本' },
+  { key: 'bubbles',  label: '文本气泡', icon: '🫧', title: '文本气泡' },
+  { key: 'startup',  label: '开机启动', icon: '🚀', title: '开机启动' },
+  { key: 'wake',     label: '睡眠唤醒', icon: '😴', title: '睡眠唤醒后的恢复' },
+  { key: 'background', label: '页面背景', icon: '🖼️', title: '页面背景' },
+  { key: 'update',   label: '软件更新', icon: '⬆️', title: '软件更新' },
+  { key: 'backup',   label: '数据迁移', icon: '📦', title: '数据迁移' },
+  { key: 'pin',      label: '访问密码', icon: '🔒', title: '访问密码' },
+  { key: 'about',    label: '应用',     icon: '⏹️', title: '应用' },
+];
+
+// 默认分区：/settings 不带分区名时显示这一块。
+const DEFAULT_SECTION = 'pet';
+
+// 路由到分区 key 的反向表。分区 key 会直接进 URL（#/settings/pet），
+// 所以必须是稳定的短标识——改了它，用户的收藏链接就失效了。
+const SECTION_KEYS = new Set(SETTINGS_SECTIONS.map((s) => s.key));
+
+// 当前显示的分区。
+//
+// 分区化之后有些操作需要重画当前分区（导出备份后要刷新"最近导出"的时间，
+// 导入桌宠后要刷新列表）。重画时不该跳回默认分区——用户明明在「数据迁移」
+// 里点了个按钮，页面却跳到「桌宠」，等于把他甩回起点。所以分区名记在
+// 模块级，重画时沿用。
+let _activeSection = DEFAULT_SECTION;
+
+async function render(args = {}) {
   // 重渲染前先退掉上一轮的导入进度订阅，否则离开页面再回来会叠加
   // 监听器，一次进度事件触发多次重绘。
   if (typeof _importUnsub === 'function') {
@@ -137,67 +184,94 @@ async function render() {
     _importUnsub = null;
   }
   const app = document.getElementById('app');
-  const lastExport = await api.settings.get('last_export_at');
-  const lastImport = await api.settings.get('last_import_at');
+  // 路由里带的分区名不认识时（手改的 URL、旧链接）回落到默认分区，
+  // 而不是渲染一个空页面。
+  const raw = args && typeof args.section === 'string' ? args.section : '';
+  const activeKey = SECTION_KEYS.has(raw) ? raw : DEFAULT_SECTION;
+  _activeSection = activeKey;
+
+  // The whole page sits in a `.page-column` — the app's shared centred
+  // reading band — so on a wide window the settings cards keep the same
+  // side margin every other page has instead of running edge to edge.
+  // Inside that band the page splits into a nav rail and the panel.
+  app.innerHTML = `
+    <div class="page-column">
+      <h1>设置</h1>
+      <div class="settings-page">
+        <nav class="settings-nav" aria-label="设置分区">
+          <ul class="settings-nav-list">
+            ${SETTINGS_SECTIONS.map((s) => `
+              <li>
+                <a class="settings-nav-item${s.key === activeKey ? ' is-active' : ''}"
+                   href="#/settings/${escapeHtml(s.key)}"
+                   ${s.key === activeKey ? 'aria-current="page"' : ''}>
+                  <span class="settings-nav-icon" aria-hidden="true">${s.icon}</span>
+                  <span>${escapeHtml(s.label)}</span>
+                </a>
+              </li>
+            `).join('')}
+          </ul>
+        </nav>
+        <div class="settings-panel" id="settings-panel">
+          <h2 class="settings-panel-title"></h2>
+          <div id="settings-panel-body">
+            <div class="empty">载入中…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const section = SETTINGS_SECTIONS.find((s) => s.key === activeKey);
+  const titleEl = document.querySelector('.settings-panel-title');
+  if (titleEl) titleEl.textContent = section ? section.title : '';
+
+  await renderSection(activeKey);
+}
+
+// 渲染一个分区的内容。
+//
+// 每个分区自己取自己需要的数据——分区化之后，一次只需要读当前这一块要用的
+// 设置，不必把全部十一个分区的 IPC 都跑一遍（开机启动、更新状态、背景列表
+// 这些每次都要读库）。分区的 HTML 和它的事件绑定放在一起，省掉"先画骨架
+// 再异步填内容"的闪烁。
+async function renderSection(key) {
+  const body = document.getElementById('settings-panel-body');
+  if (!body) return;
+  switch (key) {
+    case 'pet':       return renderPetSection(body);
+    case 'actions':   return renderActionsSection(body);
+    case 'texts':     return renderTextsSection(body);
+    case 'bubbles':   return renderBubblesSection(body);
+    case 'startup':   return renderStartupSection(body);
+    case 'wake':      return renderWakeSection(body);
+    case 'background':return renderBackgroundSection(body);
+    case 'update':    return renderUpdateSection(body);
+    case 'backup':    return renderBackupSection(body);
+    case 'pin':       return renderPinSection(body);
+    case 'about':     return renderAboutSection(body);
+    default:          body.innerHTML = '<div class="empty">未知的设置分区。</div>';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 桌宠
+// ---------------------------------------------------------------------------
+async function renderPetSection(body) {
   // Pet list is now dynamic, sourced from the resources/pets/ registry.
   // `listInstalled` returns entries decorated with source/origin/importedAt/
   // description, which we need to render the per-row delete button.
   const installed = (await api.pet.listInstalled?.()) || (await api.pet.list()) || [];
   const currentPetId = await api.pet.getCurrent();
   const walkEnabled = await api.pet.getWalkEnabled();
-  // 开机自启动。Defaults to on, but the source of truth is the DB (the main
-  // process decides that on first launch). `supported` is false in dev builds.
-  const autoStart = (await api.app.getAutostart?.())
-    || { supported: false, enabled: true, active: false };
-  // 自动更新状态。更新卡片由 renderUpdateCard() 单独渲染——它需要自己订阅
-  // 进度事件并局部重绘，不适合放进下面那次整页 innerHTML 赋值里。
-  // 主进程可能还没注册完 handler（老版本的 preload），所以都做可选调用。
-  const updateState = (await api.app.getUpdateState?.())
-    || { supported: false, enabled: true, currentVersion: '', info: null };
-  // 睡眠唤醒后的恢复策略。见 main/app_relaunch.js。
-  //   always — 每次唤醒都重启整个应用（默认）
-  //   auto   — 只有当桌宠窗口的"输入通路"真的死了才重启整个应用
-  //   off    — 从不重启
-  const restartOnWakeRaw = await api.settings.get('pet_restart_app_on_wake');
-  const restartOnWake = (restartOnWakeRaw === 'auto' || restartOnWakeRaw === 'off')
-    ? restartOnWakeRaw : 'always';
-  // 页面背景。图片在 resources/ui/，由主进程扫描目录并解析成 file:// URL
-  // （渲染进程读不了文件系统）。`chosen` 是用户选中的 id（null = 从没选过，
-  // 即跟随默认），`current` 是实际会画出来的那一张。
-  const pageBg = (await api.pageBackground.get?.())
-    || { list: [], chosen: null, current: null, noneId: '__none__', routes: [] };
-  const pageBgList = pageBg.list || [];
-  const pageBgNone = pageBg.noneId ?? '__none__';
-  // The routes that wear the background, so the settings page can tell the
-  // user which pages the picture will show up on.
-  const pageBgRoutes = pageBg.routes || [];
-  const pageBgOptions = [
-    // "跟随默认" = 没选过任何一张时画 folder 里的第一张；它和"无背景"是
-    // 两个不同的状态，所以分成两个选项。前者的 value 是空串——主进程把空串
-    // 解释成"清除这条设置"，从而回到"从未选过"。
-    `<option value="" ${pageBg.chosen === null ? 'selected' : ''}>跟随默认</option>`,
-    `<option value="${escapeHtml(pageBgNone)}" ${pageBg.chosen === pageBgNone ? 'selected' : ''}>无背景</option>`,
-    ...pageBgList.map((b) =>
-      `<option value="${escapeHtml(b.id)}" ${pageBg.chosen === b.id ? 'selected' : ''}>${escapeHtml(b.label)}</option>`
-    ),
-  ].join('');
-
   const petOptions = installed.length
     ? installed.map((p) =>
         `<option value="${escapeHtml(p.id)}" ${p.id === currentPetId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
       ).join('')
     : '<option value="">(未找到桌宠)</option>';
 
-  // The whole page sits in a `.page-column` — the app's shared centred
-  // reading band — so on a wide window the settings cards keep the same
-  // side margin every other page has instead of running edge to edge.
-  // The wrapper is opened and closed around this one long template
-  // rather than re-indenting its 600 lines.
-  app.innerHTML = `
-    <div class="page-column">
-    <h1>设置</h1>
+  body.innerHTML = `
     <div class="card">
-      <h2>桌面宠物形象</h2>
       <div class="form-row">
         <div class="field">
           <label>桌宠</label>
@@ -211,20 +285,14 @@ async function render() {
         </div>
       </div>
       <p class="meta" style="margin-top:8px">
-        切换桌宠后立刻生效；自动行走开启时，宠物会在桌面上随机走路、跳跃、睡觉；关闭后宠物原地待机。
-      </p>
-      <p class="meta" style="margin-top:4px">
-        桌宠文件夹位于 <code>resources/pets/<id>/</code>，每个桌宠自带 <code>manifest.json</code> 描述自己的动作。
+        切换桌宠后立刻生效；关闭自动行走后宠物原地待机。
       </p>
 
       <h3 style="margin-top:18px;">上传桌宠压缩包</h3>
-      <p class="meta">压缩包内需要按动作分目录放帧文件：<code>default/</code> 必填，其他动作目录名任意（如 <code>blinking/</code>、<code>dancing/</code>、<code>headpat/</code> 等），有几个就识别几个。每个目录下放 <code><name>_NNN_NNNN.png</code> 命名的帧，其中 <code>NNN</code> 为帧序号、最后四位为该帧播放毫秒数。压缩包可以包一层顶层目录，也可以直接放帧目录。上传后系统会自动生成 <code>manifest.json</code> 并立即生效。</p>
-      <p class="meta" style="margin-top:6px;"><strong>支持两种图片类型：</strong></p>
-      <ul class="meta" style="margin-top:4px; padding-left:22px;">
-        <li><strong>非透明 PNG（默认）：</strong>图片带实色背景（如纯黑底），上传时会自动抠掉背景、去除描边并导出透明 PNG。</li>
-        <li><strong>透明 PNG：</strong>图片本身已经抠好背景，上传时<strong>跳过抠图流程</strong>，原样使用，边缘不会被二次处理。</li>
-      </ul>
-      <p class="meta" style="margin-top:6px;">系统会自动判断每一帧属于哪种类型，可以混用（同一压缩包里既有透明帧也有非透明帧也可以）。</p>
+      <p class="meta">压缩包按动作分目录放帧：<code>default/</code> 必填，其他目录名任意（如 <code>blinking/</code>）。帧文件名形如 <code>walk_001_0100.png</code>，前三段是帧序号、末四位是该帧的播放时长（毫秒）。上传后自动生成 <code>manifest.json</code> 并立即生效。</p>
+      <p class="meta" style="margin-top:4px;">
+        图片可以是带背景的非透明 PNG（会自动抠掉背景），也可以是已抠好的透明 PNG（原样使用）；系统逐帧自动判断，可以混用。
+      </p>
       <div class="row" style="gap:8px; margin-top:10px; flex-wrap:wrap;">
         <button class="btn" id="import-from-zip">上传桌宠压缩包…</button>
       </div>
@@ -232,151 +300,15 @@ async function render() {
 
       <div id="installed-pets-list" style="margin-top:14px;"></div>
     </div>
-
-    <div class="card">
-      <h2>角色动作</h2>
-      <p class="meta">配置桌宠在被点击时和待机时分别播放什么动作。配置是按桌宠分别保存的，切换桌宠后会自动加载。</p>
-      <div id="pet-actions-card-body">
-        <div class="empty">载入中…</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>动作文本</h2>
-      <p class="meta">给桌宠的每个动作绑定"它想说的话"。播放该动作时会从绑定的多条文本里<strong>随机挑一条</strong>展示；<strong>"不展示文本"始终是其中一项</strong>，所以即使绑定了文本，这个动作也可能一句话都不说。默认不绑定任何文本。</p>
-      <div id="pet-action-texts-card-body">
-        <div class="empty">载入中…</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>文本气泡</h2>
-      <p class="meta">桌宠会根据条件主动说话，气泡浮在桌宠上方，与动作播放互不影响。每条规则都可以单独关闭。</p>
-      <div id="pet-bubbles-card-body">
-        <div class="empty">载入中…</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>开机启动</h2>
-      <div class="field" style="justify-content:flex-start;">
-        <label style="display:flex; align-items:center; gap:6px;">
-          <input type="checkbox" id="app-autostart" ${autoStart.enabled ? 'checked' : ''}
-                 ${autoStart.supported ? '' : 'disabled'}/>
-          开机时自动启动 SoulDesktopPet
-        </label>
-      </div>
-      <p class="meta" style="margin-top:8px">
-        ${autoStart.supported
-          ? '开启后，电脑开机登录时会自动运行桌宠，无需手动双击。默认已开启。'
-          : '当前为开发模式，暂不支持开机自启动；打包安装后才能使用。'}
-      </p>
-      ${autoStart.supported && autoStart.enabled && !autoStart.active
-        ? '<p class="meta" style="margin-top:4px; color:#b26a00;">⚠ 开机启动项当前未生效，可能已被系统或安全软件禁用；取消勾选后重新勾选可尝试恢复。</p>'
-        : ''}
-    </div>
-
-    <div class="card">
-      <h2>睡眠唤醒后的恢复</h2>
-      <p class="meta">
-        电脑睡眠再唤醒后，有时桌宠会"拖不动"：窗口还活着、菜单也能打开，但鼠标事件收不到，
-        或者收到了也带不动桌宠。原因是 Chromium 的指针设备在睡眠中被拆掉后没有被重新注册，
-        而设备注册表在浏览器进程里，应用内部无法修复——唯一可靠的恢复是换一个全新的进程。
-      </p>
-      <div class="field" style="justify-content:flex-start;">
-        <label style="display:flex; align-items:center; gap:6px;">
-          <input type="radio" name="pet-restart-on-wake" value="always" ${restartOnWake === 'always' ? 'checked' : ''}/>
-          每次唤醒都重启应用（默认）：保证桌宠一定拖得动，主窗口会被关掉重开
-        </label>
-      </div>
-      <div class="field" style="justify-content:flex-start;">
-        <label style="display:flex; align-items:center; gap:6px;">
-          <input type="radio" name="pet-restart-on-wake" value="auto" ${restartOnWake === 'auto' ? 'checked' : ''}/>
-          自动检测：只有确认输入通路失效时才重启应用
-        </label>
-      </div>
-      <div class="field" style="justify-content:flex-start;">
-        <label style="display:flex; align-items:center; gap:6px;">
-          <input type="radio" name="pet-restart-on-wake" value="off" ${restartOnWake === 'off' ? 'checked' : ''}/>
-          从不重启：只做应用内部的恢复
-        </label>
-      </div>
-    </div>
-
-    <div class="card" id="page-bg-card">
-      <h2>页面背景</h2>
-      <p class="meta">底图。图片放在 <code>resources/ui/</code>，把新的 PNG 放进去重启应用即可出现在下面的列表里。</p>
-      <div class="form-row">
-        <div class="field">
-          <label>背景图片</label>
-          <select id="page-bg-select">${pageBgOptions}</select>
-        </div>
-      </div>
-      <p class="meta" style="margin-top:8px">
-        ${pageBgList.length
-          ? `选择后回到下列页面即可看到效果：${pageBgRoutes.map((r) => escapeHtml(PAGE_BG_ROUTE_LABELS[r] || r)).join('、')}、${PAGE_BG_EXTRA_LABELS.join('、')}。选「无背景」可以关掉底图。`
-          : '当前没有找到任何背景图片（<code>resources/ui/</code> 是空的或不存在）。'}
-      </p>
-    </div>
-
-    <div class="card" id="update-card">
-      <h2>软件更新</h2>
-      <div id="update-card-body">
-        <div class="empty">载入中…</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>数据迁移</h2>
-      <p>将所有联系人、提醒、回忆事件、照片和设置打包到一个 zip 文件，方便在不同机器之间迁移。</p>
-      <p class="meta">最近导出：<strong>${lastExport || '从未'}</strong> · 最近导入：<strong>${lastImport || '从未'}</strong></p>
-      <div class="row" style="gap:8px; margin-top:10px;">
-        <button class="btn" id="export-backup">导出备份…</button>
-        <button class="btn secondary" id="import-backup">导入备份…</button>
-      </div>
-      <p class="meta" style="margin-top:8px">导入会覆盖当前所有数据。建议先导出一份当前备份再导入。</p>
-    </div>
-
-    <div class="card">
-      <h2>访问密码</h2>
-      <p class="meta">4 位数字。修改后下次打开主窗口时生效。</p>
-      <div class="form-row">
-        <div class="field">
-          <label>当前密码</label>
-          <input type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" id="pin-current" autocomplete="off"/>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="field">
-          <label>新密码</label>
-          <input type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" id="pin-new" autocomplete="off"/>
-        </div>
-        <div class="field">
-          <label>确认新密码</label>
-          <input type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" id="pin-confirm" autocomplete="off"/>
-        </div>
-      </div>
-      <div class="row" style="margin-top:10px;">
-        <button class="btn" id="pin-change">修改密码</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>应用</h2>
-      <button class="btn danger" id="quit-app">退出 SoulDesktopPet</button>
-      <p class="meta" style="margin-top:8px">点击后关闭整个应用，包括桌面宠物。</p>
-    </div>
-    </div>
   `;
+
   document.getElementById('pet-species').onchange = async (e) => {
     try {
       await api.pet.setCurrent(e.target.value);
       toast('桌宠已切换');
-      // Re-render the whole page so the "角色动作" card (which depends
-      // on the active pet's manifest variants) and the installed-pets
-      // list (which highlights the newly-selected row) both reflect the
-      // new pet without the user having to leave and come back.
-      render();
+      // 重画当前分区，让"已安装桌宠"列表把新选中的那一行标出来，
+      // 不必用户离开再回来。
+      await renderPetSection(body);
     } catch (err) {
       toast('切换失败：' + ((err && err.message) || err));
     }
@@ -389,58 +321,6 @@ async function render() {
       toast('设置失败：' + ((err && err.message) || err));
     }
   };
-  document.getElementById('page-bg-select').onchange = async (e) => {
-    // The select carries three kinds of value, distinguished by the id:
-    //   "" (empty option)   → 跟随默认：清除选择，画目录里的第一张
-    //   "__none__"           → 无背景：明确关掉底图
-    //   "<file id>"          → 指定的那一张
-    //
-    // The main process stores the id verbatim and does the resolution (and
-    // the fallback), so the renderer doesn't have to know how "跟随默认"
-    // turns into an actual image.
-    const id = e.target.value;
-    const isNone = id === pageBgNone;
-    try {
-      await api.pageBackground.set(id);
-      toast(isNone ? '已关闭页面背景' : '页面背景已更新');
-    } catch (err) {
-      toast('设置失败：' + ((err && err.message) || err));
-    }
-  };
-  document.getElementById('app-autostart').onchange = async (e) => {
-    const want = !!e.target.checked;
-    try {
-      const r = await api.app.setAutostart(want);
-      if (!r || !r.ok) {
-        // The registry write failed. Snap the checkbox back to the stored
-        // intent rather than leaving it showing a state that isn't real.
-        e.target.checked = !want;
-        toast(r && r.supported === false
-          ? '开发模式下不支持开机自启动'
-          : '设置失败：无法写入开机启动项');
-        return;
-      }
-      toast(want ? '开机自启动已开启' : '开机自启动已关闭');
-    } catch (err) {
-      e.target.checked = !want;
-      toast('设置失败：' + ((err && err.message) || err));
-    }
-  };
-  // 睡眠唤醒后的恢复策略。
-  for (const radio of document.querySelectorAll('input[name="pet-restart-on-wake"]')) {
-    radio.onchange = async (e) => {
-      if (!e.target.checked) return;
-      const mode = e.target.value;
-      try {
-        await api.settings.set('pet_restart_app_on_wake', mode);
-        toast(mode === 'always' ? '每次唤醒都会重启应用'
-          : mode === 'off' ? '已关闭唤醒后的应用重启'
-          : '已改为自动检测');
-      } catch (err) {
-        toast('设置失败：' + ((err && err.message) || err));
-      }
-    };
-  }
   document.getElementById('import-from-zip').onclick = async () => {
     // 先订阅再调用 IPC：主进程在文件选择框还开着的时候就会开始推进度，
     // 晚订阅会丢掉最前面的几条消息。
@@ -474,11 +354,11 @@ async function render() {
       }
       // 导入完成，进度条不再需要。
       _importProgress = null;
-      render();
+      await renderPetSection(body);
     } catch (e) {
       _importProgress = null;
       toast('导入失败：' + ((e && e.message) || e));
-      render();
+      await renderPetSection(body);
     }
   };
 
@@ -486,19 +366,265 @@ async function render() {
   // import controls. The dropdown above already covers "switch", so this
   // list is purely for managing imported packs.
   const listEl = document.getElementById('installed-pets-list');
-  if (installed.length > 0) {
-    listEl.innerHTML = installed.map((p) => petRow(p, currentPetId)).join('');
-    wirePetListActions(currentPetId);
-  } else {
-    listEl.innerHTML = '';
+  if (listEl) {
+    listEl.innerHTML = installed.length
+      ? installed.map((p) => petRow(p, currentPetId)).join('')
+      : '';
   }
+  wirePetListActions(currentPetId);
+}
 
+// ---------------------------------------------------------------------------
+// 角色动作
+// ---------------------------------------------------------------------------
+async function renderActionsSection(body) {
+  body.innerHTML = `
+    <div class="card">
+      <p class="meta">配置桌宠被点击时和待机时分别播放什么动作。配置按桌宠分别保存，切换桌宠后自动加载。</p>
+      <div id="pet-actions-card-body">
+        <div class="empty">载入中…</div>
+      </div>
+    </div>
+  `;
+  const currentPetId = await api.pet.getCurrent();
+  await renderPetActionsCard(currentPetId);
+}
+
+// ---------------------------------------------------------------------------
+// 动作文本
+// ---------------------------------------------------------------------------
+async function renderTextsSection(body) {
+  body.innerHTML = `
+    <div class="card">
+      <p class="meta">给每个动作绑定桌宠想说的话，播放时随机挑一条展示。</p>
+      <div id="pet-action-texts-card-body">
+        <div class="empty">载入中…</div>
+      </div>
+    </div>
+  `;
+  await renderActionTextsCard();
+}
+
+// ---------------------------------------------------------------------------
+// 文本气泡
+// ---------------------------------------------------------------------------
+async function renderBubblesSection(body) {
+  body.innerHTML = `
+    <div class="card">
+      <p class="meta">桌宠按条件主动说话，每条规则可单独关闭。</p>
+      <div id="pet-bubbles-card-body">
+        <div class="empty">载入中…</div>
+      </div>
+    </div>
+  `;
+  await renderBubblesCard();
+}
+
+// ---------------------------------------------------------------------------
+// 开机启动
+// ---------------------------------------------------------------------------
+async function renderStartupSection(body) {
+  // 开机自启动。Defaults to on, but the source of truth is the DB (the main
+  // process decides that on first launch). `supported` is false in dev builds.
+  const autoStart = (await api.app.getAutostart?.())
+    || { supported: false, enabled: true, active: false };
+  body.innerHTML = `
+    <div class="card">
+      <div class="field" style="justify-content:flex-start;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="app-autostart" ${autoStart.enabled ? 'checked' : ''}
+                 ${autoStart.supported ? '' : 'disabled'}/>
+          开机时自动启动 SoulDesktopPet
+        </label>
+      </div>
+      <p class="meta" style="margin-top:8px">
+        ${autoStart.supported
+          ? '开机登录时自动运行桌宠，无需手动双击。默认已开启。'
+          : '开发模式下暂不支持，打包安装后才能使用。'}
+      </p>
+      ${autoStart.supported && autoStart.enabled && !autoStart.active
+        ? '<p class="meta" style="margin-top:4px; color:#b26a00;">⚠ 开机启动项当前未生效，可能已被系统或安全软件禁用；取消勾选后重新勾选可尝试恢复。</p>'
+        : ''}
+    </div>
+  `;
+  document.getElementById('app-autostart').onchange = async (e) => {
+    const want = !!e.target.checked;
+    try {
+      const r = await api.app.setAutostart(want);
+      if (!r || !r.ok) {
+        // The registry write failed. Snap the checkbox back to the stored
+        // intent rather than leaving it showing a state that isn't real.
+        e.target.checked = !want;
+        toast(r && r.supported === false
+          ? '开发模式下不支持开机自启动'
+          : '设置失败：无法写入开机启动项');
+        return;
+      }
+      toast(want ? '开机自启动已开启' : '开机自启动已关闭');
+    } catch (err) {
+      e.target.checked = !want;
+      toast('设置失败：' + ((err && err.message) || err));
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 睡眠唤醒后的恢复
+// ---------------------------------------------------------------------------
+async function renderWakeSection(body) {
+  // 睡眠唤醒后的恢复策略。见 main/app_relaunch.js。
+  //   always — 每次唤醒都重启整个应用（默认）
+  //   auto   — 只有当桌宠窗口的"输入通路"真的死了才重启整个应用
+  //   off    — 从不重启
+  const restartOnWakeRaw = await api.settings.get('pet_restart_app_on_wake');
+  const restartOnWake = (restartOnWakeRaw === 'auto' || restartOnWakeRaw === 'off')
+    ? restartOnWakeRaw : 'always';
+  body.innerHTML = `
+    <div class="card">
+      <p class="meta">
+        电脑睡眠再唤醒后，有时桌宠会"拖不动"：窗口还在、菜单也能开，但鼠标事件收不到。
+        下面选择唤醒后如何恢复。
+      </p>
+      <div class="field" style="justify-content:flex-start;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="radio" name="pet-restart-on-wake" value="always" ${restartOnWake === 'always' ? 'checked' : ''}/>
+          每次唤醒都重启应用（默认）：保证桌宠一定拖得动，主窗口会被关掉重开
+        </label>
+      </div>
+      <div class="field" style="justify-content:flex-start;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="radio" name="pet-restart-on-wake" value="auto" ${restartOnWake === 'auto' ? 'checked' : ''}/>
+          自动检测：只有确认输入通路失效时才重启应用
+        </label>
+      </div>
+      <div class="field" style="justify-content:flex-start;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="radio" name="pet-restart-on-wake" value="off" ${restartOnWake === 'off' ? 'checked' : ''}/>
+          从不重启：只做应用内部的恢复
+        </label>
+      </div>
+    </div>
+  `;
+  for (const radio of document.querySelectorAll('input[name="pet-restart-on-wake"]')) {
+    radio.onchange = async (e) => {
+      if (!e.target.checked) return;
+      const mode = e.target.value;
+      try {
+        await api.settings.set('pet_restart_app_on_wake', mode);
+        toast(mode === 'always' ? '每次唤醒都会重启应用'
+          : mode === 'off' ? '已关闭唤醒后的应用重启'
+          : '已改为自动检测');
+      } catch (err) {
+        toast('设置失败：' + ((err && err.message) || err));
+      }
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 页面背景
+// ---------------------------------------------------------------------------
+async function renderBackgroundSection(body) {
+  // 页面背景。图片在 resources/ui/，由主进程扫描目录并解析成 file:// URL
+  // （渲染进程读不了文件系统）。`chosen` 是用户选中的 id（null = 从没选过，
+  // 即跟随默认），`current` 是实际会画出来的那一张。
+  const pageBg = (await api.pageBackground.get?.())
+    || { list: [], chosen: null, current: null, noneId: '__none__', routes: [] };
+  const pageBgList = pageBg.list || [];
+  const pageBgNone = pageBg.noneId ?? '__none__';
+  // The routes that wear the background, so the settings page can tell the
+  // user which pages the picture will show up on.
+  const pageBgRoutes = pageBg.routes || [];
+  const pageBgOptions = [
+    // "跟随默认" = 没选过任何一张时画 folder 里的第一张；它和"无背景"是
+    // 两个不同的状态，所以分成两个选项。前者的 value 是空串——主进程把空串
+    // 解释成"清除这条设置"，从而回到"从未选过"。
+    `<option value="" ${pageBg.chosen === null ? 'selected' : ''}>跟随默认</option>`,
+    `<option value="${escapeHtml(pageBgNone)}" ${pageBg.chosen === pageBgNone ? 'selected' : ''}>无背景</option>`,
+    ...pageBgList.map((b) =>
+      `<option value="${escapeHtml(b.id)}" ${pageBg.chosen === b.id ? 'selected' : ''}>${escapeHtml(b.label)}</option>`
+    ),
+  ].join('');
+
+  body.innerHTML = `
+    <div class="card" id="page-bg-card">
+      <p class="meta">底图。图片放在 <code>resources/ui/</code>，放入 PNG 并重启应用即可出现在下面的列表里。</p>
+      <div class="form-row">
+        <div class="field">
+          <label>背景图片</label>
+          <select id="page-bg-select">${pageBgOptions}</select>
+        </div>
+      </div>
+      <p class="meta" style="margin-top:8px">
+        ${pageBgList.length
+          ? `生效范围：${pageBgRoutes.map((r) => escapeHtml(PAGE_BG_ROUTE_LABELS[r] || r)).join('、')}、${PAGE_BG_EXTRA_LABELS.join('、')}。选「无背景」可关掉底图。`
+          : '当前没有找到任何背景图片（<code>resources/ui/</code> 是空的或不存在）。'}
+      </p>
+    </div>
+  `;
+  document.getElementById('page-bg-select').onchange = async (e) => {
+    // The select carries three kinds of value, distinguished by the id:
+    //   "" (empty option)   → 跟随默认：清除选择，画目录里的第一张
+    //   "__none__"           → 无背景：明确关掉底图
+    //   "<file id>"          → 指定的那一张
+    //
+    // The main process stores the id verbatim and does the resolution (and
+    // the fallback), so the renderer doesn't have to know how "跟随默认"
+    // turns into an actual image.
+    const id = e.target.value;
+    const isNone = id === pageBgNone;
+    try {
+      await api.pageBackground.set(id);
+      toast(isNone ? '已关闭页面背景' : '页面背景已更新');
+    } catch (err) {
+      toast('设置失败：' + ((err && err.message) || err));
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 软件更新
+// ---------------------------------------------------------------------------
+async function renderUpdateSection(body) {
+  // 自动更新状态。更新卡片由 renderUpdateCard() 单独渲染——它需要自己订阅
+  // 进度事件并局部重绘，不适合放进上面那次整页 innerHTML 赋值里。
+  // 主进程可能还没注册完 handler（老版本的 preload），所以都做可选调用。
+  const updateState = (await api.app.getUpdateState?.())
+    || { supported: false, enabled: true, currentVersion: '', info: null };
+  body.innerHTML = `
+    <div class="card" id="update-card">
+      <div id="update-card-body">
+        <div class="empty">载入中…</div>
+      </div>
+    </div>
+  `;
+  await renderUpdateCard(updateState);
+}
+
+// ---------------------------------------------------------------------------
+// 数据迁移
+// ---------------------------------------------------------------------------
+async function renderBackupSection(body) {
+  const lastExport = await api.settings.get('last_export_at');
+  const lastImport = await api.settings.get('last_import_at');
+  body.innerHTML = `
+    <div class="card">
+      <p>把所有数据打包成 zip，方便换机器。</p>
+      <p class="meta">最近导出：<strong>${lastExport || '从未'}</strong> · 最近导入：<strong>${lastImport || '从未'}</strong></p>
+      <div class="row" style="gap:8px; margin-top:10px;">
+        <button class="btn" id="export-backup">导出备份…</button>
+        <button class="btn secondary" id="import-backup">导入备份…</button>
+      </div>
+      <p class="meta" style="margin-top:8px">导入会覆盖当前所有数据，建议先导出一份再导入。</p>
+    </div>
+  `;
   document.getElementById('export-backup').onclick = async () => {
     try {
       const r = await api.backup.export();
       if (!r || r.canceled) return;
       toast('已导出到 ' + r.path);
-      render();
+      // 重画当前分区，好让"最近导出"的时间更新——不能跳回默认分区。
+      await renderSection(_activeSection);
     } catch (e) {
       toast('导出失败：' + ((e && e.message) || e));
     }
@@ -513,28 +639,78 @@ async function render() {
     try {
       await api.backup.apply(picked.path);
       toast('导入完成');
-      // Re-render the page so the new last_import_at shows up.
-      navigate('/settings');
+      // 重画当前分区，让"最近导入"的时间更新——不能跳回默认分区。
+      await renderSection(_activeSection);
     } catch (e) {
       toast('导入失败：' + ((e && e.message) || e));
     }
   };
+}
+
+// ---------------------------------------------------------------------------
+// 访问密码
+// ---------------------------------------------------------------------------
+async function renderPinSection(body) {
+  body.innerHTML = `
+    <div class="card">
+      <p class="meta">4 位数字，修改后下次打开主窗口时生效。</p>
+      <div class="form-row">
+        <div class="field">
+          <label>当前密码</label>
+          <input type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" id="pin-current" autocomplete="off"/>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label>新密码</label>
+          <input type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" id="pin-new" autocomplete="off"/>
+        </div>
+        <div class="field">
+          <label>确认新密码</label>
+          <input type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" id="pin-confirm" autocomplete="off"/>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" id="pin-change">修改密码</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('pin-change').onclick = async () => {
+    const cur = document.getElementById('pin-current').value;
+    const nw  = document.getElementById('pin-new').value;
+    const cf  = document.getElementById('pin-confirm').value;
+    if (!/^\d{4}$/.test(cur)) { toast('请输入当前 4 位密码'); return; }
+    if (!/^\d{4}$/.test(nw))  { toast('新密码必须是 4 位数字'); return; }
+    if (nw !== cf)            { toast('两次输入的新密码不一致'); return; }
+    try {
+      const v = await api.app.verifyPin(cur);
+      if (!v || !v.ok) { toast('当前密码错误'); return; }
+      const r = await api.app.setPin(nw);
+      if (!r || !r.ok) { toast('密码修改失败'); return; }
+      toast('密码已更新');
+      document.getElementById('pin-current').value = '';
+      document.getElementById('pin-new').value = '';
+      document.getElementById('pin-confirm').value = '';
+    } catch (e) {
+      toast('修改失败：' + ((e && e.message) || e));
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 应用
+// ---------------------------------------------------------------------------
+async function renderAboutSection(body) {
+  body.innerHTML = `
+    <div class="card">
+      <button class="btn danger" id="quit-app">退出 SoulDesktopPet</button>
+      <p class="meta" style="margin-top:8px">点击后关闭整个应用，包括桌宠。</p>
+    </div>
+  `;
   document.getElementById('quit-app').onclick = async () => {
     if (!confirm('确认退出 SoulDesktopPet？')) return;
     await api.app.quit();
   };
-
-  // Render the per-pet "角色动作" editor. Reads the config off the main
-  // process, builds the trigger→variant mapping table and the ordered
-  // loop-list editor, and wires the save button. The IPC handler
-  // validates + filters against the manifest, so the renderer just sends
-  // raw form state.
-  await renderPetActionsCard(currentPetId);
-  await renderActionTextsCard();
-  await renderBubblesCard();
-  // 放在最后：它会自己订阅事件并重绘 #update-card-body，而那个节点是上面
-  // 那次整页 innerHTML 赋值刚创建的。
-  await renderUpdateCard(updateState);
 }
 
 // ---------------------------------------------------------------------------
@@ -773,12 +949,12 @@ async function renderActionTextsCard() {
   body.innerHTML = `
     ${runtimeLines.length ? `
       <p class="meta" style="margin:10px 0 0;">
-        当前插播（来自文本气泡规则，气泡结束后自动移除）：
+        当前插播（气泡结束后自动移除）：
         ${runtimeLines.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join(' ')}
       </p>` : ''}
     ${_textBoxes.length ? `
       <p class="meta" style="margin:12px 0 6px;">
-        提醒气泡（吃饭 / 休息）的文本框：
+        提醒气泡的文本框：
         ${renderTextBoxSelect('rule', _actionTextsForm.ruleBox)}
       </p>` : ''}
     <div class="action-texts-list" id="action-texts-list">
@@ -1160,9 +1336,8 @@ async function renderBubblesCard() {
       `).join('')}
     </div>
     <p class="meta" style="margin-top:10px;">
-      气泡默认持续 1 小时；吃饭提醒会在你喂食后立即结束；
-      有新版本不自己占气泡位，而是像桌宠自己的台词一样插播出来，窗口只开 10 分钟，
-      窗口结束这句就从台词池里撤掉，要等下一次检查才会再出现（下载请到下面的更新卡片）。
+      气泡默认持续 1 小时；吃饭提醒在你喂食后立即结束；
+      有新版本像台词一样插播，窗口 10 分钟，到期撤下，等下次检查才会再出现（下载见「软件更新」）。
       ${Object.keys(fedWindows).length ? '今天的吃饭提醒已处理。' : ''}
     </p>
   `;
@@ -1325,7 +1500,7 @@ async function renderPetActionsCard(petId) {
 
   body.innerHTML = `
     <h3 style="margin-top:0;">触发方式 → 角色动作</h3>
-    <p class="meta">把"单击桌宠"映射到桌宠自带的角色动作（纯动画，不附带任何特效或 cozy 计分）。下拉里只列角色动作；带特效的 cozy 动作只能通过右击菜单触发。</p>
+    <p class="meta">把"单击桌宠"映射到桌宠自带的角色动作（纯动画，不带特效）。带特效的 cozy 动作只能通过右击菜单触发。</p>
     <div class="trigger-map-table" id="pet-action-trigger-map">
       ${triggerDefs.map((def) => {
         return `
@@ -1340,7 +1515,7 @@ async function renderPetActionsCard(petId) {
     </div>
 
     <h3 style="margin-top:18px;">动作循环列表</h3>
-    <p class="meta">桌宠默认待机时按下面列表的顺序循环播放这些动作。<code>default</code> 不可删除（是兜底动画）。桌宠切换到下一个列表项的间隔约为 <strong>4-10 秒</strong>。下拉里只列桌宠自带的角色动作。</p>
+    <p class="meta">待机时按下面列表的顺序循环播放。<code>default</code> 不可删除（兜底动画），切换间隔约 <strong>4-10 秒</strong>。</p>
     <div class="loop-list" id="pet-action-loop-list">
       ${initialLoop.map((v, i) => renderLoopItem(v, i)).join('')}
     </div>
@@ -1356,7 +1531,7 @@ async function renderPetActionsCard(petId) {
     </div>
 
     <h3 style="margin-top:18px;">特效绑定 (右击菜单 · 角色动作可改)</h3>
-    <p class="meta">桌宠的右击菜单有 6 个 cozy 动作，每个都绑定了<strong>固定的特效</strong>（鸡腿 🧶 💞 等）和<strong>可配置的角色动作</strong>。例如，喂食时特效永远是 🍖 鸡腿，但用户可以让桌宠在喂食时做"微笑/吃饭"等动作；不设置则使用默认动作。下拉里只列角色动作。</p>
+    <p class="meta">右击菜单里每个 cozy 动作的特效是固定的（鸡腿 🧶 💞 等），这里改它同时播放的角色动作。</p>
     <div class="effect-bindings-table">
       ${effectBindings.map((b) => {
         // What the select should display initially:
@@ -1481,26 +1656,6 @@ async function renderPetActionsCard(petId) {
     } catch (e) {
       if (status) status.textContent = '保存失败';
       toast('保存失败：' + ((e && e.message) || e));
-    }
-  };
-  document.getElementById('pin-change').onclick = async () => {
-    const cur = document.getElementById('pin-current').value;
-    const nw  = document.getElementById('pin-new').value;
-    const cf  = document.getElementById('pin-confirm').value;
-    if (!/^\d{4}$/.test(cur)) { toast('请输入当前 4 位密码'); return; }
-    if (!/^\d{4}$/.test(nw))  { toast('新密码必须是 4 位数字'); return; }
-    if (nw !== cf)            { toast('两次输入的新密码不一致'); return; }
-    try {
-      const v = await api.app.verifyPin(cur);
-      if (!v || !v.ok) { toast('当前密码错误'); return; }
-      const r = await api.app.setPin(nw);
-      if (!r || !r.ok) { toast('密码修改失败'); return; }
-      toast('密码已更新');
-      document.getElementById('pin-current').value = '';
-      document.getElementById('pin-new').value = '';
-      document.getElementById('pin-confirm').value = '';
-    } catch (e) {
-      toast('修改失败：' + ((e && e.message) || e));
     }
   };
 }
@@ -1637,7 +1792,8 @@ function wirePetListActions(currentPetId) {
         const r = await api.pet.removeImported?.(id);
         if (r && r.switchedTo) toast(`已删除并切换到 ${r.switchedTo}`);
         else                    toast('已删除');
-        render();
+        // 重画当前分区，让列表里少掉刚删掉的那一行。
+        await renderPetSection(document.getElementById('settings-panel-body'));
       } catch (e) {
         toast('删除失败：' + ((e && e.message) || e));
       }
@@ -1659,7 +1815,11 @@ function wirePetListActions(currentPetId) {
   });
 }
 
-register('/settings', render);
+// 两个路由：/settings 落在默认分区，/settings/<分区> 落在指定分区。
+// 走 URL 而不是页内状态，是为了让浏览器的前进/后退键、以及可以复制的链接
+// 都能在分区之间工作。
+register('/settings', () => render());
+register('/settings/:section', (args) => render(args));
 
 // ---------------------------------------------------------------------------
 // 软件更新卡片 (main/app_update.js)
@@ -1754,7 +1914,7 @@ function paintUpdateCard() {
       <div style="margin-top:12px; padding:10px 12px; border:1px dashed var(--border); border-radius:8px;">
         <div class="meta" style="font-weight:600;">开发模式调试</div>
         <div class="meta" style="margin-top:4px; color:var(--muted);">
-          用来验证「桌宠提醒有更新」这条气泡。模拟提醒不联网、不改任何文件。
+          用来验证「桌宠提醒有更新」这条气泡，不联网、不改任何文件。
         </div>
         <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn secondary" id="btn-dev-check" ${s.checking ? 'disabled' : ''}>
@@ -1764,18 +1924,12 @@ function paintUpdateCard() {
           <button class="btn secondary" id="btn-dev-clear">清除模拟提醒</button>
         </div>
         ${devResult}
-        <div class="meta" style="margin-top:8px; color:var(--muted);">
-          「真的查一次」会向 GitHub 发一个请求并读最新的 release；查到比当前
-          版本新的就会真的冒泡。「模拟」则是直接造一条提醒，不用等真的有
-          新版本——想反复看气泡就点它。
-        </div>
       </div>` : '';
 
     body.innerHTML = `
       <p class="meta">当前版本 <strong>${escapeHtml(s.currentVersion || '—')}</strong>。</p>
       <p class="meta" style="margin-top:4px; color:#b26a00;">
-        自动更新仅在打包安装版（Windows）可用；开发模式下请从
-        <code>GitHub Releases</code> 手动下载。
+        自动更新仅在打包安装版（Windows）可用；开发模式下请从 <code>GitHub Releases</code> 手动下载。
       </p>
       ${devPanel}`;
     // 早退，但按钮还是要绑——开发模式下这张卡片上就只剩调试按钮了，
@@ -1871,9 +2025,8 @@ function paintUpdateCard() {
       ${buttons}
     </div>
     <p class="meta" style="margin-top:10px;">
-      更新来源：GitHub Releases（<code>${escapeHtml(s.repo || '')}</code>）。
-      下载的安装包会先校验 SHA-256 再执行；校验不通过的文件不会被安装。
-      你的联系人、提醒、回忆和照片保存在应用数据目录，升级不会删除它们。
+      来源：GitHub Releases（<code>${escapeHtml(s.repo || '')}</code>）。安装包会先校验 SHA-256，校验不通过不会安装。
+      联系人、提醒、回忆和照片保存在应用数据目录，升级不会删除。
     </p>`;
 
   wireUpdateCard();

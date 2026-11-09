@@ -130,6 +130,9 @@ npm run build
 
 ## 📖 Getting Started
 
+### 0. How the settings page works
+The settings page carries a column of section links on the left (桌宠 / 角色动作 / 动作文本 / 文本气泡 / 开机启动 / 睡眠唤醒 / 页面背景 / 软件更新 / 数据迁移 / 访问密码 / 应用) and shows only the selected section on the right — no more scrolling through one long page. Every section has its own address (`#/settings/pet` and friends), so you can bookmark one directly.
+
 ### 1. Unlock the main window
 On startup you get the pet and a PIN prompt (default `8888`). Change it under **Settings → Access Password**.
 

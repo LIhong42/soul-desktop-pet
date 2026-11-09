@@ -260,7 +260,10 @@ app.whenReady().then(async () => {
   // Test 6 — the settings picker controls the background
   // -------------------------------------------------------------------------
   console.log('\n[6] the settings picker controls the background');
-  await goto('#/settings', 800);
+  // The picker lives in the 设置 page's 「页面背景」 section — the settings
+  // page is split into a nav rail and one section at a time, so the bare
+  // /settings route shows the default section and not this one.
+  await goto('#/settings/background', 800);
   const picker = await winMain.webContents.executeJavaScript(`(() => {
     const sel = document.getElementById('page-bg-select');
     if (!sel) return null;
@@ -299,7 +302,7 @@ app.whenReady().then(async () => {
   }
 
   // "跟随默认" — the user turns it back on.
-  await goto('#/settings', 800);
+  await goto('#/settings/background', 800);
   await winMain.webContents.executeJavaScript(`(async () => {
     const sel = document.getElementById('page-bg-select');
     const opt = Array.from(sel.options).find((o) => o.text === '跟随默认');
