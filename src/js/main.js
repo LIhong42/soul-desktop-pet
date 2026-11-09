@@ -36,6 +36,10 @@ async function updateActiveLink(path) {
   // re-applied by the page's render() on the way in. Leaving it up would
   // paint the artwork behind every other page too.
   //
+  // The contact detail page is NOT one of them: it paints the shared
+  // artwork on its own full-bleed wrapper instead of on this scroll
+  // container, so it is left out of the list on purpose.
+  //
   // The router awaits this hook, so the artwork is settled before the page
   // renders — otherwise the two would race and the page could end up
   // half-painted.

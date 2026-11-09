@@ -110,9 +110,10 @@ app.whenReady().then(async () => {
   await winMain.webContents.executeJavaScript(`document.body.classList.remove('locked'); true`);
 
   // A photo for the memorial row. The bytes go in through the real IPC
-  // handler, so the tile shows what the user would really see.
+  // handler, so the tile shows what the user would really see. Any image
+  // will do — the shipped background artwork is used as the sample.
   const photoBytes = Array.from(
-    fs.readFileSync(path.join(ROOT, 'resources', 'ui', 'user-detail-background.png')));
+    fs.readFileSync(path.join(ROOT, 'resources', 'ui', 'today-background.png')));
   await winMain.webContents.executeJavaScript(`(async () => {
     await window.mp.memorialEvents.photos.upload(${JSON.stringify(memorialId)}, {
       filename: 'sea.png', mime: 'image/png', bytes: ${JSON.stringify(photoBytes)},

@@ -16,7 +16,7 @@
   --shadow: var(--shadow-sm);
   --radius: 10px;
   /* The scroll container's padding, as variables. Pages that want to paint
-     edge-to-edge (the contact detail page's header banner) escape the
+     edge-to-edge (the contact detail page's artwork) escape the
      padding with a matching negative margin — hard-coding the numbers in
      two files would silently break the moment either side changed. */
   --content-pad-y: 18px;

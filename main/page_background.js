@@ -9,9 +9,12 @@
 // list and the 抽卡人生 page. They all wear the SAME picture, and the user
 // picks that picture once in 设置.
 //
+// The contact detail page wears it too — the same picture, from the same
+// choice, painted across the whole page. So there is exactly ONE background
+// in the app, and changing it in 设置 changes it everywhere.
+//
 // This module owns that *choice*; the folder itself is catalogued by
-// main/ui_artwork.js, which is also where the other pages' artwork (the
-// contact detail page's header banner) is registered.
+// main/ui_artwork.js.
 //
 // It used to live under the 今日 page's name (main/today_background.js) and
 // to serve the 今日 page alone. The choice — "which picture, or none" — never
@@ -35,16 +38,12 @@
 // `active()` reports the file the pages should use as their background:
 //
 //   1. The user's choice, stored in settings as `page_background_id`.
-//   2. Otherwise the default — the first of the 今日 page's own artwork by sort
+//   2. Otherwise the default — the first of the artwork in the folder by sort
 //      order, which is what makes "just ship one and it works" true.
 //
 // A choice that names a file this install doesn't have degrades to the
 // default rather than to no background at all: the artwork is decoration, and
 // a missing decoration should never blank the page.
-//
-// Only artwork the 今日 page *owns* is offered here. An image claimed by
-// another page (the contact detail page's banner) is that page's own
-// furniture and stays out of this picker — see main/ui_artwork.js.
 //
 // The pages also have to be readable *over* the artwork, so the CSS puts a
 // translucent scrim between the image and the content — that's a styling
@@ -80,9 +79,10 @@ const NONE = '__none__';
 // NOT inherit the artwork — which is why the entries below are the *list*
 // pages themselves and not their parents. `/contacts` is a prefix of
 // `/contacts/:id`, so a prefix match would put the artwork behind the
-// contact DETAIL page as well; that page owns its own banner
-// (`user-detail-background.png`) and paints a full-bleed paper surface, so
-// the list artwork would only show through at its edges.
+// contact DETAIL page as well; that page paints the artwork on its own
+// full-bleed wrapper, so it would end up with the picture twice — once on
+// the scroll container and once on the page — and the scroll container's
+// padding would cut the outer copy off at the edges.
 //
 // The renderer asks for the background per route (see src/js/main.js), so
 // this list is the single place that decides which pages wear the artwork.
@@ -117,12 +117,12 @@ function uiDir(appPath) {
  * reorders itself between launches makes "the one I picked" ambiguous to a
  * user comparing screenshots.
  *
- * Only the 今日 page's OWN artwork is listed. An image claimed by another page
- * (the contact detail page's banner) belongs to that page's layout and is not
- * a background the user picks from a list.
+ * Every image in `resources/ui/` is listed: the contact detail page wears
+ * the same picture as the rest of the app, so there is no image that
+ * belongs to one page alone any more.
  */
 function list(appPath) {
-  return uiArtwork.byOwner(appPath, 'today');
+  return uiArtwork.list(appPath);
 }
 
 /**
@@ -141,11 +141,7 @@ function invalidate() {
  * same degradation.
  */
 function resolve(appPath, id) {
-  const s = String(id == null ? '' : id).trim();
-  if (!s) return null;
-  const hit = list(appPath).find((b) => b.id === s);
-  if (!hit) return null;
-  return { id: hit.id, url: hit.url };
+  return uiArtwork.resolve(appPath, id);
 }
 
 /**

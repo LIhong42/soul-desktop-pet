@@ -148,18 +148,14 @@ export const api = {
     get: (k) => M.settings.get(k),
     set: (k, v) => M.settings.set(k, v),
   },
-  // 页面背景（「今日」「联系人」「提醒日期」「工作事件」「抽卡人生」共用同一张底图）。
+  // 页面背景（全应用共用同一张底图：「今日」「联系人」「提醒日期」「工作事件」
+  // 「抽卡人生」，以及联系人详情页的整页背景）。
   // `get()` → { list, chosen, current: {id,url}|null, noneId, routes };
   // `set(id)` stores the choice and returns the same shape. An empty id clears
   // the choice (back to "跟随默认"); `noneId` means "explicitly no background".
   pageBackground: {
     get: ()    => M.pageBackground.get(),
     set: (id) => M.pageBackground.set(id),
-  },
-  // 联系人详情页的头图插画。`get()` → { id, url } | null；null 表示这张图
-  // 没装，页面退回到纯色横幅。
-  contactBanner: {
-    get: () => M.contactBanner?.get?.() || Promise.resolve(null),
   },
   // 文本气泡配置（吃饭提醒 / 休息提醒 / 有新版本）。规则由主进程
   // main/pet_bubbles.js 单点定义，这里只做薄封装。

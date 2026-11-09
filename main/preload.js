@@ -165,18 +165,13 @@ contextBridge.exposeInMainWorld('mp', {
   },
   // 页面背景（resources/ui 里的图片）。主进程扫描目录并把图片解析成
   // file:// URL —— 渲染进程读不了文件系统，只能这样拿到本地图片。
-  // 「今日」「联系人」「提醒日期」「工作事件」四个页面共用同一张底图。
+  // 全应用共用同一张底图：「今日」「联系人」「提醒日期」「工作事件」「抽卡人生」，
+  // 以及联系人详情页的整页背景。
   //   get()     → { list, chosen, current: {id,url}|null, noneId, routes }
   //   set(id)   → 同 get()，并把 id 存进 settings
   pageBackground: {
     get: ()    => ipcRenderer.invoke('page_background:get'),
     set: (id) => ipcRenderer.invoke('page_background:set', id),
-  },
-  // 联系人详情页头图（resources/ui 里的固定插画）。主进程解析成 file:// URL
-  // 交给渲染进程；返回 null 表示这张图没装，页面会退回到纯色横幅。
-  //   get() → { id, url } | null
-  contactBanner: {
-    get: () => ipcRenderer.invoke('contact_banner:get'),
   },
   // 文本气泡（吃饭提醒 / 休息提醒 / 有新版本）配置。规则本身由
   // main/pet_bubbles.js 单点定义，/settings 只能读它的自描述列表并切

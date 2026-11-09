@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 // Why a module instead of a function inside one page
 // ---------------------------------------------------------------------------
-// The 今日 page used to own this by itself. Four pages now wear the same
+// The 今日 page used to own this by itself. Several pages now wear the same
 // picture, and each of them has to *clean up* after itself when the user
 // navigates away — a background left on the scroll container would follow
 // the user to every other page (工具, 设置, 回忆事件 …) and paint the artwork
@@ -38,10 +38,10 @@
 // to paint *something* sensible rather than a bare surface.
 //
 // The list is matched EXACTLY, not by prefix: `/contacts` must not light up
-// `/contacts/:id`, because the contact detail page owns its own full-bleed
-// banner (`user-detail-background.png`) and paints a paper surface over the
-// whole viewport — a list background behind it would only peek out at the
-// edges.
+// `/contacts/:id`, because the contact detail page paints the artwork on its
+// OWN full-bleed wrapper (see src/css/contact.css) rather than on the
+// scroll container — the scroll container's padding would cut the picture
+// off at the edges.
 
 import { api } from './api.js';
 
@@ -65,8 +65,8 @@ const contentEl = () => document.querySelector('.content');
 /**
  * Does this route wear the background artwork?
  *
- * Exact match, so `/contacts/:id` (the contact detail page, which has its
- * own banner) does not inherit the list page's background.
+ * Exact match, so `/contacts/:id` (the contact detail page, which paints the
+ * artwork on its own wrapper) does not inherit the list page's background.
  */
 export function routeHasBackground(route, routes) {
   const list = (routes && routes.length) ? routes : BACKGROUND_ROUTES;

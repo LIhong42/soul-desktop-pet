@@ -171,34 +171,62 @@ function renderItemRow(it, kind) {
 
 // --- Header + tab bar ---------------------------------------------------
 
-// The banner artwork.
+// The page's artwork.
 //
-// The image is a 1.6 MB PNG, and it reaches the renderer as a `file://` URL
-// (the renderer can't read the filesystem). Loading it takes long enough
-// that a contact page painted on demand would show a blank banner for a
-// beat before the photo appeared.
+// The page wears the SAME picture as the rest of the app — the one the user
+// picked in 设置 (see main/page_background.js). It is painted edge to edge
+// behind the whole page, not just behind the header. The image is a ~1.4 MB
+// PNG, and it reaches the renderer as a `file://` URL (the renderer can't
+// read the filesystem). Loading it takes long enough that a contact page
+// painted on demand would show a bare page for a beat before the picture
+// appeared.
 //
 // So it is fetched and preloaded as soon as this module is loaded — which
 // happens at app start — and the page then paints with the image already
 // in the cache.
+//
+// The picture is a *choice* the user can change at runtime, so the cached
+// URL is only reused while it still matches what the main process reports.
+// A stale URL would leave this page showing the previous picture while
+// every other page already shows the new one.
 let bannerUrl = '';
+// The preloaded <img>. It is never drawn — the page paints the picture
+// through CSS. It is held here only so the browser does not collect the
+// image (and cancel its decode) before the page asks for it.
 let bannerImage = null;
+// The in-flight fetch. The module-load warm-up and the page's own render
+// can ask for the artwork at the same time; sharing one promise means the
+// second caller waits for the first answer instead of starting a second
+// IPC round trip that could resolve out of order.
+//
+// The promise is cleared once it settles, so a LATER render asks again —
+// that is how a background changed in 设置 reaches the page.
+let bannerPending = null;
 
-async function warmBanner() {
-  try {
-    const banner = await api.contactBanner.get();
-    bannerUrl = (banner && banner.url) || '';
-    if (bannerUrl) {
-      // The reference is kept so the preload isn't collected before it has
-      // finished decoding.
-      bannerImage = new Image();
-      bannerImage.src = bannerUrl;
+function warmBanner() {
+  if (bannerPending) return bannerPending;
+  bannerPending = (async () => {
+    try {
+      const info = await api.pageBackground.get();
+      const current = info && info.current;
+      const url = (current && current.url) || '';
+      if (url === bannerUrl) return;
+      bannerUrl = url;
+      if (bannerUrl) {
+        // The reference is kept so the preload isn't collected before it has
+        // finished decoding.
+        bannerImage = new Image();
+        bannerImage.src = bannerUrl;
+      }
+    } catch (e) {
+      // No artwork (or no IPC bridge): the page paints the plain warm
+      // paper. Not an error worth interrupting the user over.
+      console.error('[contact] could not load the page artwork', e);
+    } finally {
+      bannerPending = null;
     }
-  } catch (e) {
-    // No artwork (or no IPC bridge): the page paints the plain warm
-    // banner. Not an error worth interrupting the user over.
-    console.error('[contact] could not load the header banner', e);
-  }
+  })();
+  return bannerPending;
 }
 warmBanner();
 
@@ -215,16 +243,13 @@ function detailAvatarHTML(c) {
 // name and the relationship sit on the artwork, washed out on the left so
 // the text stays readable while the picture shows through on the right.
 //
-// `bannerUrl` is the `file://` URL of `resources/ui/user-detail-background.png`,
-// handed over by the main process (the renderer can't read the filesystem).
-// An empty URL means the artwork isn't installed — the page then paints a
-// plain warm banner instead of a broken image.
-function headerHTML(c, bannerUrl) {
-  const art = bannerUrl
-    ? ` style="--cd-banner-image:url(&quot;${escapeHtml(bannerUrl)}&quot;)"`
-    : '';
+// The banner itself carries no artwork — the PAGE behind it does (see the
+// `.cd-page` rule in src/css/contact.css). The banner only adds a local
+// wash so the name and the avatar stay readable where the artwork is
+// brightest.
+function headerHTML(c) {
   return `
-    <header class="cd-banner${bannerUrl ? '' : ' no-art'}"${art}>
+    <header class="cd-banner">
       <div class="cd-banner-inner">
         <div class="cd-avatar" style="color: var(--contact-${contactColorIndex(c.name)})">
           ${detailAvatarHTML(c)}
@@ -248,6 +273,10 @@ function headerHTML(c, bannerUrl) {
 //
 // The 「返回」 link sits at the right end of the same row, so the banner
 // stays as clean as the design draws it.
+//
+// The sheet the row sits on runs the full width of the page, but the row
+// inside it follows the same reading column as the cards below — so the
+// tabs line up with the content they switch between.
 function tabBarHTML(c, active, counts) {
   const tabs = [
     { key: 'overview', label: '概览', href: `#/contacts/${escapeHtml(c.id)}` },
@@ -257,16 +286,18 @@ function tabBarHTML(c, active, counts) {
   ];
   return `
     <div class="cd-tabbar">
-      <nav class="cd-tabs" role="tablist">
-        ${tabs.map((t) => `
-          <a class="cd-tab${t.key === active ? ' is-active' : ''}"
-             role="tab" aria-selected="${t.key === active}"
-             href="${t.href}">
-            ${escapeHtml(t.label)}${t.count === undefined ? '' : `<span class="cd-tab-count">${t.count}</span>`}
-          </a>
-        `).join('')}
-      </nav>
-      <a class="cd-back" href="#/contacts"><span class="icon-arrow-left"></span>返回</a>
+      <div class="cd-tabbar-inner">
+        <nav class="cd-tabs" role="tablist">
+          ${tabs.map((t) => `
+            <a class="cd-tab${t.key === active ? ' is-active' : ''}"
+               role="tab" aria-selected="${t.key === active}"
+               href="${t.href}">
+              ${escapeHtml(t.label)}${t.count === undefined ? '' : `<span class="cd-tab-count">${t.count}</span>`}
+            </a>
+          `).join('')}
+        </nav>
+        <a class="cd-back" href="#/contacts"><span class="icon-arrow-left"></span>返回</a>
+      </div>
     </div>
   `;
 }
@@ -838,14 +869,23 @@ async function render(args, tab) {
   const itemsByKind = { like: likes, taboo: taboos, gift: gifts };
   const counts = { like: likes.length, taboo: taboos.length, gift: gifts.length };
 
-  // The header banner artwork. It is preloaded when this module loads (see
+  // The page's artwork. It is preloaded when this module loads (see
   // warmBanner above), so the URL is normally already known by the time the
-  // page paints; the fetch is only repeated if the first one failed.
-  if (!bannerUrl) await warmBanner();
+  // page paints. The fetch is repeated on every render because the user can
+  // change the background in 设置 at any time — the cached URL is only
+  // reused while it still matches the main process's answer.
+  await warmBanner();
 
+  // The artwork URL goes on the PAGE, which paints it edge to edge behind
+  // everything. An empty URL means the artwork isn't installed (or the user
+  // turned the background off) — the page then falls back to plain warm
+  // paper instead of a broken image.
+  const art = bannerUrl
+    ? ` style="--cd-banner-image:url(&quot;${escapeHtml(bannerUrl)}&quot;)"`
+    : '';
   app.innerHTML = `
-    <div class="cd-page">
-      ${headerHTML(c, bannerUrl)}
+    <div class="cd-page${bannerUrl ? '' : ' no-art'}"${art}>
+      ${headerHTML(c)}
       ${tabBarHTML(c, tab, counts)}
       <div class="cd-body" id="cd-body"></div>
     </div>

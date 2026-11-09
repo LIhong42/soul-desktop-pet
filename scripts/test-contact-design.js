@@ -7,17 +7,17 @@
 //      app's generic look — the exact regression this file exists to catch,
 //      because nothing else fails when it happens.
 //
-//   2. The banner artwork actually reaches the page. The artwork lives in
+//   2. The artwork actually reaches the page. The artwork lives in
 //      `resources/ui/` and arrives as a `file://` URL, which is handed to
 //      CSS through the `--cd-banner-image` custom property. If the IPC
 //      handler, the preload bridge or the renderer plumbing breaks, the
-//      banner falls back to a flat cream wash and NOTHING reports an
+//      page falls back to a flat cream wash and NOTHING reports an
 //      error — the page still looks like a page.
 //
-//   3. The banner artwork stays where it belongs. `user-detail-background`
-//      is CLAIMED by the contact-detail page, so the 今日 page's background
-//      picker must not offer it. A new PNG dropped into `resources/ui/`
-//      would otherwise silently appear in the 今日 picker.
+//   3. The page wears the SHARED background. The whole page and the
+//      今日 page show the same picture, so changing the background in 设置
+//      changes it everywhere. If the page went back to its own artwork, the
+//      two would drift apart again.
 //
 //   4. The design CSS really applies (computed styles, not just the
 //      presence of the stylesheet): the paper background, the rounded card,
@@ -164,19 +164,25 @@ app.whenReady().then(async () => {
   const markup = await winMain.webContents.executeJavaScript(`(() => {
     const page = document.querySelector('.cd-page');
     const banner = document.querySelector('.cd-banner');
+    const cs = (el) => el ? getComputedStyle(el) : null;
+    const pageCs = cs(page);
+    const bannerCs = cs(banner);
     return {
       page: !!page,
       appWidth: (document.getElementById('app') || { clientWidth: 0 }).clientWidth,
       appHeight: (document.getElementById('app') || { clientHeight: 0 }).clientHeight,
       banner: !!banner,
-      bannerClass: banner ? banner.className : '',
+      pageClass: page ? page.className : '',
       // The artwork arrives as a file:// URL in a custom property. It is set
-      // INLINE on the banner itself (the page is reused for every contact),
-      // so it is read off the banner, not off the page wrapper.
-      bannerVar: banner
-        ? getComputedStyle(banner).getPropertyValue('--cd-banner-image').trim()
+      // INLINE on the PAGE (the page is reused for every contact), so it is
+      // read off the page wrapper, not off the banner.
+      bannerVar: page
+        ? getComputedStyle(page).getPropertyValue('--cd-banner-image').trim()
         : '',
-      bannerBg: banner ? getComputedStyle(banner).backgroundImage : '',
+      pageBg: pageCs ? pageCs.backgroundImage : '',
+      pageAttachment: pageCs ? pageCs.backgroundAttachment : '',
+      // The banner carries a local wash of its own, but NOT the artwork.
+      bannerBg: bannerCs ? bannerCs.backgroundImage : '',
       avatar: !!document.querySelector('.cd-avatar'),
       editPill: !!document.querySelector('.cd-edit-pill'),
       editPillText: (document.querySelector('.cd-edit-pill') || {}).textContent || '',
@@ -195,8 +201,8 @@ app.whenReady().then(async () => {
     markup.appWidth > 0 && markup.appHeight > 0,
     `#app is ${markup.appWidth}x${markup.appHeight}`);
   check('the banner is rendered', markup.banner);
-  check('the banner is not in the no-art fallback state',
-    !markup.bannerClass.includes('no-art'), markup.bannerClass);
+  check('the page is not in the no-art fallback state',
+    !markup.pageClass.includes('no-art'), markup.pageClass);
   check('the avatar tile is rendered', markup.avatar);
   check('the 编辑基本信息 pill is rendered', markup.editPill);
   check('the 编辑基本信息 pill is labelled',
@@ -215,39 +221,52 @@ app.whenReady().then(async () => {
   // -------------------------------------------------------------------------
   // Test 3 — the artwork really reaches the page
   // -------------------------------------------------------------------------
-  console.log('\n[3] the banner artwork reaches the page');
+  console.log('\n[3] the page artwork reaches the page');
   // The browser normalises a custom property that holds a url() into
   // `url("file:///…")`, so the file:// check looks INSIDE the value.
-  check('the banner carries the artwork URL',
+  check('the page carries the artwork URL',
     /file:\/\/\//.test(markup.bannerVar), markup.bannerVar || '(empty)');
-  check('the artwork is the contact banner',
-    markup.bannerVar.includes('user-detail-background'), markup.bannerVar || '(empty)');
+  // The page wears the SHARED background — the same picture the 今日 page
+  // wears — so the two must name the same file.
+  const shared = pageBackground.active(null, db);
+  check('the main process resolves the shared background', !!shared.current,
+    JSON.stringify(shared.current));
+  const sharedUrl = shared.current ? shared.current.url : '';
+  check('the page wears the shared background',
+    !!sharedUrl && markup.bannerVar.includes(sharedUrl),
+    `page=${markup.bannerVar || '(empty)'} shared=${sharedUrl || '(none)'}`);
   // The computed background is the WASH over the artwork — two layers, so
   // the image must be one of them.
-  check('the computed banner background carries the artwork',
-    markup.bannerBg.includes('url(') && markup.bannerBg.includes('user-detail-background'),
+  check('the computed page background carries the artwork',
+    markup.pageBg.includes('url(') && !!sharedUrl && markup.pageBg.includes(sharedUrl),
+    markup.pageBg || '(none)');
+  // The artwork is pinned to the VIEWPORT, so this page shows the same
+  // composition of the picture as every other page that wears it.
+  check('the page pins the artwork to the viewport',
+    markup.pageAttachment === 'fixed, fixed', markup.pageAttachment);
+  // The banner carries a local wash of its own but NOT the artwork — the
+  // page behind it is what shows the picture, so the banner must not
+  // paint it a second time (that would double-expose the picture).
+  check('the banner does not paint the artwork a second time',
+    !markup.bannerBg.includes('url(') || !markup.bannerBg.includes(sharedUrl),
     markup.bannerBg || '(none)');
 
   // The artwork must be reachable from the main process too — that is where
   // the file:// URL comes from. If the file is missing, the renderer would
-  // show a broken (flat) banner with no error anywhere.
-  const banner = uiArtwork.contactBanner(null);
-  check('the main process resolves the banner artwork', !!banner,
-    JSON.stringify(banner));
-  check('the banner artwork is a file:// URL',
-    !!banner && /^file:\/\//.test(banner.url), banner ? banner.url : 'n/a');
-  check('the banner artwork file exists on disk',
-    !!banner && fs.existsSync(fileURLToPath(banner.url)),
-    banner ? banner.url : 'n/a');
+  // show a broken (flat) page with no error anywhere.
+  check('the shared background is a file:// URL',
+    /^file:\/\//.test(sharedUrl), sharedUrl || 'n/a');
+  check('the shared background file exists on disk',
+    !!sharedUrl && fs.existsSync(fileURLToPath(sharedUrl)), sharedUrl || 'n/a');
   // And it is a real PNG the renderer can decode — a truncated file would
-  // leave a flat banner with no error anywhere.
+  // leave a bare page with no error anywhere.
   const decoded = await winMain.webContents.executeJavaScript(`new Promise((resolve) => {
     const img = new Image();
     img.onload = () => resolve({ ok: true, w: img.naturalWidth, h: img.naturalHeight });
     img.onerror = () => resolve({ ok: false, w: 0, h: 0 });
-    img.src = ${JSON.stringify(banner.url)};
+    img.src = ${JSON.stringify(sharedUrl)};
   })`);
-  check('the banner artwork decodes in the renderer',
+  check('the page artwork decodes in the renderer',
     decoded.ok && decoded.w > 0, JSON.stringify(decoded));
 
   // -------------------------------------------------------------------------
@@ -260,17 +279,31 @@ app.whenReady().then(async () => {
     const h2 = document.querySelector('#cd-body .section-header h2');
     const chip = document.querySelector('#cd-body .time-chip');
     const icon = document.querySelector('#cd-body .cat-icon');
+    const back = document.querySelector('.cd-back');
+    const backIcon = document.querySelector('.cd-back .icon-arrow-left');
+    const tab = document.querySelector('.cd-tab');
     const cs = (el) => el ? getComputedStyle(el) : null;
     const pageCs = cs(page);
     const cardCs = cs(card);
     const chipCs = cs(chip);
     const iconCs = cs(icon);
+    const backCs = cs(back);
+    const backIconCs = cs(backIcon);
+    const tabCs = cs(tab);
     // The accent bar is a pseudo-element on the title, so it is read off
     // the ELEMENT — getComputedStyle wants an element, not a style object.
     const barCs = h2 ? getComputedStyle(h2, '::before') : null;
+    // The alpha channel of an rgba() colour, as a number.
+    const alphaOf = (c) => {
+      const m = (c || '').match(/rgba?\\(([^)]+)\\)/);
+      if (!m) return null;
+      const parts = m[1].split(',').map((s) => parseFloat(s));
+      return parts.length === 4 ? parts[3] : 1;
+    };
     return {
-      pageBg: pageCs ? pageCs.backgroundColor : '',
       cardBg: cardCs ? cardCs.backgroundColor : '',
+      cardAlpha: cardCs ? alphaOf(cardCs.backgroundColor) : null,
+      cardBlur: cardCs ? (cardCs.backdropFilter || cardCs.webkitBackdropFilter || '') : '',
       cardRadius: cardCs ? cardCs.borderRadius : '',
       cardShadow: cardCs ? cardCs.boxShadow : '',
       barColor: barCs ? barCs.backgroundColor : '',
@@ -279,12 +312,24 @@ app.whenReady().then(async () => {
       chipRadius: chipCs ? chipCs.borderRadius : '',
       iconWidth: iconCs ? iconCs.width : '',
       iconRadius: iconCs ? iconCs.borderRadius : '',
+      // The 返回 control shares the tab row with the tabs, so it must not
+      // read as a smaller stray caption beside them.
+      backFontSize: backCs ? backCs.fontSize : '',
+      backIconSize: backIconCs ? backIconCs.width : '',
+      tabFontSize: tabCs ? tabCs.fontSize : '',
+      // The page must be FULL BLEED: it pulls itself out of the scroll
+      // container's padding so the artwork reaches the window's edges.
+      pageMarginLeft: pageCs ? pageCs.marginLeft : '',
+      pageMarginTop: pageCs ? pageCs.marginTop : '',
     };
   })()`);
-  check('the page is on the warm paper background',
-    computed.pageBg.includes('249, 239, 231'), computed.pageBg);
-  check('the cards are white',
-    computed.cardBg === 'rgb(255, 255, 255)', computed.cardBg);
+  // The cards are sheets of translucent paper laid over the artwork — an
+  // opaque card would cut a hard edge across the picture.
+  check('the cards are translucent (alpha < 1)',
+    computed.cardAlpha !== null && computed.cardAlpha < 1,
+    `${computed.cardBg} (alpha ${computed.cardAlpha})`);
+  check('the cards blur the artwork behind them',
+    /blur/.test(computed.cardBlur), computed.cardBlur);
   check('the cards use the large rounded radius',
     parseFloat(computed.cardRadius) >= 16, computed.cardRadius);
   check('the cards carry a soft shadow',
@@ -301,9 +346,22 @@ app.whenReady().then(async () => {
     parseFloat(computed.iconWidth) >= 40, computed.iconWidth);
   check('the icon tile is rounded',
     parseFloat(computed.iconRadius) >= 10, computed.iconRadius);
+  // The 返回 control shares the tab row with the tabs. It used to be set at
+  // 13px — smaller than the 15px tabs — and read as a stray caption rather
+  // than as a control, so the label must be at least as large as the tabs.
+  check('the 返回 control is not smaller than the tabs',
+    parseFloat(computed.backFontSize) >= parseFloat(computed.tabFontSize),
+    `back ${computed.backFontSize} vs tab ${computed.tabFontSize}`);
+  check('the 返回 chevron is scaled to the label',
+    parseFloat(computed.backIconSize) >= 16, computed.backIconSize);
+  // The page pulls itself out of the scroll container's padding, so the
+  // artwork is edge to edge rather than floating in a padded box.
+  check('the page is full bleed (negative margins)',
+    parseFloat(computed.pageMarginLeft) < 0 && parseFloat(computed.pageMarginTop) < 0,
+    `margin ${computed.pageMarginTop} ${computed.pageMarginLeft}`);
 
   // -------------------------------------------------------------------------
-  // Test 5 — the artwork belongs to THIS page only
+  // Test 5 — the artwork does not leak onto other pages
   // -------------------------------------------------------------------------
   console.log('\n[5] the artwork does not leak onto other pages');
   await winMain.webContents.executeJavaScript(`location.hash = '#/today'; true`);
@@ -318,21 +376,17 @@ app.whenReady().then(async () => {
   check('the banner markup is gone on 今日', !other.banner);
   check('no banner artwork is left on 今日', !other.bannerVar, other.bannerVar || '(empty)');
 
-  // And the shared page-background picker must not offer the contact banner
-  // — the artwork is CLAIMED by the contact-detail page.
+  // The shared page-background picker offers EVERY image in resources/ui —
+  // there is no image claimed by one page any more, because the contact
+  // detail page's header wears the same picture as everyone else.
   const todayIds = pageBackground.list(null).map((b) => b.id);
-  check('the background picker does not offer the contact banner',
-    !todayIds.includes(uiArtwork.CONTACT_BANNER_ID),
-    JSON.stringify(todayIds));
-  check('the background picker still offers its own artwork',
+  check('the background picker offers the shipped artwork',
+    todayIds.includes('today-background'), JSON.stringify(todayIds));
+  check('the background picker offers every image in the folder',
+    todayIds.length === uiArtwork.list(null).length,
+    `${todayIds.length} vs ${uiArtwork.list(null).length}`);
+  check('the background picker is not empty',
     todayIds.length > 0, JSON.stringify(todayIds));
-  // The catalog itself still knows about both pages.
-  const all = uiArtwork.list(null).map((b) => b.id);
-  check('the catalog lists the contact banner',
-    all.includes(uiArtwork.CONTACT_BANNER_ID), JSON.stringify(all));
-  const owned = uiArtwork.byOwner(null, uiArtwork.OWNER_CONTACT_DETAIL).map((b) => b.id);
-  check('the contact banner is owned by the contact-detail page',
-    owned.includes(uiArtwork.CONTACT_BANNER_ID), JSON.stringify(owned));
 
   // -------------------------------------------------------------------------
   // Report

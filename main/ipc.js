@@ -37,10 +37,9 @@ const { relaunchApp } = require('./app_relaunch');
 // 文本框 catalog (resources/text_boxes) — scanned, not hard-coded.
 const petTextBoxes = require('./pet_text_boxes');
 // 页面背景 catalog (resources/ui) — scanned, not hard-coded.
-// 「今日」「联系人」「提醒日期」「工作事件」四个页面共用同一张底图。
+// 全应用共用同一张底图：「今日」「联系人」「提醒日期」「工作事件」「抽卡人生」，
+// 以及联系人详情页的整页背景。
 const pageBackground = require('./page_background');
-// resources/ui 里所有页面共用的插画目录（页面背景 + 联系人详情页头图）。
-const uiArtwork = require('./ui_artwork');
 const videoFrameSplit = require('./video_frame_split');
 // 快速记录窗口（桌宠右键菜单 → 📝 记录）。独立于 PIN 门禁的主窗口。
 const quickRecord = require('./quick_record');
@@ -1617,8 +1616,9 @@ function normFreeText(s) {
 
   // ---- 页面背景 ----
   //
-  // The 今日 / 联系人 / 提醒日期 / 工作事件 pages paint a background image
-  // behind their content. The artwork lives in `resources/ui/`, is catalogued
+  // The 今日 / 联系人 / 提醒日期 / 工作事件 / 抽卡人生 pages paint a background
+  // image behind their content, and the 联系人详情页 paints the same picture
+  // across its whole page. The artwork lives in `resources/ui/`, is catalogued
   // by main/page_background.js, and reaches the renderer as a `file://` URL —
   // the renderer can't read the filesystem, and the main window's CSP allows
   // `file:` in `img-src`.
@@ -1654,19 +1654,6 @@ function normFreeText(s) {
     db.setSetting(pageBackground.SETTING_KEY, s);
     return pageBackground.active(null, db);
   });
-
-  // ---- 联系人详情页头图 ----
-  //
-  // The contact detail page paints a fixed banner artwork behind its header.
-  // It lives in `resources/ui/` next to the 今日 page's background and is
-  // catalogued by main/ui_artwork.js, which hands the renderer a `file://`
-  // URL (the renderer can't read the filesystem).
-  //
-  //   get() → { id, url } | null
-  //
-  // `null` means the artwork isn't installed — the page then paints its plain
-  // warm banner, so a missing decoration never breaks the page.
-  ipcMain.handle('contact_banner:get', () => uiArtwork.contactBanner(null));
 
   // ---- App PIN gate ----
   // The renderer must never see the salt/hash. verifyPin runs scrypt

@@ -13,7 +13,7 @@
 //      applied to the shared `.content` scroll container, so without an
 //      explicit teardown on route change every other page would inherit it.
 //
-//   3. A page that DOES wear it loses it. Four pages share one picture; a
+//   3. A page that DOES wear it loses it. Several pages share one picture; a
 //      route-matching bug that clears the background on the way to 提醒日期
 //      would leave three of the four pages bare.
 //
@@ -228,10 +228,11 @@ app.whenReady().then(async () => {
   // -------------------------------------------------------------------------
   // Test 4 — the contact DETAIL page does not inherit the list background
   // -------------------------------------------------------------------------
-  // `/contacts` is a prefix of `/contacts/:id`, and the detail page owns its
-  // own full-bleed banner. A prefix match would put the list artwork behind
-  // it, where it would only peek out at the edges.
-  console.log('\n[4] the contact detail page keeps its own banner');
+  // `/contacts` is a prefix of `/contacts/:id`, and the detail page paints the
+  // shared artwork on its OWN full-bleed wrapper. A prefix match would put
+  // the list artwork on the scroll container too, so the picture would be
+  // painted twice and the container's padding would cut the outer copy off.
+  console.log('\n[4] the contact detail page paints the artwork itself');
   await goto('#/contacts', 600);
   const listBg = await readBg();
   check('the contact LIST has the background', listBg.hasClass && !!listBg.image);

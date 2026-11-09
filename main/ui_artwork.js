@@ -3,8 +3,10 @@
 // ---------------------------------------------------------------------------
 // What this is
 // ---------------------------------------------------------------------------
-// `resources/ui/` holds the images the app paints as decoration: the 今日
-// page's background, the contact detail page's header banner. The renderer
+// `resources/ui/` holds the images the app paints as decoration: the shared
+// page background the 今日 / 联系人 / 提醒日期 / 工作事件 / 抽卡人生 pages
+// wear, and the one the contact detail page wears across its whole page.
+// The renderer
 // cannot read the filesystem and the main window's CSP is
 // `img-src 'self' data: file:` — so every one of these images has to cross
 // the IPC boundary as a `file://` URL, exactly the way pet frames and text
@@ -19,19 +21,10 @@
 // ---------------------------------------------------------------------------
 // Ownership
 // ---------------------------------------------------------------------------
-// An image in this folder is not automatically a 今日 page background — the
-// 今日 page offers its artwork as a choice in 设置, and a banner that belongs
-// to one page has no business showing up in another page's picker.
-//
-// So every id is *owned* by a page:
-//
-//   * claimed ids (OWNERS) belong to that page only, and are invisible to
-//     the 今日 page's picker;
-//   * everything else is the 今日 page's, and stays a user choice.
-//
-// The contact detail page's header banner is the first claimed image:
-// `user-detail-background` is a fixed part of that page's layout, not a
-// background the user picks from a list.
+// Every page that wears artwork — the 今日 page, the list pages and the
+// contact detail page — wears the SAME picture, chosen once in 设置
+// (see main/page_background.js). So no image belongs to one page alone, and
+// the picker lists them all.
 //
 // The scan result is memoised because the folder is static at runtime;
 // re-stat'ing it on every page render would be wasted work.
@@ -43,19 +36,6 @@ const { pathToFileURL } = require('url');
 // Only these are offered. Lowercased because a `.PNG` from a Windows
 // screenshot tool must not silently vanish.
 const ACCEPTED_EXT = '.png';
-
-// The artwork the contact-detail page paints behind its header.
-const CONTACT_BANNER_ID = 'user-detail-background';
-
-// The owner ids. Keep them next to the claims that use them so a new page
-// only has to add one line here.
-const OWNER_CONTACT_DETAIL = 'contact-detail';
-
-// The owner of every artwork id. An id that is NOT in this map belongs to
-// the 今日 page (its background picker).
-const OWNERS = {
-  [CONTACT_BANNER_ID]: OWNER_CONTACT_DETAIL,
-};
 
 // Memoised scan. `null` ⇒ never scanned.
 let cache = null;
@@ -71,7 +51,7 @@ function uiDir(appPath) {
 /**
  * List every artwork image in `resources/ui/`.
  *
- * Returns `[{ id, file, url, label, owner }]`, sorted by id so the order is
+ * Returns `[{ id, file, url, label }]`, sorted by id so the order is
  * stable across machines — `readdir` order is filesystem-dependent, and a
  * list that reorders itself between launches makes "the one I picked"
  * ambiguous to a user comparing screenshots.
@@ -118,8 +98,6 @@ function list(appPath) {
       // What the picker shows. The raw id is the honest label — inventing a
       // name here would mean a second place to update when a PNG is renamed.
       label: id,
-      // Which page this image belongs to.
-      owner: OWNERS[id] || 'today',
     });
   }
 
@@ -161,30 +139,10 @@ function resolve(appPath, id) {
   return { id: hit.id, url: hit.url };
 }
 
-/**
- * Every image owned by one page, in catalog order.
- */
-function byOwner(appPath, owner) {
-  return list(appPath).filter((b) => b.owner === owner);
-}
-
-/**
- * The contact detail page's header banner: `{ id, url }`, or `null` when the
- * artwork isn't installed (the page then paints its plain warm banner).
- */
-function contactBanner(appPath) {
-  return resolve(appPath, CONTACT_BANNER_ID);
-}
-
 module.exports = {
   ACCEPTED_EXT,
-  CONTACT_BANNER_ID,
-  OWNER_CONTACT_DETAIL,
-  OWNERS,
   uiDir,
   list,
   resolve,
-  byOwner,
-  contactBanner,
   invalidate,
 };

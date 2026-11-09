@@ -8,6 +8,10 @@ import { register, navigate } from '../router.js';
 // will appear — the routes themselves come from the main process (see
 // main/page_background.js → BACKGROUND_ROUTES), and this map only turns
 // them into labels.
+//
+// The contact detail page wears the same picture across its whole page,
+// but its route is `/contacts/:id`, which the exact-match route list can
+// never express — so it is named separately below.
 const PAGE_BG_ROUTE_LABELS = {
   '/today': '今日',
   '/contacts': '联系人',
@@ -16,6 +20,12 @@ const PAGE_BG_ROUTE_LABELS = {
   '/card-life': '抽卡人生',
   '/card-life/stats': '打卡墙',
 };
+
+// The pages that wear the artwork in a way the route list cannot express.
+// The contact detail page paints it on its own full-bleed wrapper.
+const PAGE_BG_EXTRA_LABELS = [
+  '联系人详情页',
+];
 
 // ---- 桌宠压缩包导入进度 -----------------------------------------------
 //
@@ -304,7 +314,7 @@ async function render() {
       </div>
       <p class="meta" style="margin-top:8px">
         ${pageBgList.length
-          ? `选择后回到下列页面即可看到效果：${pageBgRoutes.map((r) => escapeHtml(PAGE_BG_ROUTE_LABELS[r] || r)).join('、')}。选「无背景」可以关掉底图。`
+          ? `选择后回到下列页面即可看到效果：${pageBgRoutes.map((r) => escapeHtml(PAGE_BG_ROUTE_LABELS[r] || r)).join('、')}、${PAGE_BG_EXTRA_LABELS.join('、')}。选「无背景」可以关掉底图。`
           : '当前没有找到任何背景图片（<code>resources/ui/</code> 是空的或不存在）。'}
       </p>
     </div>

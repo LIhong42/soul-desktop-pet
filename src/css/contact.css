@@ -4,9 +4,9 @@
  * Why a separate file
  * ---------------------------------------------------------------------------
  * The contact detail page (联系人具体信息) was rebuilt around a warm,
- * paper-like design: a full-bleed photo banner behind the contact header, a
- * tab row on cream paper, rounded white cards with tinted icon tiles and a
- * date chip on the right.
+ * paper-like design: the shared artwork behind the whole page, a tab row
+ * on translucent paper, rounded cards with tinted icon tiles and a date
+ * chip on the right.
  *
  * Those styles would be wrong on every other page — the 联系人 list, the
  * 今日 page, the editors — so they live here, scoped under `.cd-page`, and
@@ -16,6 +16,25 @@
  *
  * Every rule below is prefixed with `.cd-page` (or a `.cd-` class that only
  * exists inside it) on purpose: nothing in here may leak onto another page.
+ *
+ * ---------------------------------------------------------------------------
+ * The artwork covers the WHOLE page
+ * ---------------------------------------------------------------------------
+ * The picture is the same one every other page wears — the one the user
+ * picked in 设置 (see main/page_background.js). It reaches the renderer as
+ * a `file://` URL and is handed to CSS through the `--cd-banner-image`
+ * custom property, so swapping the background in 设置 repaints this page
+ * too.
+ *
+ * It is painted on the PAGE, not just on the header banner: the page pulls
+ * itself out of the scroll container's padding and becomes a full-bleed
+ * canvas, and the cards are translucent sheets of paper laid over it — the
+ * same material the 今日 page and the list pages use. An opaque cream
+ * panel would read as a picture with white stickers pasted on it.
+ *
+ * `background-attachment: fixed` for the same reason as in styles.css: the
+ * picture is measured against the viewport, so every page that wears it
+ * shows the SAME composition of the same file.
  */
 
 .cd-page {
@@ -23,69 +42,112 @@
      The page is warm paper, not the app's neutral grey-white: a cream
      surface, a warm brown ink, and the app's own accent for the few
      interactive pieces. The accent stays `var(--accent)` so the top bar,
-     the nav pills and this page speak one colour. */
-  --cd-paper: #f9efe7;
-  --cd-card: #ffffff;
-  --cd-ink: #3a2620;          /* card / headline text */
-  --cd-ink-soft: #a18476;     /* meta lines, secondary text */
+     the nav pills and this page speak one colour.
+
+     The paper colours are TRANSLUCENT. They are sheets laid over the
+     artwork, not opaque rectangles pasted on top of it, so the picture
+     reads through them as a hazy wash of colour rather than as detail.
+     The blur behind each sheet buys the legibility back. */
+  --cd-paper: rgba(255, 253, 250, 0.34);
+  /* The rows carry small text over the artwork, so they need a denser
+     sheet than the big furniture (the header, the tab row) — the same
+     split the 今日 page makes between its status cards and its list. */
+  --cd-paper-list: rgba(255, 253, 250, 0.62);
+  --cd-paper-solid: rgba(255, 253, 250, 0.86);
+  --cd-card: var(--cd-paper-list);
+  --cd-ink: #3d3128;          /* card / headline text */
+  --cd-ink-soft: #8c7d70;     /* meta lines, secondary text */
   --cd-ink-strong: #5f3b29;   /* section titles */
-  --cd-line: #f0e2d8;         /* hairlines, card borders */
+  --cd-line: rgba(196, 160, 132, 0.28);         /* hairlines, card borders */
+  --cd-line-strong: rgba(196, 160, 132, 0.46);
   --cd-accent-soft: #fbe6d8;  /* tinted tiles, date chips */
   --cd-bar: #e9ab85;          /* the accent bar beside a section title */
   --cd-radius: 18px;
-  --cd-shadow: 0 2px 10px rgba(120, 70, 40, 0.06), 0 14px 32px rgba(120, 70, 40, 0.07);
+  --cd-shadow: 0 2px 14px rgba(150, 105, 75, 0.10);
+  --cd-shadow-lift: 0 10px 26px rgba(150, 105, 75, 0.16);
   /* Two small glyphs, painted as masks so they take the colour of whatever
      carries them (the same trick the global 「返回」 chevron uses). */
   --cd-icon-chevron-right: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5l7 7-7 7'/%3E%3C/svg%3E");
   --cd-icon-clock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E");
 
-  /* The banner is edge-to-edge, so the page pulls itself out of the scroll
+  /* The page is edge-to-edge, so it pulls itself out of the scroll
      container's padding. The padding itself lives in styles.css as
-     --content-pad-y / --content-pad-x, so the two can't drift apart. */
+     --content-pad-y / --content-pad-x, so the two can't drift apart.
+
+     `min-height` is the container's height PLUS the padding it pulled
+     out of — otherwise the page would end 18px short of the bottom of
+     the window and the bare app surface would show below the artwork. */
   margin: calc(-1 * var(--content-pad-y)) calc(-1 * var(--content-pad-x));
-  min-height: 100%;
-  background: var(--cd-paper);
+  min-height: calc(100% + var(--content-pad-y) + var(--content-pad-y));
+  box-sizing: border-box;
   color: var(--cd-ink);
+
+  /* The artwork, behind everything on the page.
+
+     The wash between the picture and the content is what keeps the text
+     readable: the artwork is a pale pastel, so the scrim is a warm cream
+     rather than the app's neutral --bg — a warm wash over a warm painting
+     keeps the page feeling like one material.
+
+     It is a vertical gradient, the same shape the 今日 page uses: the
+     artwork's top edge is where the header sits, so the top gets a
+     slightly heavier wash for legibility, fading downward into the warm
+     centre of the painting. A flat wash either under-protects the top or
+     flattens the whole picture. */
+  --cd-scrim: rgba(255, 246, 236, 0.62);
+  --cd-scrim-bottom: rgba(255, 246, 236, 0.42);
+  background-image:
+    linear-gradient(var(--cd-scrim), var(--cd-scrim-bottom)),
+    var(--cd-banner-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+/* No artwork installed (or the user turned the background off) — the page
+   falls back to the plain warm paper rather than to a bare surface. */
+.cd-page.no-art {
+  background-image: linear-gradient(rgba(255, 246, 236, 0.9), rgba(255, 246, 236, 0.9));
 }
 
 /* ---------------------------------------------------------------------------
    Header banner
    ---------------------------------------------------------------------------
-   The artwork (`resources/ui/user-detail-background.png`) reaches the
-   renderer as a `file://` URL and is handed to CSS through the
-   `--cd-banner-image` custom property, so the image can be swapped without
-   rebuilding the rest of the rule.
+   The banner does NOT carry the artwork — the PAGE behind it does (see the
+   `.cd-page` rule above). The banner only adds a local wash of its own, so
+   the name and the avatar stay readable at the top of the page where the
+   artwork is brightest.
 
-   The white-to-transparent wash on the left is what makes the name and the
-   avatar readable over a photo: the artwork shows through on the right,
-   where nothing has to be read. */
+   The wash runs from opaque on the left (where the name and the avatar
+   sit) to nearly clear on the right (where nothing has to be read), so the
+   picture still shows through the half of the banner that carries no text. */
 .cd-banner {
   position: relative;
   display: flex;
   align-items: center;
+  /* The wash is painted on the banner itself, so it spans the full width —
+     the artwork shows through it everywhere, not just behind the text. */
   min-height: 138px;
-  padding: 24px 32px;
-  background-image:
-    linear-gradient(90deg,
-      rgba(255, 251, 247, 0.97) 0%,
-      rgba(255, 247, 240, 0.90) 34%,
-      rgba(255, 245, 236, 0.55) 62%,
-      rgba(255, 243, 232, 0.18) 100%),
-    var(--cd-banner-image, none);
-  background-size: cover;
-  background-position: center 58%;
-  background-repeat: no-repeat;
+  background-image: linear-gradient(90deg,
+      rgba(255, 251, 247, 0.92) 0%,
+      rgba(255, 247, 240, 0.72) 34%,
+      rgba(255, 245, 236, 0.38) 62%,
+      rgba(255, 243, 232, 0.10) 100%);
   overflow: hidden;
 }
-/* No artwork installed — a plain warm banner instead of a bare card. */
-.cd-banner.no-art {
-  background-image: linear-gradient(120deg, #ffeade 0%, #ffd9c4 52%, #f6c6b2 100%);
-}
+/* The name and the avatar sit on the same reading column as the cards
+   below, so the header and the content line up. The auto margins do the
+   centring — on a flex item they take priority over `justify-content`. */
 .cd-banner-inner {
   display: flex;
   align-items: center;
   gap: 18px;
   min-width: 0;
+  width: 100%;
+  max-width: var(--page-column-max, 1080px);
+  margin: 0 auto;
+  padding: 24px 32px;
+  box-sizing: border-box;
 }
 
 /* The avatar tile — a rounded square that echoes the icon tiles in the
@@ -175,8 +237,31 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  padding: 0 32px;
   border-bottom: 1px solid var(--cd-line);
+  /* The tab row is page furniture rather than content, so it sits on the
+     lighter sheet — the same one the 今日 page's header uses. The blur is
+     what keeps the labels readable without adding a hard panel edge.
+
+     The sheet runs the FULL width, but the row inside it is centred on
+     the same reading column as the body below, so the tabs line up with
+     the cards they switch between. `justify-content` on the flex row
+     puts the two ends of that inner row apart — the tabs on the left,
+     the 「返回」 on the right. */
+  background: var(--cd-paper);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  backdrop-filter: blur(20px) saturate(125%);
+}
+/* The row that follows the reading column. The sheet is painted by the
+   parent, so this only has to size and centre itself. */
+.cd-page .cd-tabbar-inner {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  max-width: var(--page-column-max, 1080px);
+  margin: 0 auto;
+  padding: 0 32px;
 }
 .cd-page .cd-tabs {
   display: flex;
@@ -190,7 +275,7 @@
   align-items: center;
   gap: 7px;
   padding: 13px 16px 12px;
-  color: #9a8073;
+  color: var(--cd-ink-soft);
   text-decoration: none;
   font-size: 15px;
   font-weight: 700;
@@ -209,7 +294,7 @@
   border-radius: 50%;
   background: transparent;
   border: 1px solid var(--cd-line);
-  color: #a78d80;
+  color: var(--cd-ink-soft);
   font-size: 12px;
   font-weight: 700;
   text-align: center;
@@ -231,25 +316,56 @@
 }
 
 /* The 「返回」 control — the same chevron pill the rest of the app uses,
-   kept on the tab row so the banner stays as clean as the design has it. */
+   kept on the tab row so the banner stays as clean as the design has it.
+
+   It sits on the tab row, whose tabs are 15px, so it is scaled to match
+   them: a 13px label with a 14px chevron read as a stray caption rather
+   than as a control you can click. The label, the chevron and the pill's
+   padding all grow together, so the thing keeps its proportions. */
 .cd-back {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 12px 5px 9px;
+  gap: 7px;
+  padding: 8px 16px 8px 12px;
   border-radius: 999px;
   color: var(--cd-ink-soft);
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
+  /* The tab row's items sit on the bottom edge, and the tabs carry a 3px
+     active underline there. The pill has no underline, so flush with the
+     bottom it would hang below the tab labels; lifting it by the
+     underline's height puts its centre on the tab text instead. */
+  margin-bottom: 3px;
   transition: color 140ms ease, background 140ms ease;
 }
 .cd-back:hover { color: var(--accent); background: rgba(255, 255, 255, 0.7); }
+/* The chevron is bigger than the app's default 14px, to match the label
+   it sits next to. */
+.cd-back .icon-arrow-left {
+  width: 17px;
+  height: 17px;
+  vertical-align: 0;
+}
 
 /* ---------------------------------------------------------------------------
    Page body
-   --------------------------------------------------------------------------- */
-.cd-body { padding: 0 32px 28px; }
+   ---------------------------------------------------------------------------
+   The banner and the tab row are full-bleed — they are the page's frame.
+   The content below them is a *list*, and a list wants a reading column
+   rather than the full window width: on a 2000 px monitor a row stretched
+   edge to edge puts the title and the date chip a metre apart, and the
+   rows stop reading as a list.
+
+   The width is the app's shared `--page-column-max` — the same band the
+   今日 page, the 抽卡人生 page and the list pages use — so every page in
+   the app centres its content on the same place. */
+.cd-body {
+  max-width: var(--page-column-max, 1080px);
+  margin: 0 auto;
+  padding: 0 32px 28px;
+}
 
 /* Section titles carry a short orange bar on the left, the way the design
    draws them. The bar is a pseudo-element, so the title's text stays
@@ -275,19 +391,24 @@
   flex: none;
 }
 
-/* The section actions are pills: a filled accent one and an outlined one. */
+/* The section actions are pills: a filled accent one and an outlined one.
+   The outlined one is a sheet of paper too, so it gets the same blur as
+   the cards — an opaque white pill would read as a sticker on the
+   artwork. */
 .cd-page .btn {
   border-radius: 999px;
   padding: 7px 15px;
   font-weight: 600;
 }
 .cd-page .btn.secondary {
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--cd-paper-list);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  backdrop-filter: blur(20px) saturate(125%);
   color: #996a54;
-  border-color: #edd9cb;
+  border-color: var(--cd-line);
 }
 .cd-page .btn.secondary:hover {
-  background: #fff;
+  background: var(--cd-paper-solid);
   color: var(--accent);
   border-color: var(--accent);
 }
@@ -295,17 +416,35 @@
 /* ---------------------------------------------------------------------------
    Cards
    ---------------------------------------------------------------------------
-   Rounded white cards on cream paper. The category colour strip the global
-   `.card[data-kind]` rule paints is dropped here — the tinted icon tile
-   carries the category instead, which is how the design reads it. */
+   Rounded sheets of translucent paper laid over the artwork. An opaque
+   white card cuts a hard edge across the picture and reads as a foreign
+   panel pasted on top of it; a translucent one lets the artwork continue
+   through, so the page reads as one material.
+
+   `backdrop-filter` is what makes the translucency work: it softens the
+   artwork directly behind the card, so what comes through is the shape
+   and colour of the picture rather than its detail. The legibility is
+   bought back by the blur and the warm ink, not by opacity.
+
+   The category colour strip the global `.card[data-kind]` rule paints is
+   dropped here — the tinted icon tile carries the category instead, which
+   is how the design reads it. */
 .cd-page .card {
   background: var(--cd-card);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
   border: 1px solid var(--cd-line);
   border-left: none;
   border-radius: var(--cd-radius);
   padding: 16px 18px;
   margin-bottom: 12px;
   box-shadow: var(--cd-shadow);
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+}
+.cd-page .card.clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--cd-shadow-lift);
+  border-color: var(--cd-line-strong);
 }
 .cd-page .card.list-row { gap: 16px; }
 .cd-page .list-row .lr-title {
@@ -369,9 +508,11 @@
   color: var(--accent);
   font-weight: 700;
 }
-/* The clock chip on a memorial row — outlined, with a clock glyph. */
+/* The clock chip on a memorial row — outlined, with a clock glyph. It sits
+   on the card, so it is a sheet of paper like the card is, not an opaque
+   white pill. */
 .cd-page .cd-clock-chip {
-  background: #fff;
+  background: var(--cd-paper-solid);
   border: 1px solid var(--cd-line);
   color: var(--cd-ink-soft);
   font-weight: 600;
@@ -489,19 +630,28 @@
 .cd-page .bulk-row .cd-attr-row { padding: 4px 0; }
 .cd-page .bulk-row .cd-attr-go { display: none; }
 
-/* The search + filter row of a kind tab. */
+/* The search + filter row of a kind tab. The search field is the one piece
+   of furniture that has to carry typed text, so it gets a *denser* sheet
+   than the rest of the page and a visible border — a light sheet over a
+   light artwork makes the field's own edge disappear, and the user sees
+   a placeholder floating in the picture with nothing to click. */
 .cd-page .section-search,
 .cd-page .section-event-filter {
   border-radius: 999px;
-  border-color: var(--cd-line);
-  background: #fff;
+  border-color: var(--cd-line-strong);
+  background: var(--cd-paper-solid);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  backdrop-filter: blur(20px) saturate(125%);
+  color: var(--cd-ink);
 }
 .cd-page .list-tail .meta { color: var(--cd-ink-soft); }
 
-/* The empty state — a dashed outline on the cream paper. */
+/* The empty state — a dashed outline on a sheet of paper. */
 .cd-page .empty {
-  border-color: var(--cd-line);
+  border-color: var(--cd-line-strong);
   color: var(--cd-ink-soft);
   border-radius: var(--cd-radius);
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--cd-paper-list);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: blur(18px) saturate(125%);
 }
