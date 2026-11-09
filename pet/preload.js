@@ -40,16 +40,6 @@ contextBridge.exposeInMainWorld('mp', {
     // reproduces on real hardware, so the app writes down what it sees
     // instead of guessing at the cause.
     diag: (entry) => ipcRenderer.invoke('pet:diag', entry),
-    // "Input is reaching this renderer again."
-    //
-    // Sent once per wake, by the renderer, the first time it sees any
-    // input event. The main process watches for it: if the OS cursor moves
-    // over the pet and this message never arrives, the window's input path
-    // is dead — a renderer can be alive and deaf at the same time, because
-    // it still answers IPC while no mouse event ever reaches it. No
-    // in-process recovery can fix that (the pointer device registry lives
-    // in the browser process), so the main process restarts the app.
-    inputAlive: () => ipcRenderer.invoke('pet:input_alive'),
     setPaused: (ms) => ipcRenderer.invoke('pet:set_paused', ms),
     openContextMenu: () => ipcRenderer.invoke('pet:context_menu'),
     triggerAction: (action, ms) => ipcRenderer.invoke('pet:trigger_action', action, ms),

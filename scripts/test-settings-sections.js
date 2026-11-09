@@ -191,7 +191,6 @@ app.whenReady().then(async () => {
   const SECTIONS = [
     { key: 'pet',        marker: '#pet-species' },
     { key: 'startup',    marker: '#app-autostart' },
-    { key: 'wake',       marker: 'input[name="pet-restart-on-wake"]' },
     { key: 'background', marker: '#page-bg-select' },
     { key: 'backup',     marker: '#export-backup' },
     { key: 'pin',        marker: '#pin-change' },

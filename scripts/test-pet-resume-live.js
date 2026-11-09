@@ -40,25 +40,33 @@ app.whenReady().then(async () => {
   console.log('pet resume live test (real Electron)');
 
   // -------------------------------------------------------------------------
-  // The wake recovery's MODE
+  // The wake recovery's LAST STEP
   //
-  // The default mode is 'always': on every wake the app kills its process
-  // and starts a new one. That is the behaviour the user asked for, and it
-  // is exercised by scripts/test-app-relaunch.js (which drives the REAL
-  // `app.relaunch()`) and by scripts/test-pet-input-probe.js (which checks
-  // the wiring).
+  // On every wake the app kills its process and starts a new one — that is
+  // the behaviour the user asked for, and it is exercised by
+  // scripts/test-app-relaunch.js (which drives the REAL `app.relaunch()`).
   //
   // This test is about the other half — the IN-PROCESS recovery: the drag
   // is torn down, the pet window is replaced, the pet is clamped back into
-  // view, and the pet is still draggable afterwards. In the default mode
-  // the process would exit halfway through, and those assertions could
-  // never be made. So the mode is turned off here.
+  // view, and the pet is still draggable afterwards. The process would
+  // exit halfway through, and those assertions could never be made. So
+  // `app.relaunch()` / `app.exit()` are stubbed out here: the restart is
+  // RECORDED instead of performed, and the test asserts that it was asked
+  // for.
   //
   // The database is opened in the OS temp directory — the repo and the
   // user's real database must stay untouched.
   // -------------------------------------------------------------------------
   await db.open(path.join(os.tmpdir(), 'soul-desktop-pet-resume-live', 'test.db'));
-  db.setSetting('pet_restart_app_on_wake', 'off');
+
+  // Record the restart instead of performing it.
+  //
+  // main/app_relaunch.js calls `app.relaunch()` and then `app.exit(0)`.
+  // Both are looked up on the `app` object at call time, so replacing the
+  // properties here intercepts them.
+  const relaunchCalls = [];
+  app.relaunch = (opts) => { relaunchCalls.push(opts); };
+  app.exit = () => {};
 
   // Create a pet window.
   //
@@ -201,6 +209,10 @@ app.whenReady().then(async () => {
     threw = e;
   }
   check('the resume handler did not throw', !threw, threw && threw.message);
+  // The last step of the recovery: the app asks the OS for a new instance.
+  // (The restart itself is stubbed out above — see the note above.)
+  check('the recovery asked for an app restart', relaunchCalls.length >= 1,
+    `relaunchCalls=${relaunchCalls.length}`);
 
   // -------------------------------------------------------------------------
   // Test 3 — the pet was restarted and the new window works

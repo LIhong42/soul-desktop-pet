@@ -138,9 +138,9 @@ function ensureImportSubscribed() {
 // 设置页的分区
 // ---------------------------------------------------------------------------
 //
-// 设置页原来是一长条卡片：桌宠、动作、文本、气泡、开机启动、唤醒恢复、背景、
-// 更新、数据迁移、密码、退出——十一个功能从上到下排开，页面越加越长，常用
-// 的那几项被压在中间，滚动找起来很费劲。
+// 设置页原来是一长条卡片：桌宠、动作、文本、气泡、开机启动、背景、更新、
+// 数据迁移、密码、退出——十个功能从上到下排开，页面越加越长，常用的那几项
+// 被压在中间，滚动找起来很费劲。
 //
 // 现在页面分成两块：左边一列分区导航，右边只显示选中的那一块。每块的标题
 // 就是一个分区名，所以下方的卡片不再需要各自重复一遍小标题。
@@ -153,7 +153,6 @@ const SETTINGS_SECTIONS = [
   { key: 'texts',    label: '动作文本', icon: '💬', title: '动作文本' },
   { key: 'bubbles',  label: '文本气泡', icon: '🫧', title: '文本气泡' },
   { key: 'startup',  label: '开机启动', icon: '🚀', title: '开机启动' },
-  { key: 'wake',     label: '睡眠唤醒', icon: '😴', title: '睡眠唤醒后的恢复' },
   { key: 'background', label: '页面背景', icon: '🖼️', title: '页面背景' },
   { key: 'update',   label: '软件更新', icon: '⬆️', title: '软件更新' },
   { key: 'backup',   label: '数据迁移', icon: '📦', title: '数据迁移' },
@@ -244,7 +243,6 @@ async function renderSection(key) {
     case 'texts':     return renderTextsSection(body);
     case 'bubbles':   return renderBubblesSection(body);
     case 'startup':   return renderStartupSection(body);
-    case 'wake':      return renderWakeSection(body);
     case 'background':return renderBackgroundSection(body);
     case 'update':    return renderUpdateSection(body);
     case 'backup':    return renderBackupSection(body);
@@ -466,59 +464,6 @@ async function renderStartupSection(body) {
       toast('设置失败：' + ((err && err.message) || err));
     }
   };
-}
-
-// ---------------------------------------------------------------------------
-// 睡眠唤醒后的恢复
-// ---------------------------------------------------------------------------
-async function renderWakeSection(body) {
-  // 睡眠唤醒后的恢复策略。见 main/app_relaunch.js。
-  //   always — 每次唤醒都重启整个应用（默认）
-  //   auto   — 只有当桌宠窗口的"输入通路"真的死了才重启整个应用
-  //   off    — 从不重启
-  const restartOnWakeRaw = await api.settings.get('pet_restart_app_on_wake');
-  const restartOnWake = (restartOnWakeRaw === 'auto' || restartOnWakeRaw === 'off')
-    ? restartOnWakeRaw : 'always';
-  body.innerHTML = `
-    <div class="card">
-      <p class="meta">
-        电脑睡眠再唤醒后，有时桌宠会"拖不动"：窗口还在、菜单也能开，但鼠标事件收不到。
-        下面选择唤醒后如何恢复。
-      </p>
-      <div class="field" style="justify-content:flex-start;">
-        <label style="display:flex; align-items:center; gap:6px;">
-          <input type="radio" name="pet-restart-on-wake" value="always" ${restartOnWake === 'always' ? 'checked' : ''}/>
-          每次唤醒都重启应用（默认）：保证桌宠一定拖得动，主窗口会被关掉重开
-        </label>
-      </div>
-      <div class="field" style="justify-content:flex-start;">
-        <label style="display:flex; align-items:center; gap:6px;">
-          <input type="radio" name="pet-restart-on-wake" value="auto" ${restartOnWake === 'auto' ? 'checked' : ''}/>
-          自动检测：只有确认输入通路失效时才重启应用
-        </label>
-      </div>
-      <div class="field" style="justify-content:flex-start;">
-        <label style="display:flex; align-items:center; gap:6px;">
-          <input type="radio" name="pet-restart-on-wake" value="off" ${restartOnWake === 'off' ? 'checked' : ''}/>
-          从不重启：只做应用内部的恢复
-        </label>
-      </div>
-    </div>
-  `;
-  for (const radio of document.querySelectorAll('input[name="pet-restart-on-wake"]')) {
-    radio.onchange = async (e) => {
-      if (!e.target.checked) return;
-      const mode = e.target.value;
-      try {
-        await api.settings.set('pet_restart_app_on_wake', mode);
-        toast(mode === 'always' ? '每次唤醒都会重启应用'
-          : mode === 'off' ? '已关闭唤醒后的应用重启'
-          : '已改为自动检测');
-      } catch (err) {
-        toast('设置失败：' + ((err && err.message) || err));
-      }
-    };
-  }
 }
 
 // ---------------------------------------------------------------------------

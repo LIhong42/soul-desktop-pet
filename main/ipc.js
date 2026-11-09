@@ -30,8 +30,6 @@ const petBubbles = require('./pet_bubbles');
 const petResumeMod = require('./pet_resume');
 // 桌宠窗口的诊断日志（指针事件、唤醒、拖拽接管）。见 main/pet_diagnostics.js。
 const petDiagnostics = require('./pet_diagnostics');
-// 唤醒后的"输入通路是否还活着"探测器。见 main/pet_input_probe.js。
-const { createInputProbe } = require('./pet_input_probe');
 // 最后的手段：杀掉当前进程并重启整个应用。见 main/app_relaunch.js。
 const { relaunchApp } = require('./app_relaunch');
 // 文本框 catalog (resources/text_boxes) — scanned, not hard-coded.
@@ -2634,74 +2632,12 @@ function normFreeText(s) {
     lastGestureId: 0,
   };
 
-  // ---- The input-path probe ----
-  //
-  // When the renderer last told us that input is reaching it.
-  //
-  // The renderer sends `pet:input_alive` the first time it sees any input
-  // event after a wake. It is the proof that the window's input path still
-  // works — the renderer can be alive and deaf at the same time (it keeps
-  // answering IPC while no mouse event ever reaches it), and only the
-  // renderer itself can tell the two apart.
-  let petInputAliveAt = 0;
-
   // When the app was last restarted (on the monotonic clock).
   //
   // One sleep can be reported more than once — the `resume` event, the
   // `unlock-screen` event and the clock-jump watchdog all notice it — and
   // the app must be restarted once, not three times.
   let lastAppRelaunchAt = -Infinity;
-
-  // Should the app be restarted when the input path turns out to be dead?
-  //
-  //   'always' (default) — on every wake, no questions asked: kill the
-  //                        process and start a new one. This is the
-  //                        user's explicitly requested fallback, and it
-  //                        is the default because the in-process recovery
-  //                        does NOT cure every case: on the real machine
-  //                        (2026-10-31) the pet was still undraggable
-  //                        after a wake WITH a live input path — the
-  //                        pointer events arrived, the pet simply did
-  //                        not move. A fresh process is the only state
-  //                        that is known to work, because it is the state
-  //                        `npm start` produces.
-  //   'auto'            — only when the probe actually sees a dead input
-  //                        path. The restart is disruptive (the main
-  //                        window closes and reopens), so it must not
-  //                        happen on a healthy wake.
-  //   'off'             — never.
-  const petRestartOnWakeSetting = () => {
-    try {
-      const v = db.getSetting('pet_restart_app_on_wake');
-      return v === 'always' || v === 'off' || v === 'auto' ? v : 'always';
-    } catch (e) { return 'always'; }
-  };
-
-  // The probe itself. See main/pet_input_probe.js for how it decides that
-  // the input path is dead.
-  const petInputProbe = createInputProbe({
-    getWindow: petWin,
-    getCursor: () => screen.getCursorScreenPoint(),
-    hasInputAlive: () => petInputAliveAt > 0,
-    log: (entry) => {
-      try { petDiagnostics.append(Object.assign({ src: 'main' }, entry)); } catch (e) {}
-    },
-    onAlive: () => { petInputAliveAt = 0; },
-    onDead: (why) => {
-      // The window is deaf. Nothing inside this process can fix that, so
-      // the app is restarted — a fresh browser process registers the
-      // pointer device from scratch.
-      try {
-        petDiagnostics.append({
-          src: 'main',
-          kind: 'input_path_dead',
-          reason: why || 'resume',
-          action: 'relaunch',
-        });
-      } catch (e) {}
-      relaunchOnWake('input-path-dead:' + (why || 'resume'));
-    },
-  });
 
   // How often the main process samples the cursor while a drag is active.
   // ~60 Hz: fast enough that the pet tracks the pointer smoothly, slow
@@ -2904,17 +2840,6 @@ function normFreeText(s) {
     return true;
   });
 
-  // "Input is reaching the pet renderer again."
-  //
-  // Sent by the renderer once per wake, the first time it sees any input
-  // event. The input probe watches for it: if the OS cursor moves over the
-  // pet and this message never arrives, the window's input path is dead,
-  // and the only cure left is a new process (main/app_relaunch.js).
-  ipcMain.handle('pet:input_alive', () => {
-    petInputAliveAt = Date.now();
-    return true;
-  });
-
   // ---- Pet drag: system suspend / resume recovery ----
   //
   // The drag protocol above depends on the renderer sending `pet:drag_end`.
@@ -2965,24 +2890,25 @@ function normFreeText(s) {
       });
     } catch (e) { /* diagnostics must never break the recovery */ }
 
-    // 0. The blunt mode: kill the process and start a new one.
+    // 0. The wake recovery: repair the app from the inside, then replace
+    //    the process.
     //
-    //    This is the user's explicitly requested fallback, and it is the
-    //    DEFAULT. The in-process recovery below does not cure every case:
-    //    on the real machine (2026-10-31) the pet was still undraggable
-    //    after a wake WITH a live input path — the pointer events arrived,
-    //    the right-click menu opened, and the pet simply did not move. A
-    //    fresh process is the only state that is known to work, because it
-    //    is exactly the state `npm start` produces.
+    //    The last step is the blunt one: kill the process and start a new
+    //    one. The in-process recovery below does not cure every case: on
+    //    the real machine (2026-10-31) the pet was still undraggable after
+    //    a wake WITH a live input path — the pointer events arrived, the
+    //    right-click menu opened, and the pet simply did not move. A fresh
+    //    process is the only state that is known to work, because it is
+    //    exactly the state `npm start` produces.
     //
-    //    It happens LAST, after the in-process recovery — not instead of
-    //    it. The recovery still has work worth doing even when the process
-    //    is about to be replaced: it pulls the pet back into the visible
-    //    work area (the OS may have moved the window while the machine was
-    //    asleep, and the new process starts the pet at the position that
-    //    was persisted). And it happens in a `finally`, so a step that
-    //    throws cannot swallow the restart — that would leave the user in
-    //    exactly the state this is meant to escape.
+    //    The restart happens LAST, after the in-process recovery — not
+    //    instead of it. The recovery still has work worth doing even when
+    //    the process is about to be replaced: it pulls the pet back into
+    //    the visible work area (the OS may have moved the window while the
+    //    machine was asleep, and the new process starts the pet at the
+    //    position that was persisted). And it happens in a `finally`, so a
+    //    step that throws cannot swallow the restart — that would leave the
+    //    user in exactly the state this is meant to escape.
 
     try {
       // 1. Kill any drag the main process still believes in. `force` releases
@@ -3022,12 +2948,6 @@ function normFreeText(s) {
       //    never arrived. Left alone, the next mouse move over the pet would
       //    compute a delta against a stale baseline. The renderer resets
       //    itself on this message.
-      //
-      //    The "input is alive" report is reset FIRST, so the report the
-      //    renderer sends next really belongs to this wake. A report left
-      //    over from before the sleep would tell the input probe that the
-      //    window is fine when it may not be.
-      petInputAliveAt = 0;
       try {
         petWin().webContents.send('pet:resume');
       } catch (e) {
@@ -3099,8 +3019,7 @@ function normFreeText(s) {
       // A step that throws must not take the rest of the recovery with it.
       console.error('[pet_resume] the in-process recovery failed:', e);
     } finally {
-      // 7. Watch the pet's INPUT PATH — or, in the default mode, kill the
-      //    process and start a new one.
+      // 7. Kill the process and start a new one.
       //
       //    Everything above repairs the app from the inside. One failure
       //    cannot be repaired that way: a renderer that is alive and deaf —
@@ -3110,39 +3029,17 @@ function normFreeText(s) {
       //    every window, so a new window inherits the broken registry and a
       //    reload certainly does.
       //
-      //    The probe watches the OS cursor (which the main process can read
-      //    whether or not the renderer can) against the renderer's own
-      //    "input is alive" report. If the cursor moves over the pet and the
-      //    renderer stays silent, the input path is dead — and then the app
-      //    is restarted, which is the user's explicitly requested fallback:
-      //    kill the old process and start a new one.
+      //    On the real machine (2026-10-31) the pet was still undraggable
+      //    after a wake WITH a live input path — the pointer events
+      //    arrived, the pet simply did not move. A fresh process is the
+      //    only state that is known to work, because it is the state
+      //    `npm start` produces. So the app is restarted on every wake,
+      //    without asking.
       //
       //    This sits in a `finally` on purpose: it is the step the whole
       //    mechanism exists for, so nothing above may swallow it.
-      startPetInputProbe(reason || 'resume');
+      relaunchOnWake(reason || 'resume');
     }
-  }
-
-  // Start watching the pet's input path after a wake.
-  //
-  // `reason` says what woke the machine; it goes into the diagnostic log
-  // so the probe can be lined up with the wake.
-  function startPetInputProbe(reason) {
-    const mode = petRestartOnWakeSetting();
-    if (mode === 'off') {
-      try {
-        petDiagnostics.append({ src: 'main', kind: 'input_probe_skipped', reason, mode });
-      } catch (e) {}
-      return;
-    }
-    if (mode === 'always') {
-      // The blunt version: on every wake, kill the process and start a
-      // new one. Nothing is probed — the user asked for the pet to come
-      // back from a clean process every time.
-      relaunchOnWake(reason);
-      return;
-    }
-    petInputProbe.start(reason || 'resume');
   }
 
   // Kill the process and start a new one.
@@ -3156,7 +3053,7 @@ function normFreeText(s) {
     if (now - lastAppRelaunchAt < PET_RESTART_DEBOUNCE_MS) return false;
     lastAppRelaunchAt = now;
     try {
-      petDiagnostics.append({ src: 'main', kind: 'app_relaunch', reason, mode: 'always' });
+      petDiagnostics.append({ src: 'main', kind: 'app_relaunch', reason });
     } catch (e) {}
     return relaunchApp('wake:' + (reason || 'resume'));
   }

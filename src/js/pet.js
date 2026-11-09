@@ -1057,16 +1057,6 @@ function switchGestureFamily(family, e) {
 // only a click ON the pet means that.
 let gestureOnSprite = false;
 
-// How many input events this renderer has seen since it was loaded.
-//
-// The main process uses it to find out whether the window's INPUT PATH is
-// still alive after a system suspend. A renderer can be alive and deaf at
-// the same time: it still answers IPC, so from the outside it looks
-// perfectly healthy, while the window's input registration is dead and not
-// a single mouse event ever reaches it. The counter is what tells the two
-// apart.
-let inputEventCount = 0;
-
 // How many events each family has produced.
 //
 // After a system suspend one family can stop entirely while the other
@@ -1076,29 +1066,10 @@ let inputEventCount = 0;
 let pointerEventCount = 0;
 let mouseEventCount = 0;
 
-// Has the main process been told that input is reaching this renderer?
-//
-// It is told once per wake. The main process is watching for it: if the OS
-// cursor moves over the pet and this message never arrives, the input
-// path is dead and the only cure left is a new process.
-let inputAliveReported = false;
-try {
-  // Read by the main process through `executeJavaScript`, which runs in
-  // this same (main) world.
-  window.__petInputCount = () => inputEventCount;
-} catch (e) { /* diagnostics must never break the pet */ }
-
-// Count an input event and tell the main process, once, that input is
-// getting through.
+// Count an input event.
 function countInputEvent(family) {
-  inputEventCount++;
   if (family === 'pointer') pointerEventCount++;
   else if (family === 'mouse') mouseEventCount++;
-  if (inputAliveReported) return;
-  inputAliveReported = true;
-  try {
-    if (M.pet && typeof M.pet.inputAlive === 'function') M.pet.inputAlive();
-  } catch (e) { /* the probe must never break the pet */ }
 }
 
 // Is this element one the user has to be able to CLICK rather than drag?
@@ -2566,10 +2537,6 @@ if (M.on) {
       }
     } catch (e) { /* diagnostics must never break the recovery */ }
     endDrag(true, 'resume');
-    // The main process is watching for proof that input is reaching this
-    // renderer again (see `countInputEvent`). The next wake needs a fresh
-    // report, so the flag goes back to "not reported yet".
-    inputAliveReported = false;
   });
   M.on('pet:state-changed', (payload) => {
     setState(payload.state, payload.count, payload.head);
