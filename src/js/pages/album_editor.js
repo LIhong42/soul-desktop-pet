@@ -37,6 +37,7 @@ import {
 import {
   buildAlbumLayout,
   remapPageTemplate,
+  isImageRow,
 } from '../album_builder.js';
 import { createGestureGuard } from '../gesture_guard.js';
 
@@ -864,7 +865,13 @@ function clearTextSelection() {
 
 export function mountEditor({ container, events, onBack, onExport }) {
   state.container = container;
-  state.events = events || [];
+  // The album is a book of pictures. A movie and a sound live in the same
+  // table as the pictures, so they are dropped here — the editor lays out
+  // pictures only, and a video thumbnail would be a broken image.
+  state.events = (events || []).map((e) => ({
+    ...e,
+    photos: (Array.isArray(e.photos) ? e.photos : []).filter(isImageRow),
+  }));
   state.eventById = new Map(state.events.map((e) => [e.id, e]));
   state.photoById = new Map();
   state.events.forEach((e) => {

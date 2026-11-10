@@ -512,6 +512,248 @@ app.whenReady().then(async () => {
   checkTrue('the editor navigates away after saving',
     !!mixResult.navigated && mixResult.navigated.length > 1);
 
+  // ---- 3a. Video and audio --------------------------------------------
+  //
+  // The document holds three kinds of thing now: words, pictures, and
+  // media. A movie and a sound are inserted from the text block's
+  // right-click menu, land AFTER the whole text block (the paragraph is
+  // never cut in two), and are written into the saved document as
+  // blocks of their own.
+  console.log('\n== 视频与音频 ==');
+  const mediaResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testUploads.clear();
+
+    // The previous section saved an entry, which navigated away and
+    // replaced the page. Draw the editor again before driving it.
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 60));
+
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = '那天她唱了一首歌。';
+    ta.focus();
+    ta.dispatchEvent(new Event('input'));
+
+    // The media picker is a SEPARATE input from the picture one — it
+    // accepts movies and sounds, not images.
+    const mediaInput = document.getElementById('diary-media');
+    const hasMediaInput = !!mediaInput;
+    const mediaAccept = mediaInput ? mediaInput.getAttribute('accept') : '';
+
+    // Stub the picker: the click fires the change handler with a
+    // synthetic file, the same path the real picker takes.
+    let pickedKind = 'video';
+    mediaInput.click = () => {
+      const file = pickedKind === 'video'
+        ? new File([new Uint8Array([1,2,3])], 'clip.mp4', { type: 'video/mp4' })
+        : new File([new Uint8Array([4,5,6])], 'song.mp3', { type: 'audio/mpeg' });
+      Object.defineProperty(mediaInput, 'files', { value: [file], configurable: true });
+      mediaInput.dispatchEvent(new Event('change'));
+    };
+
+    // Right-click the text block and pick 「插入视频」.
+    window.__menu.open(ta);
+    const menuActs = window.__menu.items().map(i => i.act);
+    window.__menu.click('[data-ctx-act="insert-video"]');
+    await new Promise(r => setTimeout(r, 80));
+
+    const afterVideo = Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+    const videoPlayer = document.querySelector('.diary-block-video video');
+
+    // Now the sound, right-clicking the same block again.
+    pickedKind = 'audio';
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-audio"]');
+    await new Promise(r => setTimeout(r, 80));
+
+    const afterAudio = Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+    const audioPlayer = document.querySelector('.diary-block-audio audio');
+
+    // The text is read BEFORE the save: saving navigates away and the
+    // page is replaced.
+    const textWhole = document.querySelector('.diary-block-text')
+      ? document.querySelector('.diary-block-text').value : null;
+
+    // Save and look at the stored document.
+    document.getElementById('diary-title').value = '有视频的一篇';
+    await window.__meta.confirm('2026-05-03T10:30', 'other', []);
+    await new Promise(r => setTimeout(r, 120));
+
+    const rows = Object.values(window.__testRows.all());
+    const row = rows[rows.length - 1];
+    const uploads = window.__testUploads.all();
+
+    return {
+      hasMediaInput, mediaAccept, menuActs,
+      afterVideo, afterAudio,
+      hasVideoPlayer: !!videoPlayer,
+      hasAudioPlayer: !!audioPlayer,
+      videoHasControls: !!(videoPlayer && videoPlayer.controls),
+      audioHasControls: !!(audioPlayer && audioPlayer.controls),
+      textWhole,
+      content: row && row.content,
+      uploadCount: uploads.length,
+      uploadMimes: uploads.map(u => u.mime),
+      uploadNames: uploads.map(u => u.original_name),
+    };
+  `);
+  checkTrue('the page has a media picker of its own', mediaResult.hasMediaInput);
+  checkTrue('the media picker takes movies and sounds',
+    (mediaResult.mediaAccept || '').includes('video') &&
+    (mediaResult.mediaAccept || '').includes('audio'));
+  checkTrue('the text menu offers 插入视频 and 插入音频',
+    mediaResult.menuActs.includes('insert-video') &&
+    mediaResult.menuActs.includes('insert-audio'));
+  // The media goes AFTER the whole text block, the same rule a picture
+  // follows: the paragraph is never cut in two.
+  check('the video lands after the text block',
+    mediaResult.afterVideo, ['text', 'video']);
+  check('the sound lands after the text block too',
+    mediaResult.afterAudio, ['text', 'video', 'audio']);
+  checkTrue('the video is a player', mediaResult.hasVideoPlayer);
+  checkTrue('the sound is a player', mediaResult.hasAudioPlayer);
+  checkTrue('the video has its own controls', mediaResult.videoHasControls);
+  checkTrue('the sound has its own controls', mediaResult.audioHasControls);
+  check('the text block is not cut in two by the media',
+    mediaResult.textWhole, '那天她唱了一首歌。');
+  // The saved document names the media blocks and nothing else.
+  check('the saved document keeps the block order',
+    mediaResult.content.map(b => b.type), ['text', 'video', 'audio']);
+  checkTrue('the saved document references the movie',
+    mediaResult.content[1] && mediaResult.content[1].type === 'video' &&
+    !!mediaResult.content[1].media_id);
+  checkTrue('the saved document references the sound',
+    mediaResult.content[2] && mediaResult.content[2].type === 'audio' &&
+    !!mediaResult.content[2].media_id);
+  // Both files went up, and each kept its own type.
+  check('both media files were uploaded', mediaResult.uploadCount, 2);
+  check('the uploads kept their types',
+    mediaResult.uploadMimes.sort(), ['audio/mpeg', 'video/mp4']);
+  check('the uploads kept their names',
+    mediaResult.uploadNames.sort(), ['clip.mp4', 'song.mp3']);
+
+  // ---- 3c. The media's own menu ----------------------------------------
+  //
+  // A movie and a sound are things on the page, so they carry the same
+  // menu the pictures carry: the insertions above and below, the ways to
+  // put another file in, and the commands that act on the file itself.
+  //
+  // The media also has to PLAY. A file the user has just picked is still
+  // in the browser's hands, so the player is pointed at a blob: URL —
+  // that is what makes the movie play before it is saved.
+  console.log('\n== 媒体的右键菜单 ==');
+  const mediaMenuResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testUploads.clear();
+
+    // The previous section saved an entry, which navigated away and
+    // replaced the page. Draw the editor again before driving it.
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 60));
+
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = '那天她唱了一首歌。';
+    ta.focus();
+    ta.dispatchEvent(new Event('input'));
+
+    const mediaInput = document.getElementById('diary-media');
+    mediaInput.click = () => {
+      const file = new File([new Uint8Array([1,2,3])], 'clip.mp4', { type: 'video/mp4' });
+      Object.defineProperty(mediaInput, 'files', { value: [file], configurable: true });
+      mediaInput.dispatchEvent(new Event('change'));
+    };
+
+    // Put a movie on the page.
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-video"]');
+    await new Promise(r => setTimeout(r, 120));
+
+    const videoWrap = document.querySelector('.diary-block-video');
+    const player = videoWrap ? videoWrap.querySelector('video') : null;
+    // A picked file has no url on disk yet — the player is pointed at a
+    // blob: URL so the movie plays straight away.
+    const src = player ? (player.getAttribute('src') || '') : '';
+    const isBlob = src.startsWith('blob:');
+
+    // The blob actually points at the picked bytes: a blob url that
+    // resolves must be able to read the file back.
+    let blobReadable = false;
+    if (isBlob) {
+      try {
+        const fetched = await fetch(src);
+        blobReadable = fetched.ok && (await fetched.arrayBuffer()).byteLength === 3;
+      } catch (e) { blobReadable = false; }
+    }
+
+    // And the browser accepts the picked file AS MEDIA. The picked file
+    // here is three bytes of nonsense, so it cannot really decode — the
+    // real playback check lives in the real-backend test, which has a
+    // real movie to play.
+    const blobAsMedia = player
+      ? player.canPlayType('video/mp4')
+      : '';
+
+    // Right-click the movie.
+    const menuActs = window.__menu.open(videoWrap).map(i => i.act);
+    const menuLabels = window.__menu.items().map(i => i.label);
+
+    // 「↓ 下方插入文字」 puts a text block under the movie.
+    window.__menu.click('[data-ctx-act="media-insert-after"]');
+    await new Promise(r => setTimeout(r, 60));
+    const afterText = Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+
+    // 「↑ 上方插入文字」 puts one above it. The page was redrawn, so the
+    // movie is looked up again — the old node is off the page.
+    window.__menu.open(document.querySelector('.diary-block-video'));
+    window.__menu.click('[data-ctx-act="media-insert-before"]');
+    await new Promise(r => setTimeout(r, 60));
+    const afterTextBoth = Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+
+    return {
+      hasVideo: !!videoWrap,
+      src, isBlob, blobReadable, blobAsMedia,
+      menuActs, menuLabels,
+      afterText, afterTextBoth,
+    };
+  `);
+  checkTrue('the movie is on the page', mediaMenuResult.hasVideo);
+  // The player points at the picked file, so the movie plays before it
+  // is saved.
+  checkTrue('the player is pointed at the picked file', mediaMenuResult.isBlob,
+    mediaMenuResult.src);
+  checkTrue('the picked file is readable through that url', mediaMenuResult.blobReadable);
+  checkTrue('the browser accepts the picked file as media',
+    !!mediaMenuResult.blobAsMedia, String(mediaMenuResult.blobAsMedia));
+  // The menu carries the same insertions the pictures carry.
+  checkTrue('the media menu offers to insert a picture',
+    mediaMenuResult.menuActs.includes('media-insert-image'));
+  checkTrue('the media menu offers to insert a movie',
+    mediaMenuResult.menuActs.includes('media-insert-video'));
+  checkTrue('the media menu offers to insert a sound',
+    mediaMenuResult.menuActs.includes('media-insert-audio'));
+  checkTrue('the media menu offers a text block above',
+    mediaMenuResult.menuActs.includes('media-insert-before'));
+  checkTrue('the media menu offers a text block below',
+    mediaMenuResult.menuActs.includes('media-insert-after'));
+  checkTrue('the media menu offers to play and to copy the link',
+    mediaMenuResult.menuActs.includes('media-play') &&
+    mediaMenuResult.menuActs.includes('media-copy-link'));
+  checkTrue('the media menu offers to remove the media',
+    mediaMenuResult.menuActs.includes('media-remove'));
+  checkTrue('the media menu says 「↑ 上方插入文字」',
+    mediaMenuResult.menuLabels.includes('↑ 上方插入文字'));
+  checkTrue('the media menu says 「↓ 下方插入文字」',
+    mediaMenuResult.menuLabels.includes('↓ 下方插入文字'));
+  // The text block lands under the movie, then above it.
+  check('a text block can be inserted below the media',
+    mediaMenuResult.afterText, ['text', 'video', 'text']);
+  check('a text block can be inserted above the media',
+    mediaMenuResult.afterTextBoth, ['text', 'text', 'video', 'text']);
+
   // ---- 3b. The 保存 dialog --------------------------------------------
   //
   // The metadata the page no longer carries — the time, the cast and the
@@ -1224,7 +1466,8 @@ app.whenReady().then(async () => {
   checkTrue('right-clicking a text block opens the menu',
     menuResult.afterPress.menuOpen);
   check('the text menu carries the block actions',
-    menuResult.afterPress.acts.slice(0, 2), ['insert-image', 'delete-block']);
+    ['insert-image', 'insert-video', 'insert-audio', 'delete-block']
+      .every(a => menuResult.afterPress.acts.includes(a)), true);
   check('the text menu carries the editing commands',
     [menuResult.afterPress.hasCopy, menuResult.afterPress.hasPaste,
      menuResult.afterPress.hasSelectAll], [true, true, true]);
@@ -1265,7 +1508,9 @@ app.whenReady().then(async () => {
         { type: 'text', text: '在防波堤上坐了很久' },
         { type: 'gallery', layout: 'two', photos: [
           { photo_id: 'pc1' }, { photo_id: 'pc2' } ] },
+        { type: 'video', media_id: 'mv1' },
         { type: 'text', text: '到天黑，看远处的灯一盏一盏亮起来。' },
+        { type: 'audio', media_id: 'ma1' },
         { type: 'gallery', layout: 'grid', photos: [
           { photo_id: 'pc3' } ] },
       ]),
@@ -1345,6 +1590,13 @@ app.whenReady().then(async () => {
       // a uniform frame.
       photoFit: getComputedStyle(
         document.querySelector('.memorial-card-photo img')).objectFit,
+      // A movie and a sound inside the card are MARKS, not live players:
+      // the card is a thumbnail, and a player at that scale would be a
+      // speck of controls pulling the whole file into the list page.
+      mediaMarks: Array.from(document.querySelectorAll('.memorial-card-media'))
+        .map(el => el.dataset.mediaKind),
+      hasVideoPlayer: !!document.querySelector('.memorial-card-video video'),
+      hasAudioPlayer: !!document.querySelector('.memorial-card-audio audio'),
     };
   `);
   checkTrue('the list is a grid of cards', cardResult.grid);
@@ -1365,11 +1617,15 @@ app.whenReady().then(async () => {
   check('the card paints the entry\'s own background style',
     cardResult.sheetVar, '#77613b');
   checkTrue('the header bar has a height', cardResult.headerBg > 0);
-  // The document's blocks keep their order: text, gallery, text, gallery.
+  // The document's blocks keep their order: text, gallery, video, text,
+  // audio, gallery.
   check('the card keeps the document\'s block order',
     cardResult.blocks,
     ['memorial-card-text', 'memorial-card-gallery',
-     'memorial-card-text', 'memorial-card-gallery']);
+     'memorial-card-media memorial-card-video',
+     'memorial-card-text',
+     'memorial-card-media memorial-card-audio',
+     'memorial-card-gallery']);
   check('the card shows the text of every text block',
     cardResult.texts,
     ['在防波堤上坐了很久', '到天黑，看远处的灯一盏一盏亮起来。']);
@@ -1418,6 +1674,13 @@ app.whenReady().then(async () => {
   // A photo keeps its own shape — it is never re-cropped into a uniform
   // frame, which is what made the card look like a pile of pieces.
   check('a photo keeps its own aspect ratio', cardResult.photoFit, 'fill');
+  // A movie and a sound inside the card are marks, not live players: the
+  // card is a thumbnail, and a player at that scale would be a speck of
+  // controls that pulled the whole file into the list page.
+  check('the card marks the movie and the sound',
+    cardResult.mediaMarks, ['video', 'audio']);
+  checkTrue('the card carries no live player',
+    !cardResult.hasVideoPlayer && !cardResult.hasAudioPlayer);
 
   // ---- 12. A long entry is cut off, not shrunk ----------------------
   //

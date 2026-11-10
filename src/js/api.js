@@ -55,6 +55,11 @@ export const api = {
       upload: (eventId, payload)=> M.memorialEvents.photos.upload(eventId, payload),
       delete: (photoId)         => M.memorialEvents.photos.delete(photoId),
       read:   (photoId)         => M.memorialEvents.photos.read(photoId),
+      // A video or an audio attachment: { url, mime, size_bytes,
+      // original_name }. The url is a file: URL the <video>/<audio>
+      // element can load — a movie is far too big to base64 into a data
+      // URL the way a picture is.
+      readMedia: (mediaId)      => M.memorialEvents.photos.readMedia(mediaId),
     },
   },
   // 抽卡人生 — the weekly card draw. The official deck lives in

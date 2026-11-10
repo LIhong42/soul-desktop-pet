@@ -162,6 +162,20 @@ function runFfmpeg({ args, cancelCheck }) {
 
 // ---- Main entry ---------------------------------------------------------
 
+// Is this row a picture? A movie and a sound live in the same table as
+// the pictures, and ffmpeg is told to read each photo as an image. The
+// mime column is the authority; the extension is the fallback for a row
+// that never had one.
+const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic', '.heif']);
+
+function isPicture(p) {
+  if (!p) return false;
+  if (p.mime) return String(p.mime).toLowerCase().startsWith('image/');
+  return IMAGE_EXT.has(path.extname(String(p.relative_path || '')).toLowerCase());
+}
+
+// Build the video album.
+//
 //   events:       Array<MemorialEventRowWithPhotos>
 //   outPath:      string
 //   options:      {
@@ -183,17 +197,24 @@ async function buildVideo({ events, outPath, options = {} }) {
   };
 
   // Resolve photo paths and count HEIC.
+  //
+  // A movie and a sound live in the same table as the pictures. ffmpeg
+  // here is told to read each photo as an IMAGE, so a video row would
+  // break the encode — the pictures are kept and the rest dropped.
   const photoRoot = path.join(app.getPath('appData'), 'SoulDesktopPet', 'photos');
   let embeddable = 0;
   let heicCount = 0;
   for (const ev of events) {
-    ev.photos = Array.isArray(ev.photos) ? ev.photos : [];
-    for (const p of ev.photos) {
+    const rows = Array.isArray(ev.photos) ? ev.photos : [];
+    ev.photos = [];
+    for (const p of rows) {
       const ext = path.extname(String(p.relative_path || '')).toLowerCase();
       p.full_path = path.join(photoRoot, ev.id, path.basename(p.relative_path || ''));
       p._is_heic = ext === '.heic' || ext === '.heif' || (p.mime && /heic|heif/i.test(p.mime));
+      if (!isPicture(p)) continue;
       if (p._is_heic) heicCount += 1;
       else if (fs.existsSync(p.full_path)) embeddable += 1;
+      ev.photos.push(p);
     }
     ev.photos.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
   }

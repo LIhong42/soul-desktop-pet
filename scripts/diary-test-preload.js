@@ -40,17 +40,28 @@ const mem = {
     list: async () => [],
     // The real handler returns the stored photo row. The test needs a
     // real id so the editor can rewrite the document's temp ids.
-    upload: async () => {
+    upload: async (eventId, payload) => {
+      const mime = (payload && payload.mime) || 'image/jpeg';
+      const filename = (payload && payload.filename) || 'photo.jpg';
       const photo = {
         id: 'p' + (nextPhotoId++),
-        original_name: 'photo.jpg',
-        mime: 'image/jpeg',
+        original_name: filename,
+        mime,
       };
       uploads.push(photo);
       return photo;
     },
     delete: async () => true,
     read: async (photoId) => ({ data_url: photoBytes[photoId] || '' }),
+    // A movie or a sound. The real handler hands back a `file:` URL the
+    // <video>/<audio> element can load; the fake hands back a marker so
+    // the test can tell the media block apart from an empty one.
+    readMedia: async (mediaId) => ({
+      url: 'file:///fake/' + mediaId,
+      mime: 'video/mp4',
+      size_bytes: 0,
+      original_name: 'clip.mp4',
+    }),
   },
 };
 

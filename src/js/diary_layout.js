@@ -7,6 +7,8 @@
 //   { type: 'text',   text: '…' }
 //   { type: 'gallery', layout: 'one' | 'two' | 'three' | 'grid',
 //     photos: [{ photo_id: '…', width: 0.5 }] }
+//   { type: 'video',  media_id: '…', poster_id: '…'|null, width: 1 }
+//   { type: 'audio',  media_id: '…' }
 //
 // The layout of a gallery says how many photos sit on a row:
 //
@@ -137,6 +139,20 @@ function normalizeBlocks(parsed) {
         layout: 'one',
         photos: [{ photo_id: b.photo_id }],
       });
+    } else if (b.type === 'video' || b.type === 'audio') {
+      const mediaId = typeof b.media_id === 'string' ? b.media_id.trim() : '';
+      if (!mediaId) continue;
+      const block = { type: b.type, media_id: mediaId };
+      // A video may carry a poster frame — the picture that stands in for
+      // it before the user presses play.
+      if (b.type === 'video') {
+        const posterId = typeof b.poster_id === 'string' ? b.poster_id.trim() : '';
+        if (posterId) block.poster_id = posterId;
+        if (typeof b.width === 'number' && isFinite(b.width) && b.width > 0) {
+          block.width = Math.min(1, Math.max(0.06, b.width));
+        }
+      }
+      blocks.push(block);
     }
   }
   return blocks;

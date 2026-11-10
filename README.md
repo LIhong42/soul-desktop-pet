@@ -35,9 +35,11 @@
 ### 📷 Memory Events & Album Export
 - "Memory events" record moments on a timeline — in a **diary-style editor**, where the title, the body and the photos all live on one sheet of paper. Write first, save second;
 - **Text and images interleave**: right-click a text block to insert a picture and it lands *after* that block. Several pictures can form a **gallery**, whose layout switches in one click between **one / two / three / grid**. Drag a picture to reorder it, drag its bottom-right handle to resize it;
+- **Video and audio too**: right-click a text block to insert a movie or a sound, and it lands *after* that block as well. The movie plays on the page, the sound is a bar with a play button — and both play **as soon as they are picked**, before you save;
+- **Right-clicking the media** is as handy as right-clicking a picture: insert a picture / movie / sound, insert a text block above or below, play / pause, copy the link, remove it;
 - The metadata — the time, the linked contacts and the "was this the first time?" flag — is asked for when you save;
 - **The list is a wall of cards**: every memory shrinks to one card, which *is* that diary page in miniature, with search and **time / contact / kind** filters;
-- One-click export to a **PDF album** or an **MP4 video album**, with multiple templates and a live WYSIWYG preview. An **annual album** gathers all the memories of a given year.
+- One-click export to a **PDF album** or an **MP4 video album**, with multiple templates and a live WYSIWYG preview. An **annual album** gathers all the memories of a given year. The album is a book of **pictures** — the movies and sounds stay in the entry.
 
 ### 🃏 Card Draw Life & Streak Wall
 - **Draw one card a week** from the built-in card library — and you can add your own cards too; both live in the same pool;
@@ -140,7 +142,7 @@ On startup you get the pet and a PIN prompt (default `8888`). Change it under **
 Go to **Contacts → New contact**, fill in a name and a relationship, pick or upload an avatar. The contact's detail page carries a row of tabs: **概览 / 喜好 / 忌讳 / 礼物**, and the overview holds that person's important dates and memory events.
 
 ### 3. Write a diary entry
-**Memory Events → New** opens the diary page — write a title, pick a paper style, then write. To insert a picture, **right-click** that paragraph and choose "插入图片". Several pictures can form a gallery: **right-click** the gallery to switch its layout, drag a picture to reorder it, and drag the bottom-right handle to resize it. Press **保存** → a dialog asks for the **time**, the **linked contacts** and whether it was **the first time**; confirm and the entry is stored, ready to export as a PDF / MP4 album.
+**Memory Events → New** opens the diary page — write a title, pick a paper style, then write. To insert a picture, a video or an audio, **right-click** that paragraph and choose "插入图片" / "插入视频" / "插入音频". Several pictures can form a gallery: **right-click** the gallery to switch its layout, drag a picture to reorder it, and drag the bottom-right handle to resize it. A video plays on the page itself; an audio is a bar with a play button — and both play as soon as they are picked, no need to save first. **Right-click** the media itself to insert a picture / movie / sound, insert a text block above or below, play / pause, copy its link, or remove it. Press **保存** → a dialog asks for the **time**, the **linked contacts** and whether it was **the first time**; confirm and the entry is stored, ready to export as a PDF / MP4 album.
 
 ### 4. Wait for pet reminders
 The pet shows an unread reminder badge and pops up when the time comes. **Reminders can be dismissed at any time** — click the pet or the bubble above its head, **right-click the pet → 🔕 关闭提醒**, or click the **桌宠提醒** badge in the top bar. Dismissing only stops the nagging for today; the entry stays on the **Today** page, marked as done.

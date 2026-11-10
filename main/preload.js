@@ -68,6 +68,10 @@ contextBridge.exposeInMainWorld('mp', {
       // post-EXIF-orientation. Used by the album editor to keep cover-fit
       // math consistent with the PDF renderer.
       meta:   (photoId)         => ipcRenderer.invoke('memorial_events:photo_meta', photoId),
+      // A video or an audio attachment. Returns { url, mime, size_bytes,
+      // original_name } — the `url` is a file: URL the <video>/<audio>
+      // element can load directly (the CSP allows file: for media).
+      readMedia: (mediaId)      => ipcRenderer.invoke('memorial_events:media_read', mediaId),
     },
   },
   // 抽卡人生 — one random card per week, drawn from

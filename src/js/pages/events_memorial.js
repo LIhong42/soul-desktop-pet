@@ -812,7 +812,42 @@ function cardBlockHtml(b) {
   if (b.type === 'gallery') {
     return cardGalleryHtml(b);
   }
+  if (b.type === 'video') {
+    return cardMediaHtml(b, 'video');
+  }
+  if (b.type === 'audio') {
+    return cardMediaHtml(b, 'audio');
+  }
   return '';
+}
+
+// A movie or a sound inside the card.
+//
+// The card is a thumbnail of the page, drawn at the page's own scale — a
+// live player at that size would be a speck of controls and would pull
+// the whole file into the list page. So the card shows a MARK: a video
+// gets a frame with a play triangle, an audio gets a bar with a speaker.
+// The movie itself plays when the entry is opened.
+function cardMediaHtml(b, kind) {
+  const label = kind === 'video' ? '视频' : '音频';
+  if (kind === 'audio') {
+    return `
+      <div class="memorial-card-media memorial-card-audio" data-media-kind="audio">
+        <span class="memorial-card-media-icon" aria-hidden="true">♪</span>
+        <span class="memorial-card-media-label">${label}</span>
+      </div>
+    `;
+  }
+  const posterId = b.poster_id || '';
+  const posterUrl = posterId ? memorialPhotoUrl(posterId) : '';
+  return `
+    <div class="memorial-card-media memorial-card-video" data-media-kind="video"
+         ${posterId ? `data-photo-id="${escapeHtml(posterId)}"` : ''}>
+      ${posterUrl ? `<img class="memorial-card-media-poster" src="${escapeHtml(posterUrl)}" alt="" loading="lazy"/>` : ''}
+      <span class="memorial-card-media-icon" aria-hidden="true">▶</span>
+      <span class="memorial-card-media-label">${label}</span>
+    </div>
+  `;
 }
 
 // A gallery inside the card: the photos sit in a wrapping row, each one

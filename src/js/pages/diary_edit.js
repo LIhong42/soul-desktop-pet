@@ -106,6 +106,10 @@ const pageState = {
   // { file, tempId }. A gallery photo referring to a tempId is rewritten
   // to the real photo id once the upload succeeds.
   pendingPhotos: [],
+  // A movie or a sound the user picked but that isn't uploaded yet. Each
+  // entry is { file, tempId, kind }. A media block referring to a tempId
+  // is rewritten to the real media id once the upload succeeds.
+  pendingMedia: [],
   existingPhotos: [],
   returnTo: MEMORIAL_LIST_ROUTE,
   // The 抽卡人生 card this entry was started from (null for every entry
@@ -300,6 +304,8 @@ function openTextMenu(block, e) {
     y: e.clientY,
     items: [
       { act: 'insert-image', label: '插入图片' },
+      { act: 'insert-video', label: '插入视频' },
+      { act: 'insert-audio', label: '插入音频' },
       { act: 'delete-block', label: '删除此段', danger: true },
       { sep: true },
       { row: [
@@ -322,6 +328,22 @@ function handleTextMenuAction(block, act, value, sel) {
       // user wrote stay one unbroken piece.
       const fileInput = document.getElementById('diary-photos');
       pendingInsertFor = block;
+      ta.focus();
+      if (fileInput) fileInput.click();
+      break;
+    }
+    case 'insert-video': {
+      // A movie goes in after the whole text block too, for the same
+      // reason a picture does.
+      const fileInput = document.getElementById('diary-media');
+      pendingMediaFor = { block, kind: 'video' };
+      ta.focus();
+      if (fileInput) fileInput.click();
+      break;
+    }
+    case 'insert-audio': {
+      const fileInput = document.getElementById('diary-media');
+      pendingMediaFor = { block, kind: 'audio' };
       ta.focus();
       if (fileInput) fileInput.click();
       break;
@@ -782,15 +804,268 @@ function removeGalleryPhoto(block, photo) {
 
 // Delete the underlying photo file — otherwise it would linger on disk
 // with no reference to it.
+//
+// A movie or a sound is deleted the same way: its file lives in the same
+// place a picture's does, and a file the user has not saved yet is only
+// dropped from the pending list.
 function deletePhoto(photoId) {
   const pending = pageState.pendingPhotos.find((p) => p.tempId === photoId);
   if (pending) {
     pageState.pendingPhotos = pageState.pendingPhotos.filter((p) => p.tempId !== photoId);
     return;
   }
+  const pendingMedia = pageState.pendingMedia.find((m) => m.tempId === photoId);
+  if (pendingMedia) {
+    pageState.pendingMedia = pageState.pendingMedia.filter((m) => m.tempId !== photoId);
+    return;
+  }
   api.memorialEvents.photos.delete(photoId)
     .then(() => invalidatePhotoDataUrl(photoId))
     .catch((e) => console.error('photo delete failed:', e));
+}
+
+// ---- Media blocks --------------------------------------------------------
+//
+// A VIDEO and an AUDIO are the other two things the user can put into the
+// writing, beside the words and the pictures.
+//
+// They are not galleries: a gallery holds any number of pictures laid out
+// in rows, but a movie is one file that plays, and a sound is one file
+// that plays. So each is a block of its own:
+//
+//   { type: 'video', media_id, poster_id, width }
+//   { type: 'audio', media_id }
+//
+// The file itself lives in the same `memorial_event_photos` table as the
+// pictures — the row's `mime` says which it is — so deleting the entry
+// takes the movie with it, and the file lands on disk in the same place.
+//
+// The bytes are NOT read into a data URL the way a picture's are. A movie
+// is tens of megabytes: base64 would grow it by a third and push it
+// through the IPC as a string. Instead the <video>/<audio> element is
+// pointed straight at the file on disk, which the CSP allows for media.
+
+// The biggest movie or sound the editor will upload. A picture's ceiling
+// is 20MB; a movie is allowed more room, but not an endless amount — a
+// two-gigabyte video would stall the save and fill the disk.
+const MAX_MEDIA_BYTES = 200 * 1024 * 1024;
+
+// Build a video block. `mediaId` is a saved media id or a pending-upload
+// temp id; `width` is the share of the page's width the player takes.
+function makeVideoBlock(mediaId, name, width) {
+  const block = {
+    type: 'video',
+    mediaId,
+    name: name || '',
+    width: (typeof width === 'number' && isFinite(width) && width > 0) ? width : null,
+    posterId: null,
+    el: null,
+  };
+  buildMediaEl(block);
+  return block;
+}
+
+// Build an audio block. A sound has no picture and no size of its own —
+// it is a bar with a play button on it.
+function makeAudioBlock(mediaId, name) {
+  const block = {
+    type: 'audio',
+    mediaId,
+    name: name || '',
+    el: null,
+  };
+  buildMediaEl(block);
+  return block;
+}
+
+// Build the block's DOM. The element the media plays in is created
+// empty; its `src` is filled in once the file's url is known.
+function buildMediaEl(block) {
+  const wrap = document.createElement(block.type === 'video' ? 'figure' : 'div');
+  wrap.className = block.type === 'video'
+    ? 'diary-block-video'
+    : 'diary-block-audio';
+
+  const player = document.createElement(block.type === 'video' ? 'video' : 'audio');
+  player.className = 'diary-media-player';
+  player.controls = true;
+  // `metadata` — the browser fetches just enough to know the length, not
+  // the whole file. It is what lets the player show how long the sound
+  // is, so the user knows what they are about to press. `none` would
+  // leave the bar with no duration and no state until the first press,
+  // and the first press would then have to wait for the whole file.
+  player.preload = 'metadata';
+  if (block.type === 'video') {
+    player.playsInline = true;
+  }
+  wrap.appendChild(player);
+
+  // The name of the file, so the reader knows what they are looking at
+  // even before the media has loaded.
+  const caption = document.createElement('div');
+  caption.className = 'diary-media-caption';
+  caption.textContent = block.name || '';
+  wrap.appendChild(caption);
+
+  // Right-clicking the block opens its menu.
+  wrap.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openMediaMenu(block, e);
+  });
+
+  block.el = wrap;
+  block.playerEl = player;
+  block.captionEl = caption;
+  return wrap;
+}
+
+// The block's menu.
+//
+// A media block is a thing of its own on the page, so its menu offers the
+// same things the other blocks offer — the picture and the text
+// insertions above and below it, and the ways to get a picture, a movie
+// or a sound in — plus the one thing that belongs to a media block alone:
+// removing it, and the commands that act on the file itself.
+//
+// The editing commands the browser's own menu would have offered (剪切 /
+// 复制 / 粘贴 / 全选) make no sense here: there is no text to cut. What
+// does make sense is 复制链接 — the file's location — and 播放 / 暂停,
+// which is the same thing the player's own button does but reachable
+// without aiming at it.
+function openMediaMenu(block, e) {
+  const playing = !!(block.playerEl && !block.playerEl.paused);
+
+  openContextMenu({
+    x: e.clientX,
+    y: e.clientY,
+    items: [
+      { act: 'media-insert-image', label: '插入图片' },
+      { act: 'media-insert-video', label: '插入视频' },
+      { act: 'media-insert-audio', label: '插入音频' },
+      { sep: true },
+      { act: 'media-insert-before', label: '↑ 上方插入文字' },
+      { act: 'media-insert-after', label: '↓ 下方插入文字' },
+      { sep: true },
+      { row: [
+        { act: 'media-play', label: playing ? '暂停' : '播放' },
+        { act: 'media-copy-link', label: '复制链接' },
+      ]},
+      { act: 'media-remove', label: '删除这段媒体', danger: true },
+    ],
+    onAction: (act) => handleMediaMenuAction(block, act),
+  });
+}
+
+// Run the action the user picked in a media block's menu.
+function handleMediaMenuAction(block, act) {
+  switch (act) {
+    case 'media-insert-image': {
+      // The picture goes in after the media block, the same way a
+      // picture goes after a text block.
+      pendingInsertFor = null;
+      pendingGalleryAfter = block;
+      const fileInput = document.getElementById('diary-photos');
+      if (fileInput) fileInput.click();
+      break;
+    }
+    case 'media-insert-video':
+    case 'media-insert-audio': {
+      const kind = act === 'media-insert-video' ? 'video' : 'audio';
+      pendingMediaFor = { block, kind };
+      const fileInput = document.getElementById('diary-media');
+      if (fileInput) fileInput.click();
+      break;
+    }
+    case 'media-insert-before': {
+      const i = pageState.blocks.indexOf(block);
+      if (i >= 0) insertBlock(i, makeTextBlock(''));
+      break;
+    }
+    case 'media-insert-after': {
+      const i = pageState.blocks.indexOf(block);
+      if (i >= 0) insertBlock(i + 1, makeTextBlock(''));
+      break;
+    }
+    case 'media-play': {
+      const player = block.playerEl;
+      if (!player) break;
+      if (player.paused) {
+        player.play().catch((err) => console.error('media play failed:', err));
+      } else {
+        player.pause();
+      }
+      break;
+    }
+    case 'media-copy-link': {
+      copyMediaLink(block);
+      break;
+    }
+    case 'media-remove': {
+      removeMediaBlock(block);
+      break;
+    }
+  }
+}
+
+// Copy the media's link to the clipboard — the file's place on disk.
+//
+// A pending file has no link yet: it lives in the browser until it is
+// uploaded, so there is nothing to copy.
+async function copyMediaLink(block) {
+  if (!block.mediaId || String(block.mediaId).startsWith('pending-')) {
+    toast('还没有保存，暂无链接');
+    return;
+  }
+  const url = await loadMediaUrl(block.mediaId);
+  if (!url) {
+    toast('复制失败：找不到文件');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('链接已复制');
+  } catch (e) {
+    toast('复制失败');
+  }
+}
+
+// Remove a media block. The file behind it is deleted too — otherwise it
+// would linger on disk with no reference to it.
+function removeMediaBlock(block) {
+  const i = pageState.blocks.indexOf(block);
+  if (i < 0) return;
+  deletePhoto(block.mediaId);
+  pageState.blocks.splice(i, 1);
+  renderBlocks();
+}
+
+// Fill the player's source once the file's url is known.
+//
+// A pending file has no url on the server yet: it is read straight from
+// the picked File, which is a `blob:` URL — and the CSP allows blob: under
+// media-src, so the movie plays before it is saved. Once the file is
+// uploaded, the saved `file:` URL takes its place.
+function setMediaSource(block, url) {
+  const player = block.playerEl;
+  if (!player) return;
+  if (!url) {
+    player.removeAttribute('src');
+    return;
+  }
+  if (player.getAttribute('src') !== url) player.setAttribute('src', url);
+}
+
+// Read a media file's url out of the main process. A saved file comes
+// back as a `file:` URL the <video>/<audio> can load directly.
+async function loadMediaUrl(mediaId) {
+  if (!mediaId) return '';
+  try {
+    const r = await api.memorialEvents.photos.readMedia(mediaId);
+    return (r && r.url) || '';
+  } catch (e) {
+    console.error('media read failed:', e);
+    return '';
+  }
 }
 
 // Read a picked file into a data URL so it can be shown in an <img>.
@@ -816,9 +1091,12 @@ function removeBlock(index) {
   const block = pageState.blocks[index];
   if (!block) return;
   // Deleting a gallery also deletes the photos it holds — otherwise the
-  // files would linger on disk with no reference to them.
+  // files would linger on disk with no reference to them. The same goes
+  // for a movie or a sound.
   if (block.type === 'gallery') {
     for (const photo of block.photos.slice()) deletePhoto(photo.photoId);
+  } else if (block.type === 'video' || block.type === 'audio') {
+    deletePhoto(block.mediaId);
   }
   pageState.blocks.splice(index, 1);
   renderBlocks();
@@ -840,8 +1118,11 @@ function renderBlocks() {
       // The text block is just the text: its controls live in the
       // right-click menu (see openTextMenu).
       wrap.appendChild(block.el);
-    } else {
+    } else if (block.type === 'gallery') {
       syncGalleryEl(block);
+      wrap.appendChild(block.el);
+    } else {
+      // A media block is already built: its player holds the file's url.
       wrap.appendChild(block.el);
     }
     host.appendChild(wrap);
@@ -919,6 +1200,7 @@ export async function render(args, params) {
   pageState.eventId = isNew ? null : args.id;
   pageState.selectedContactIds = new Set();
   pageState.pendingPhotos = [];
+  pageState.pendingMedia = [];
   pageState.blocks = [];
   pageState.existingPhotos = [];
   // The previous visit's popover listeners belong to a picker that is
@@ -929,6 +1211,8 @@ export async function render(args, params) {
   // next file pick to the wrong place.
   pendingInsertFor = null;
   pendingGalleryFor = null;
+  pendingGalleryAfter = null;
+  pendingMediaFor = null;
   // The back link and the post-save navigation follow the page the user
   // actually came from; the memorial list is the fallback.
   pageState.returnTo = getReferrerPath() || MEMORIAL_LIST_ROUTE;
@@ -1073,6 +1357,11 @@ export async function render(args, params) {
                own — the picture is always added where the user is
                working. -->
           <input type="file" id="diary-photos" accept="image/*" multiple/>
+          <!-- The picker for a movie or a sound. It is separate from the
+               picture picker because the two accept different files, and
+               the media block it fills is a player rather than a
+               picture. -->
+          <input type="file" id="diary-media" accept="video/*,audio/*"/>
         </div>
         <!-- The decorative strip at the bottom of the page. It is a layer
              of its own, BELOW the body: the body grows with the text and
@@ -1106,9 +1395,10 @@ export async function render(args, params) {
         <section class="card diary-side-card diary-help-card">
           <h2>编辑规则</h2>
           <ul class="diary-help-list">
-            <li><b>右键文字</b>：插入图片、删除此段、剪切 / 复制 / 粘贴</li>
+            <li><b>右键文字</b>：插入图片 / 视频 / 音频、删除此段、剪切 / 复制 / 粘贴</li>
             <li><b>右键图组</b>：单图 / 双图 / 三图 / 网格、加图、上下插入文字</li>
             <li><b>右键某张图</b>：删除这张图片</li>
+            <li><b>右键视频 / 音频</b>：插入图片 / 视频 / 音频、上下插入文字、播放 / 暂停、复制链接、删除这段媒体</li>
             <li><b>拖动图片</b>换顺序，<b>拖右下角手柄</b>改大小</li>
           </ul>
         </section>
@@ -1121,6 +1411,7 @@ export async function render(args, params) {
 
   wireThemePicker();
   wirePhotoInput();
+  wireMediaInput();
   wireDateInputs(app);
 
   document.getElementById('save').onclick = onSave;
@@ -1148,6 +1439,9 @@ function loadBlocks(ev) {
       } else if (b.type === 'gallery') {
         const gallery = makeGalleryBlock(loadGalleryPhotos(b), b.layout);
         if (gallery.photos.length) blocks.push(gallery);
+      } else if (b.type === 'video' || b.type === 'audio') {
+        const media = loadMediaBlock(b, ev.photos || []);
+        if (media) blocks.push(media);
       }
     }
   } else if (ev.notes) {
@@ -1172,6 +1466,30 @@ function loadGalleryPhotos(b) {
     ));
   }
   return photos;
+}
+
+// Build a media block from a saved one, and point its player at the file
+// on disk.
+//
+// The url comes from the main process: a movie is too big to carry as a
+// data URL, so the <video> is pointed straight at the file, which the
+// CSP allows for media.
+function loadMediaBlock(b, eventPhotos) {
+  const mediaId = b.media_id;
+  if (!mediaId) return null;
+  const meta = (eventPhotos || []).find((x) => x && x.id === mediaId);
+  const name = meta ? (meta.original_name || '') : '';
+  const block = b.type === 'audio'
+    ? makeAudioBlock(mediaId, name)
+    : makeVideoBlock(mediaId, name, typeof b.width === 'number' ? b.width : null);
+  // The player's source arrives a tick later — the url is fetched from
+  // the main process.
+  loadMediaUrl(mediaId).then((url) => {
+    // The page may have been re-rendered while the url was on its way.
+    if (!block.playerEl || !block.playerEl.isConnected) return;
+    setMediaSource(block, url);
+  });
+  return block;
 }
 
 // Repaint the writing surface when the user picks a different background.
@@ -1258,6 +1576,16 @@ let pendingInsertFor = null;
 // pick joins that gallery instead of starting a new one.
 let pendingGalleryFor = null;
 
+// The block whose 「插入图片」 action was picked, when the block is not a
+// text block. When set, the next file pick becomes a gallery right after
+// that block.
+let pendingGalleryAfter = null;
+
+// The block whose 「插入视频」 / 「插入音频」 action was picked, and which
+// kind of media it was. When set, the next file pick becomes a media
+// block right after that block.
+let pendingMediaFor = null;
+
 // The shared file picker. It is opened by the 「插入图片」 action on a text
 // block and by the "+ 加图" action on a gallery, so the picture always
 // lands where the user is working.
@@ -1290,6 +1618,16 @@ function wirePhotoInput() {
       return;
     }
 
+    // 「插入图片」 on a media block: the gallery goes right after it.
+    if (pendingGalleryAfter) {
+      const target = pendingGalleryAfter;
+      pendingGalleryAfter = null;
+      const photos = await makePendingPhotos(files);
+      const i = pageState.blocks.indexOf(target);
+      if (i >= 0) insertBlock(i + 1, makeGalleryBlock(photos, null));
+      return;
+    }
+
     // No target: the picker was opened some other way. Put the gallery
     // at the end of the document.
     const photos = await makePendingPhotos(files);
@@ -1301,6 +1639,99 @@ function wirePhotoInput() {
 async function addPhotosToGallery(block, files) {
   const photos = await makePendingPhotos(files);
   for (const photo of photos) block.photos.push(photo);
+  renderBlocks();
+}
+
+// ---- Media picker --------------------------------------------------------
+
+// The picker for a movie or a sound. It is separate from the picture
+// picker because the two accept different files: the picture picker takes
+// images, this one takes video (or audio) depending on what the user
+// asked for.
+function wireMediaInput() {
+  const fileInput = document.getElementById('diary-media');
+  if (!fileInput) return;
+
+  fileInput.onchange = async () => {
+    const files = Array.from(fileInput.files || []);
+    // Reset the input so picking the same file twice in a row still
+    // fires a change event.
+    fileInput.value = '';
+    if (!files.length) return;
+
+    // 「插入视频」 / 「插入音频」 on a text or a media block: the media
+    // goes right after that block, for the same reason a picture does.
+    if (pendingMediaFor) {
+      const target = pendingMediaFor;
+      pendingMediaFor = null;
+      await insertMediaAfterTextBlock(target.block, files[0], target.kind);
+      return;
+    }
+
+    // No target: the picker was opened some other way. Put the media at
+    // the end of the document.
+    await insertMediaAfterTextBlock(null, files[0], fileKindFor(files[0]));
+  };
+}
+
+// What kind of media a picked file is. The picker already filtered by
+// type, but a user can force a different type through the OS dialog, so
+// the file's own mime decides.
+function fileKindFor(file) {
+  const type = (file && file.type) || '';
+  if (type.startsWith('audio/')) return 'audio';
+  return 'video';
+}
+
+// Insert a media block right after another block. A text block is NOT
+// split — the movie goes after the whole paragraph, so the words the user
+// wrote stay one unbroken piece, the same rule a picture follows.
+//
+// The media lands after the anchor AND after any media already
+// inserted there, so two attachments picked one after the other keep the
+// order they were picked in. (Straight after the anchor, the second
+// one would jump in front of the first.)
+//
+// Only the first picked file is taken: a movie is a thing of its own,
+// not a row of things. Picking several at once takes the first one and
+// leaves the rest alone.
+//
+// The anchor is whichever block the user acted on — a text block or a
+// media block. The new media lands right after it.
+async function insertMediaAfterTextBlock(anchor, file, kind) {
+  if (!file) return;
+  const type = kind === 'audio' ? 'audio' : 'video';
+
+  // The file is registered as a pending upload, the same way a picture
+  // is: the block refers to it by a temp id until the upload succeeds.
+  const tempId = 'pending-media-' + Date.now() + '-' + (++blockSeq);
+  pageState.pendingMedia.push({ file, tempId, kind: type });
+
+  const block = type === 'audio'
+    ? makeAudioBlock(tempId, file.name)
+    : makeVideoBlock(tempId, file.name, null);
+
+  // Point the player at the file the user just picked, so the movie
+  // plays straight away — the user should not have to save first to see
+  // what they attached. A picked file lives in the browser's hands, and
+  // the only way to point a player at it is a blob: URL.
+  setMediaSource(block, URL.createObjectURL(file));
+
+  if (anchor) {
+    const idx = pageState.blocks.indexOf(anchor);
+    if (idx < 0) return;
+    // Walk past the media that already follows the anchor, so the new
+    // one goes behind them rather than in front.
+    let at = idx + 1;
+    while (at < pageState.blocks.length) {
+      const next = pageState.blocks[at];
+      if (next.type !== 'video' && next.type !== 'audio') break;
+      at += 1;
+    }
+    pageState.blocks.splice(at, 0, block);
+  } else {
+    pageState.blocks.push(block);
+  }
   renderBlocks();
 }
 
@@ -1326,6 +1757,16 @@ function serializeBlocks() {
       if (photos.length) {
         out.push({ type: 'gallery', layout: block.layout, photos });
       }
+    } else if (block.type === 'video') {
+      const item = { type: 'video', media_id: block.mediaId };
+      // Only a size the user set by hand is stored — a video that still
+      // takes the whole width needs no width of its own.
+      if (typeof block.width === 'number') {
+        item.width = Math.round(block.width * 1000) / 1000;
+      }
+      out.push(item);
+    } else if (block.type === 'audio') {
+      out.push({ type: 'audio', media_id: block.mediaId });
     }
   }
   return out;
@@ -1472,8 +1913,56 @@ async function onSave() {
     }
   }
 
+  // Upload the newly picked movies and sounds, the same way the photos
+  // go up: each file is registered as a row in `memorial_event_photos`,
+  // and the document is rewritten so the pending temp ids become the real
+  // media ids.
+  const pendingMedia = pageState.pendingMedia.slice();
+  if (pendingMedia.length) {
+    let okCount = 0;
+    let failCount = 0;
+    for (const m of pendingMedia) {
+      // A movie is a lot bigger than a picture, so it gets a roomier
+      // ceiling — but not an endless one.
+      if (m.file.size > MAX_MEDIA_BYTES) {
+        toast(`${m.kind === 'audio' ? '音频' : '视频'} ${m.file.name} 超过 ${Math.round(MAX_MEDIA_BYTES / 1024 / 1024)}MB，已跳过`);
+        failCount += 1;
+        continue;
+      }
+      try {
+        const ab = await m.file.arrayBuffer();
+        const media = await api.memorialEvents.photos.upload(saved.id, {
+          filename: m.file.name,
+          mime: m.file.type,
+          bytes: ab,
+        });
+        // Point the block at the saved media.
+        for (const block of pageState.blocks) {
+          if (block.type !== 'video' && block.type !== 'audio') continue;
+          if (block.mediaId === m.tempId) block.mediaId = media.id;
+        }
+        okCount += 1;
+      } catch (e) {
+        console.error('media upload failed:', e);
+        failCount += 1;
+      }
+    }
+    if (failCount > 0 && okCount === 0) toast(`媒体上传失败（${failCount} 个）`);
+    else if (failCount > 0) toast(`已上传 ${okCount} 个，${failCount} 个失败`);
+
+    // Write the document again with the real media ids.
+    if (okCount > 0) {
+      try {
+        await api.memorialEvents.update(saved.id, { content: serializeBlocks() });
+      } catch (e) {
+        toast('媒体保存失败：' + ((e && e.message) || e));
+      }
+    }
+  }
+
   // The pending photos are uploaded now, so the preview list is done.
   pageState.pendingPhotos = [];
+  pageState.pendingMedia = [];
 
   toast(pageState.isNew ? '已保存' : '已更新');
   navigate(pageState.returnTo);
@@ -1488,6 +1977,7 @@ async function onDelete() {
     return;
   }
   pageState.pendingPhotos = [];
+  pageState.pendingMedia = [];
   toast('已删除');
   navigate(pageState.returnTo);
 }

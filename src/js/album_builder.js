@@ -37,12 +37,33 @@ function ymd(s) {
 
 function isEmbeddable(photo) {
   if (!photo) return false;
+  if (!isImageRow(photo)) return false;
   if (photo._is_heic) return false;
   if (photo._is_heif) return false;
   if (photo.mime && /heic|heif/i.test(photo.mime)) return false;
   // We don't have fs here; trust the caller's pre-filter. The PDF renderer
   // additionally does fs.existsSync + catches image() errors.
   return true;
+}
+
+// Is this row a picture? A movie and a sound live in the same table as
+// the pictures — the `mime` column says which is which — and the album
+// lays out pictures only. The extension is the fallback for rows whose
+// mime was never written.
+const IMAGE_MIME_BY_EXT = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+  '.heic': 'image/heic', '.heif': 'image/heic',
+};
+
+export function isImageRow(photo) {
+  if (!photo) return false;
+  if (photo.mime) return String(photo.mime).toLowerCase().startsWith('image/');
+  const name = String(photo.relative_path || photo.original_name || '');
+  const dot = name.lastIndexOf('.');
+  if (dot < 0) return false;
+  const mime = IMAGE_MIME_BY_EXT[name.slice(dot).toLowerCase()];
+  return !!mime;
 }
 
 // Build a human-readable caption from an event row. We bias toward shorter
@@ -167,6 +188,9 @@ export function buildAlbumLayout(events, options = {}) {
     const photosAll = Array.isArray(ev.photos) ? ev.photos : [];
     const photos = photosAll
       .filter((p) => {
+        // A movie or a sound is not a HEIC — it is not a picture at all,
+        // so it does not belong in the "skipped" count.
+        if (!isImageRow(p)) return false;
         if (!isEmbeddable(p)) {
           heicSkipped += 1;
           return false;

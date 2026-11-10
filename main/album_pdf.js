@@ -209,8 +209,21 @@ function resolvePhoto(p) {
   return path.join(photoRoot(), p._event_id || p.eventId || '', path.basename(p.relative_path || ''));
 }
 
+// Is this row a picture? A movie and a sound live in the same table as
+// the pictures, and pdfkit can only open an image — a video row would
+// throw inside openImage(). The mime column is the authority; the
+// extension is the fallback for a row that never had one.
+const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic', '.heif']);
+
+function isPicture(p) {
+  if (!p) return false;
+  if (p.mime) return String(p.mime).toLowerCase().startsWith('image/');
+  return IMAGE_EXT.has(path.extname(String(p.relative_path || '')).toLowerCase());
+}
+
 function isEmbeddablePhoto(p) {
   if (!p) return false;
+  if (!isPicture(p)) return false;
   if (p._is_heic || p._is_heif) return false;
   if (p.mime && /heic|heif/i.test(p.mime)) return false;
   const fp = resolvePhoto(p);

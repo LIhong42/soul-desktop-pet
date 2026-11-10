@@ -1,4 +1,4 @@
-// main/diary_content.js — validates the diary's mixed text/image document.
+// main/diary_content.js — validates the diary's mixed text/media document.
 //
 // The diary editor writes the body of a memorial event as an ordered
 // document: a JSON array of blocks that live in the `content` column.
@@ -6,11 +6,18 @@
 //   { type: 'text',   text: '…' }
 //   { type: 'gallery', layout: 'one'|'two'|'three'|'grid',
 //     photos: [{ photo_id: '…', width: 0.5 }] }
+//   { type: 'video',  media_id: '…', poster_id: '…'|null, width: 1 }
+//   { type: 'audio',  media_id: '…' }
 //
 // A GALLERY is the multi-image insertion point: one place in the text can
 // hold any number of photos. `layout` says how many photos sit on a row,
 // and a photo's `width` is its share of the gallery's width — set when the
 // user resizes that one photo.
+//
+// A VIDEO and an AUDIO are single media files. They live in the same
+// `memorial_event_photos` table as the pictures — the row's `mime` says
+// which it is — but they get their own block types because they render
+// differently: a video is a player, an audio is a bar.
 //
 // The retired shape held a single photo per block:
 //
@@ -39,6 +46,10 @@ const DEFAULT_GALLERY_LAYOUT = 'two';
 
 // The smallest share of the gallery's width a photo may take.
 const MIN_PHOTO_WIDTH = 0.06;
+
+// The widest a video may be. A video is its own row, so it may take the
+// whole width — but not more than the page is wide.
+const MAX_VIDEO_WIDTH = 1;
 
 // Validate and canonicalize a diary document.
 //
@@ -75,6 +86,20 @@ function normDiaryContent(input) {
       if (!photos.length) continue;
       const layout = DIARY_GALLERY_LAYOUTS.has(b.layout) ? b.layout : DEFAULT_GALLERY_LAYOUT;
       blocks.push({ type: 'gallery', layout, photos });
+    } else if (b.type === 'video' || b.type === 'audio') {
+      const mediaId = typeof b.media_id === 'string' ? b.media_id.trim() : '';
+      if (!mediaId.length) continue;
+      const block = { type: b.type, media_id: mediaId };
+      // A video may carry a poster frame (a picture that stands in for it
+      // before the user presses play). An audio has no poster.
+      if (b.type === 'video') {
+        const posterId = typeof b.poster_id === 'string' ? b.poster_id.trim() : '';
+        if (posterId.length) block.poster_id = posterId;
+        if (typeof b.width === 'number' && isFinite(b.width) && b.width > 0) {
+          block.width = round3(Math.min(MAX_VIDEO_WIDTH, Math.max(MIN_PHOTO_WIDTH, b.width)));
+        }
+      }
+      blocks.push(block);
     }
   }
   if (!blocks.length) return null;

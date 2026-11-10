@@ -934,7 +934,54 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
       'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
       'image/webp': '.webp', 'image/bmp': '.bmp',
       'image/heic': '.heic', 'image/heif': '.heic',
+      'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
+      'video/x-msvideo': '.avi', 'video/mpeg': '.mpeg',
+      'audio/mpeg': '.mp3', 'audio/mp4': '.m4a', 'audio/aac': '.aac',
+      'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg',
+      'audio/webm': '.webm', 'audio/flac': '.flac',
     }[String(m).toLowerCase()] || '');
+  }
+
+  // Is this mime a video? Used to tell the renderer what to build out of
+  // a picked file, and to keep the album export (which only knows how to
+  // lay out pictures) from choking on a movie.
+  function isVideoMime(m) {
+    return !!m && String(m).toLowerCase().startsWith('video/');
+  }
+  function isAudioMime(m) {
+    return !!m && String(m).toLowerCase().startsWith('audio/');
+  }
+  // Any file the diary editor accepts as a media attachment.
+  function isMediaMime(m) {
+    return isVideoMime(m) || isAudioMime(m);
+  }
+
+  // Is this row a picture? The album exporters lay out pictures only —
+  // a movie or a sound dropped into one of them would reach pdfkit's
+  // openImage() or ffmpeg and break the export. The mime column is the
+  // authority; the extension is the fallback for rows that predate it.
+  function isImageRow(p) {
+    if (!p) return false;
+    const mime = p.mime || guessMimeFromExt(path.extname(String(p.relative_path || '')).toLowerCase());
+    return String(mime).toLowerCase().startsWith('image/');
+  }
+
+  // The mime of a media file, worked out from its extension. Used when
+  // the row has no mime of its own — a file uploaded before the mime
+  // column learned about movies, or one whose browser did not name a
+  // type.
+  function guessMimeFromExt(ext) {
+    return ({
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+      '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+      '.heic': 'image/heic', '.heif': 'image/heic',
+      '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+      '.avi': 'video/x-msvideo', '.mpeg': 'video/mpeg', '.mpg': 'video/mpeg',
+      '.m4v': 'video/mp4',
+      '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
+      '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.flac': 'audio/flac',
+      '.opus': 'audio/ogg',
+    }[String(ext || '').toLowerCase()] || 'application/octet-stream');
   }
 
   // Replace the contacts associated with a memorial event. Drops the old
@@ -1281,6 +1328,39 @@ function normFreeText(s) {
       console.error('photo_meta failed:', e);
       return null;
     }
+  });
+
+  // ---- Video / audio bytes ------------------------------------------------
+  //
+  // A video and an audio live in the same `memorial_event_photos` table as
+  // the pictures — the row's `mime` says which it is.
+  //
+  // A picture's bytes are served as a base64 data URL, because the CSP
+  // (`default-src 'self'`) refuses to load an <img> from any custom
+  // protocol scheme. A movie cannot go that way: base64 would grow it by
+  // a third and push the whole thing through the IPC as a string, which
+  // would stall the page for a file of any size.
+  //
+  // So the media is served from a `file:` URL instead, which the CSP
+  // allows for media (`media-src 'self' data: file:`). The path is built
+  // from the row's own `relative_path` — the basename is re-taken, so a
+  // stored path can never escape the photos directory.
+  ipcMain.handle('memorial_events:media_read', (_e, mediaId) => {
+    const row = db.one('SELECT * FROM memorial_event_photos WHERE id = ?', [mediaId]);
+    if (!row) return null;
+    const full = path.join(getPhotosDir(), row.memorial_event_id, path.basename(row.relative_path));
+    if (!fs.existsSync(full)) return null;
+    const mime = row.mime || guessMimeFromExt(path.extname(full).toLowerCase());
+    // The path is URL-encoded: the user's own name sits in it, and a
+    // name with a space or a Chinese character in it would not load
+    // otherwise.
+    const asUrl = encodeURI('file:///' + full.replace(/\\/g, '/').replace(/^\/+/, ''));
+    return {
+      url: asUrl,
+      mime,
+      size_bytes: row.size_bytes || 0,
+      original_name: row.original_name || '',
+    };
   });
 
   // ---- Search ----
@@ -3701,6 +3781,10 @@ function normFreeText(s) {
       if (!Array.isArray(ev.photos)) {
         ev.photos = db.listPhotosForMemorialEvent(String(id));
       }
+      // A movie and a sound live in the same table as the pictures, so
+      // drop them here: every exporter downstream lays out pictures
+      // only, and a video row would break pdfkit / ffmpeg.
+      ev.photos = ev.photos.filter(isImageRow);
       out.push(ev);
     }
     return out;

@@ -1667,35 +1667,52 @@ function deleteCustomCard(id) {
 }
 
 // ---- memorial event queries ----
+//
+// A movie and a sound live in the SAME table as the pictures — the `mime`
+// column says which is which. Every query below counts and lists the
+// PICTURES only, so a card's photo count and its thumbnail list stay
+// pictures. A row whose mime was never written falls back to its file
+// extension; the extension list is the set of picture formats the app
+// accepts.
+const IS_IMAGE_PHOTO_SQL = `
+  (p.mime LIKE 'image/%'
+   OR (p.mime IS NULL AND (
+        LOWER(p.relative_path) LIKE '%.jpg' OR LOWER(p.relative_path) LIKE '%.jpeg'
+     OR LOWER(p.relative_path) LIKE '%.png'  OR LOWER(p.relative_path) LIKE '%.gif'
+     OR LOWER(p.relative_path) LIKE '%.webp' OR LOWER(p.relative_path) LIKE '%.bmp'
+     OR LOWER(p.relative_path) LIKE '%.heic' OR LOWER(p.relative_path) LIKE '%.heif'
+   )))`;
+
 // Each returned row is decorated with:
 //   - contact_ids[]: ordered list of associated contact ids
 //   - contact_names[]: matching display names (ordered)
-//   - photo_count: number of attached photos
+//   - photo_count: number of attached PICTURES
 //   - first_photo_id + first_photo_relative_path: id and path of the
-//     earliest uploaded photo. The renderer uses the id to load the bytes
+//     earliest uploaded picture. The renderer uses the id to load the bytes
 //     via `memorial_events:photo_read` (CSP-safe data URL).
-//   - second_photo_id: id of the second-earliest uploaded photo (or null
+//   - second_photo_id: id of the second-earliest uploaded picture (or null
 //     when there are fewer than two). The list page can render up to two
 //     small thumbnails side-by-side without a second round-trip.
-//   - photo_ids[]: EVERY attached photo id, oldest first. The list page
+//   - photo_ids[]: EVERY attached picture id, oldest first. The list page
 //     renders a card that mirrors the diary editor's layout, and that
 //     layout is described by the `content` document, which references the
 //     photos by id — the card needs to know every id, not just the first
 //     two, to place them the way the entry was written.
 function listMemorialEvents(opts = {}) {
   let sql = `SELECT me.*,
-                    (SELECT COUNT(*) FROM memorial_event_photos p WHERE p.memorial_event_id = me.id) AS photo_count,
+                    (SELECT COUNT(*) FROM memorial_event_photos p
+                      WHERE p.memorial_event_id = me.id AND ${IS_IMAGE_PHOTO_SQL}) AS photo_count,
                     (SELECT p.id
                        FROM memorial_event_photos p
-                      WHERE p.memorial_event_id = me.id
+                      WHERE p.memorial_event_id = me.id AND ${IS_IMAGE_PHOTO_SQL}
                       ORDER BY p.created_at ASC LIMIT 1) AS first_photo_id,
                     (SELECT p.relative_path
                        FROM memorial_event_photos p
-                      WHERE p.memorial_event_id = me.id
+                      WHERE p.memorial_event_id = me.id AND ${IS_IMAGE_PHOTO_SQL}
                       ORDER BY p.created_at ASC LIMIT 1) AS first_photo_relative_path,
                     (SELECT p.id
                        FROM memorial_event_photos p
-                      WHERE p.memorial_event_id = me.id
+                      WHERE p.memorial_event_id = me.id AND ${IS_IMAGE_PHOTO_SQL}
                       ORDER BY p.created_at ASC LIMIT 1 OFFSET 1) AS second_photo_id
                FROM memorial_events me
               WHERE 1=1`;
@@ -1721,12 +1738,12 @@ function listMemorialEvents(opts = {}) {
     );
     r.contact_ids = links.map((l) => l.contact_id);
     r.contact_names = links.map((l) => l.name);
-    // Every attached photo id, oldest first — the list page's card lays
+    // Every attached PICTURE id, oldest first — the list page's card lays
     // the photos out the way the diary editor wrote them.
     r.photo_ids = all(
       `SELECT p.id
          FROM memorial_event_photos p
-        WHERE p.memorial_event_id = ?
+        WHERE p.memorial_event_id = ? AND ${IS_IMAGE_PHOTO_SQL}
         ORDER BY p.created_at ASC`,
       [r.id]
     ).map((p) => p.id);
@@ -1827,12 +1844,12 @@ function listMemorialEventsForExport(opts = {}) {
               '[]'
             ) AS contact_ids_json,
             (SELECT COUNT(*) FROM memorial_event_photos p
-              WHERE p.memorial_event_id = me.id) AS photo_count,
+              WHERE p.memorial_event_id = me.id AND ${IS_IMAGE_PHOTO_SQL}) AS photo_count,
             (SELECT id FROM memorial_event_photos p
-              WHERE p.memorial_event_id = me.id
+              WHERE p.memorial_event_id = me.id AND ${IS_IMAGE_PHOTO_SQL}
               ORDER BY p.created_at ASC LIMIT 1) AS first_photo_id,
             (SELECT relative_path FROM memorial_event_photos p
-              WHERE p.memorial_event_id = me.id
+              WHERE p.memorial_event_id = me.id AND ${IS_IMAGE_PHOTO_SQL}
               ORDER BY p.created_at ASC LIMIT 1) AS first_photo_relative_path
        FROM memorial_events me
       WHERE ${where}

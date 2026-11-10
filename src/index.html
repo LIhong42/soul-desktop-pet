@@ -7,11 +7,19 @@
        The memorial-event photos are served as data URLs from the main
        process (memorial_events:photo_read IPC); without `data:` the CSP
        blocks them and the <img> falls back to the broken-image icon.
+       media-src allows file: so the <video>/<audio> elements of a diary
+       entry can load the movie and the sound the user attached — those
+       are served as file: URLs, because a movie is far too big to
+       base64 into a data URL the way a picture is.
+       media-src also allows blob:, so a movie or a sound the user has
+       just picked can PLAY straight away: the file is still in the
+       browser's hands, not yet uploaded, and a blob: URL is the only
+       way to point a player at it.
        `default-src 'self'` alone covers `script-src`, `style-src`,
-       `connect-src`, etc.; we explicitly widen `img-src` and `style-src`
-       (the inline styles used by the date picker / chips / photo grid
-       require 'unsafe-inline'). -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+       `connect-src`, etc.; we explicitly widen `img-src`, `media-src` and
+       `style-src` (the inline styles used by the date picker / chips /
+       photo grid require 'unsafe-inline'). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: file:; media-src 'self' data: file: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>SoulDesktopPet</title>
   <link rel="stylesheet" href="css/styles.css" />
   <!-- The 今日 page's own design system. Loaded after styles.css so it can
