@@ -3714,6 +3714,82 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 }
 .diary-meta-actions .btn { padding: 9px 18px; font-size: 14px; }
 
+/* ---- The recording dialog -----------------------------------------------
+   A small modal that stays open while the user talks. It shows what is
+   happening (a status line), how long it has been going (a timer), and
+   how loud the voice is (a level meter) — because a recording that gives
+   no sign of life is indistinguishable from a recording that is broken. */
+.diary-recorder-backdrop { z-index: 120; }
+.diary-recorder-modal {
+  width: 380px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+}
+.diary-recorder-modal .modal-header { padding: 13px 18px; flex: 0 0 auto; }
+.diary-recorder-modal .modal-header h3 { font-size: 15px; }
+.diary-recorder-modal .modal-body {
+  padding: 18px 18px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.diary-recorder-status {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* The timer: the one thing the user glances at while they talk. */
+.diary-recorder-timer {
+  font-size: 34px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+/* The level meter: a bar that fills as the voice gets louder. It is flat
+   until the recording starts — a meter that moves before the microphone
+   is open would be a lie. */
+.diary-recorder-meter {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+.diary-recorder-meter-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--accent, #c96f6f);
+  transition: width 80ms linear;
+}
+
+.diary-recorder-hint {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  min-height: 2.4em;
+}
+
+.diary-recorder-actions {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 14px 18px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+.diary-recorder-actions .btn { padding: 9px 18px; font-size: 14px; }
+
 /* ---- The background style picker (collapsed into one button) -----------
    The six styles used to sit in an always-open panel beside the writing
    surface: a card the width of the page's side column, holding six

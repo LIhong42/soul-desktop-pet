@@ -81,6 +81,7 @@ import {
   parseDiaryContent,
 } from '../diary_layout.js';
 import { openMemorialMetaDialog } from '../diary_meta_form.js';
+import { openAudioRecorderDialog } from '../diary_audio_recorder.js';
 import { normalizeMemorialKind } from '../diary_kinds.js';
 
 const MEMORIAL_LIST_ROUTE = '/events/memorial';
@@ -305,7 +306,12 @@ function openTextMenu(block, e) {
     items: [
       { act: 'insert-image', label: '插入图片' },
       { act: 'insert-video', label: '插入视频' },
-      { act: 'insert-audio', label: '插入音频' },
+      // A sound has two doors: a file from the disk, or a recording
+      // made right now. Both land in the same place.
+      { row: [
+        { act: 'insert-audio', label: '插入音频（文件）' },
+        { act: 'record-audio', label: '录音' },
+      ]},
       { act: 'delete-block', label: '删除此段', danger: true },
       { sep: true },
       { row: [
@@ -346,6 +352,13 @@ function handleTextMenuAction(block, act, value, sel) {
       pendingMediaFor = { block, kind: 'audio' };
       ta.focus();
       if (fileInput) fileInput.click();
+      break;
+    }
+    case 'record-audio': {
+      // The recording dialog hands back a File, and the File goes in
+      // exactly where a picked sound would.
+      ta.focus();
+      recordAudioFor(block);
       break;
     }
     case 'delete-block': {
@@ -941,7 +954,12 @@ function openMediaMenu(block, e) {
     items: [
       { act: 'media-insert-image', label: '插入图片' },
       { act: 'media-insert-video', label: '插入视频' },
-      { act: 'media-insert-audio', label: '插入音频' },
+      // A sound has two doors: a file from the disk, or a recording
+      // made right now. Both land in the same place.
+      { row: [
+        { act: 'media-insert-audio', label: '插入音频（文件）' },
+        { act: 'media-record-audio', label: '录音' },
+      ]},
       { sep: true },
       { act: 'media-insert-before', label: '↑ 上方插入文字' },
       { act: 'media-insert-after', label: '↓ 下方插入文字' },
@@ -974,6 +992,12 @@ function handleMediaMenuAction(block, act) {
       pendingMediaFor = { block, kind };
       const fileInput = document.getElementById('diary-media');
       if (fileInput) fileInput.click();
+      break;
+    }
+    case 'media-record-audio': {
+      // The recording goes in right after this media block, the same
+      // place a picked sound would.
+      recordAudioFor(block);
       break;
     }
     case 'media-insert-before': {
@@ -1733,6 +1757,26 @@ async function insertMediaAfterTextBlock(anchor, file, kind) {
     pageState.blocks.push(block);
   }
   renderBlocks();
+}
+
+// Record a sound and put it in the document.
+//
+// The recording dialog returns a File, and the File goes through the
+// very same path a picked sound does: the same pending-media list, the
+// same upload on save, the same audio block on the page. The only
+// difference is where the bytes came from.
+async function recordAudioFor(anchor) {
+  let file = null;
+  try {
+    file = await openAudioRecorderDialog();
+  } catch (e) {
+    console.error('recording failed:', e);
+    toast('录音失败');
+    return;
+  }
+  // The user closed the dialog without recording anything.
+  if (!file) return;
+  await insertMediaAfterTextBlock(anchor, file, 'audio');
 }
 
 // ---- Serialize -----------------------------------------------------------

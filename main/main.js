@@ -1,5 +1,5 @@
 // main/main.js — Electron entry: DB, scheduler, IPC, two windows
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -286,6 +286,51 @@ function recreatePetWindow(reason) {
   return winPet;
 }
 
+// ---- The microphone -------------------------------------------------------
+//
+// The diary editor can record a voice clip into a 回忆事件. That needs
+// the microphone, and Chromium refuses to open a capture device until
+// the permission is answered.
+//
+// The answer here is "allow", for the main window only. Two reasons it
+// is deliberate and not a blanket grant:
+//
+//   * The request is for `media` (the microphone) and nothing else.
+//     The camera is not asked for, and no other device class is.
+//   * The handler answers only requests that come from the app's own
+//     pages — a page loaded from the internet inside this window would
+//     not be handed a microphone.
+//
+// The OS still has the final say: on Windows the system settings decide
+// whether this app may touch a microphone at all, and a machine that
+// says no wins over this handler.
+
+function grantMicrophonePermission() {
+  const ses = session.defaultSession;
+  if (!ses) return;
+
+  ses.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission !== 'media') {
+      callback(false);
+      return;
+    }
+    // The request must come from one of our own windows. A web page
+    // loaded inside the app is not one of them.
+    const url = webContents && webContents.getURL ? webContents.getURL() : '';
+    const isOwnPage = url.startsWith('file://');
+    callback(isOwnPage);
+  });
+
+  // The second, older channel: Chromium asks here too, for the
+  // devices it is about to enumerate. Without an answer it hangs on
+  // the permission prompt the renderer never sees.
+  ses.setPermissionCheckHandler((webContents, permission) => {
+    if (permission !== 'media') return false;
+    const url = webContents && webContents.getURL ? webContents.getURL() : '';
+    return url.startsWith('file://');
+  });
+}
+
 function createWindows({ petRegistry } = {}) {
   winPet = createPetWindow({ petRegistry });
 
@@ -361,6 +406,10 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   await db.open(getDbPath());
+
+  // The microphone permission must be answered before any window asks
+  // for a recording.
+  grantMicrophonePermission();
 
   // Align the Windows Run key with what the user last asked for. First launch
   // opts in by default (see syncOnLaunch); later launches honour the stored
