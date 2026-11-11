@@ -3300,6 +3300,94 @@ body.locked #pin-modal.hidden { display: none !important; }
 }
 .diary-block { position: relative; }
 
+/* The grip: the visible sign that the block can be picked up. The
+   WHOLE block is the handle — a press anywhere on it starts the drag —
+   and the grip is where the user is told so. It sits in the top-left
+   corner of the block, OUTSIDE the block's own content, and it is
+   faint until the pointer comes near, so the writing surface stays
+   clean. */
+.diary-block-grip {
+  position: absolute;
+  top: 0;
+  left: -22px;
+  width: 18px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--diary-muted);
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: -1px;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  user-select: none;
+  touch-action: none;
+}
+.diary-block:hover > .diary-block-grip { opacity: 0.75; }
+.diary-block-grip:hover { opacity: 1; color: var(--diary-text); }
+
+/* The block itself is the handle, so the pointer says so. The content
+   that owns a gesture of its own keeps its own cursor: a text cursor
+   in the words, a zoom cursor on a picture, the resize cursor on the
+   handle, and the pointer on the player's controls. */
+.diary-block { cursor: grab; }
+.diary-block-text { cursor: text; }
+.diary-gallery-item { cursor: zoom-in; }
+.diary-gallery-item .diary-gallery-handle { cursor: ew-resize; }
+.diary-block:active { cursor: grabbing; }
+body.diary-block-dragging .diary-block { cursor: grabbing; }
+
+/* The rest of a block — the picture of a gallery, the movie, the sound,
+   the name under it — is one big handle too, so the pointer says
+   "grab" there as well. */
+.diary-block-gallery,
+.diary-block-video,
+.diary-block-audio,
+.diary-media-caption { cursor: grab; }
+
+/* While a block is being dragged, the block under the pointer is
+   marked: it is the one the dragged block would swap with. */
+.diary-block.drop-target {
+  outline: 2px dashed var(--diary-muted);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* Nothing else may catch the pointer while a block is being moved. */
+body.diary-block-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* The ghost of the block that is being dragged: it follows the pointer
+   and says what kind of block it is. */
+.diary-block-ghost {
+  position: fixed;
+  z-index: 999;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.diary-block-ghost-icon {
+  /* The ghost lives on the body, outside the diary page, so it uses the
+     app's own muted tone rather than the page's. */
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: -1px;
+}
+
 /* A text block. It auto-grows with its content so the page has no inner
    scrollbar — the writing surface scrolls as one document. */
 .diary-block-text {
@@ -3425,6 +3513,12 @@ body.locked #pin-modal.hidden { display: none !important; }
   border-radius: 6px;
   background: #000;
 }
+/* The surface of a movie is the biggest handle of the block, so the
+   pointer says "grab" there. The control strip under it keeps the
+   pointer the player wants — Chromium draws its own controls, and it
+   swallows the presses on them anyway. */
+.diary-block-video .diary-media-player { cursor: grab; }
+.diary-block-video .diary-media-player::-webkit-media-controls { cursor: default; }
 .diary-media-caption {
   margin-top: 6px;
   font-size: 12px;

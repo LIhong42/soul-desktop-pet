@@ -2288,6 +2288,515 @@ app.whenReady().then(async () => {
   check('clearing the search goes back to the first page',
     pagerResult.afterClear.pager, '第 1 / 3 页 · 共 14 条');
 
+  // ---- 18. The blocks can be swapped by dragging them -------------------
+  //
+  // The document is a list of blocks, and the order they are in IS the
+  // order they are read in. So the user has to be able to change that
+  // order — a picture that ended up above the paragraph it belongs to
+  // has to be able to go below it.
+  //
+  // The drag starts on the GRIP at the top-left of a block. The whole
+  // block is a handle too — the sections after this one cover that — but
+  // the grip is the one place with no gesture of its own, so it is the
+  // cleanest place to start a drag from.
+  //
+  // The drag swaps two blocks of any kinds, and the swap has to survive
+  // the save.
+  console.log('\n== 拖拽交换块 ==');
+  const blockDragResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testUploads.clear();
+
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 80));
+
+    // The document the user writes: a paragraph, a picture and a movie.
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = '第一段。';
+    ta.focus();
+    ta.dispatchEvent(new Event('input'));
+
+    const fileInput = document.getElementById('diary-photos');
+    fileInput.click = () => {
+      const file = new File([new Uint8Array([1,2,3])], 'one.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+      fileInput.dispatchEvent(new Event('change'));
+    };
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
+    await new Promise(r => setTimeout(r, 120));
+
+    const mediaInput = document.getElementById('diary-media');
+    mediaInput.click = () => {
+      const file = new File([new Uint8Array([4,5,6])], 'clip.mp4', { type: 'video/mp4' });
+      Object.defineProperty(mediaInput, 'files', { value: [file], configurable: true });
+      mediaInput.dispatchEvent(new Event('change'));
+    };
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-video"]');
+    await new Promise(r => setTimeout(r, 150));
+
+    const order = () => Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+    const before = order();
+
+    // Every block carries a grip — the sign that the block can be picked
+    // up. The grip is only the sign: the drag starts on the block too.
+    const grips = document.querySelectorAll('.diary-block-grip').length;
+    const blockCount = document.querySelectorAll('.diary-block').length;
+
+    // Drag the FIRST block (the text) onto the SECOND one (the movie).
+    // The two swap places.
+    const blocks = Array.from(document.querySelectorAll('.diary-block'));
+    const g0 = blocks[0].querySelector('.diary-block-grip');
+    const r1 = blocks[1].getBoundingClientRect();
+    const gb = g0.getBoundingClientRect();
+    const from = { x: gb.left + 5, y: gb.top + 8 };
+    const to = { x: r1.left + r1.width / 2, y: r1.top + r1.height / 2 };
+
+    g0.dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: from.x, clientY: from.y, bubbles: true, button: 0,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: from.x + 12, clientY: from.y + 4, bubbles: true,
+    }));
+    const during = {
+      ghost: !!document.querySelector('.diary-block-ghost'),
+      dragging: document.body.classList.contains('diary-block-dragging'),
+    };
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: to.x, clientY: to.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 30));
+    const markedAtTarget = document.querySelectorAll('.diary-block.drop-target').length;
+    window.dispatchEvent(new PointerEvent('pointerup', {
+      clientX: to.x, clientY: to.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 60));
+
+    const afterSwap = order();
+    const ghostLeft = !!document.querySelector('.diary-block-ghost');
+    const markedLeft = document.querySelectorAll('.diary-block.drop-target').length;
+
+    // The paragraph that was dragged keeps its words — the drag moved the
+    // block, it did not rewrite it.
+    const texts = Array.from(document.querySelectorAll('.diary-block-text'))
+      .map(el => el.value);
+
+    // Drag the LAST block onto the FIRST one, so the swap goes the other
+    // way as well.
+    const blocks2 = Array.from(document.querySelectorAll('.diary-block'));
+    const last = blocks2[blocks2.length - 1];
+    const first = blocks2[0];
+    const gLast = last.querySelector('.diary-block-grip');
+    const rf = first.getBoundingClientRect();
+    const gl = gLast.getBoundingClientRect();
+    const fromL = { x: gl.left + 5, y: gl.top + 8 };
+    const toF = { x: rf.left + rf.width / 2, y: rf.top + rf.height / 2 };
+    gLast.dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: fromL.x, clientY: fromL.y, bubbles: true, button: 0,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: fromL.x + 12, clientY: fromL.y + 4, bubbles: true,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: toF.x, clientY: toF.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 30));
+    window.dispatchEvent(new PointerEvent('pointerup', {
+      clientX: toF.x, clientY: toF.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 60));
+    const afterSwapBack = order();
+
+    // Save, and look at the stored document: the order has to be there.
+    document.getElementById('diary-title').value = '换了顺序的文档';
+    await window.__meta.confirm('2026-05-04T10:30', 'other', []);
+    const rows = Object.values(window.__testRows.all());
+    const row = rows[rows.length - 1];
+
+    return {
+      before, afterSwap, afterSwapBack,
+      grips, blockCount, during, markedAtTarget,
+      ghostLeft, markedLeft, texts,
+      savedTypes: row && row.content.map(b => b.type),
+    };
+  `);
+  check('the document starts as text, video, gallery',
+    blockDragResult.before, ['text', 'video', 'gallery']);
+  check('every block carries a grip', blockDragResult.grips, blockDragResult.blockCount);
+  checkTrue('the dragged block follows the pointer',
+    blockDragResult.during.ghost);
+  checkTrue('the page knows a block drag is going on',
+    blockDragResult.during.dragging);
+  check('the two blocks swap places',
+    blockDragResult.afterSwap, ['video', 'text', 'gallery']);
+  checkTrue('the block under the pointer is marked as the target',
+    blockDragResult.markedAtTarget === 1);
+  checkTrue('the ghost is cleaned up after the drag',
+    !blockDragResult.ghostLeft);
+  checkTrue('the target mark is cleaned up after the drag',
+    blockDragResult.markedLeft === 0);
+  check('the drag leaves the words of the text block alone',
+    blockDragResult.texts, ['第一段。']);
+  check('the drag works the other way as well',
+    blockDragResult.afterSwapBack, ['gallery', 'text', 'video']);
+  check('the saved document keeps the new order',
+    blockDragResult.savedTypes, ['gallery', 'text', 'video']);
+
+  // The whole block is the handle, not just the grip: a press on the
+  // movie's caption or on the gallery's own margin picks the block up.
+  console.log('\n== 整块拖拽 ==');
+  const wholeBlockResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testUploads.clear();
+
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 80));
+
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = '第一段。';
+    ta.focus();
+    ta.dispatchEvent(new Event('input'));
+
+    const fileInput = document.getElementById('diary-photos');
+    fileInput.click = () => {
+      const file = new File([new Uint8Array([1,2,3])], 'one.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+      fileInput.dispatchEvent(new Event('change'));
+    };
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
+    await new Promise(r => setTimeout(r, 120));
+
+    const mediaInput = document.getElementById('diary-media');
+    mediaInput.click = () => {
+      const file = new File([new Uint8Array([4,5,6])], 'clip.mp4', { type: 'video/mp4' });
+      Object.defineProperty(mediaInput, 'files', { value: [file], configurable: true });
+      mediaInput.dispatchEvent(new Event('change'));
+    };
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-video"]');
+    await new Promise(r => setTimeout(r, 150));
+
+    const order = () => Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+
+    // Drag the MEDIA block by its own body — not by the grip. The
+    // caption under the player has no gesture of its own, so it is
+    // part of the handle.
+    const blocks = Array.from(document.querySelectorAll('.diary-block'));
+    const mediaWrap = blocks.find(b => b.dataset.blockType === 'video');
+    const caption = mediaWrap.querySelector('.diary-media-caption');
+    const cr = caption.getBoundingClientRect();
+    const targetWrap = blocks.find(b => b.dataset.blockType === 'text');
+    const tr = targetWrap.getBoundingClientRect();
+    const from = { x: cr.left + 4, y: cr.top + cr.height / 2 };
+    const to = { x: tr.left + tr.width / 2, y: tr.top + tr.height / 2 };
+
+    caption.dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: from.x, clientY: from.y, bubbles: true, button: 0,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: from.x - 12, clientY: from.y + 4, bubbles: true,
+    }));
+    const during = {
+      ghost: !!document.querySelector('.diary-block-ghost'),
+      dragging: document.body.classList.contains('diary-block-dragging'),
+    };
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: to.x, clientY: to.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 30));
+    const marked = document.querySelectorAll('.diary-block.drop-target').length;
+    window.dispatchEvent(new PointerEvent('pointerup', {
+      clientX: to.x, clientY: to.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 60));
+    const afterBodyDrag = order();
+
+    // Drag the GALLERY by its own margin — the strip of the block that
+    // is not a photo. That is the block's own area.
+    const blocks2 = Array.from(document.querySelectorAll('.diary-block'));
+    const galleryWrap = blocks2.find(b => b.dataset.blockType === 'gallery');
+    const fig = galleryWrap.querySelector('.diary-block-gallery');
+    const fr = fig.getBoundingClientRect();
+    const gFrom = { x: fr.left + 2, y: fr.top + fr.height / 2 };
+    const gTarget = blocks2.find(b => b.dataset.blockType === 'text');
+    const gtr = gTarget.getBoundingClientRect();
+    const gTo = { x: gtr.left + gtr.width / 2, y: gtr.top + gtr.height / 2 };
+
+    fig.dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: gFrom.x, clientY: gFrom.y, bubbles: true, button: 0,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: gFrom.x - 12, clientY: gFrom.y, bubbles: true,
+    }));
+    const galleryDragging = document.body.classList.contains('diary-block-dragging');
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: gTo.x, clientY: gTo.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 30));
+    window.dispatchEvent(new PointerEvent('pointerup', {
+      clientX: gTo.x, clientY: gTo.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 60));
+    const afterGalleryDrag = order();
+
+    return {
+      afterBodyDrag, afterGalleryDrag,
+      during, marked, galleryDragging,
+      ghostLeft: !!document.querySelector('.diary-block-ghost'),
+    };
+  `);
+  check('a block can be picked up by its body, not only by the grip',
+    blockDragResult.during.ghost && wholeBlockResult.during.ghost, true);
+  checkTrue('the body drag raises the drag state',
+    wholeBlockResult.during.dragging);
+  checkTrue('the block under the pointer is marked during a body drag',
+    wholeBlockResult.marked === 1);
+  check('a body drag swaps the blocks too',
+    wholeBlockResult.afterBodyDrag, ['video', 'text', 'gallery']);
+  checkTrue('the gallery can be picked up by its own area',
+    wholeBlockResult.galleryDragging);
+  check('a gallery drag swaps the blocks too',
+    wholeBlockResult.afterGalleryDrag, ['video', 'gallery', 'text']);
+  checkTrue('no ghost is left behind',
+    !wholeBlockResult.ghostLeft);
+
+  // A drag across the words is a text selection, not a move. The block
+  // must stay where it is.
+  console.log('\n== 拖拽与文字选择 ==');
+  const selectionResult = await evalIn(win, `
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 80));
+
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = '第一段文字';
+    ta.focus();
+    ta.dispatchEvent(new Event('input'));
+
+    // A press in the words, dragged across them, is a TEXT SELECTION.
+    // The block must not move.
+    ta.setSelectionRange(0, 0);
+    const r = ta.getBoundingClientRect();
+    const from = { x: r.left + 4, y: r.top + 6 };
+    ta.dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: from.x, clientY: from.y, bubbles: true, button: 0,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: from.x + 40, clientY: from.y + 2, bubbles: true,
+    }));
+    // The browser draws the selection right after the move — do the
+    // same, so the page sees a range where the drag began.
+    ta.setSelectionRange(0, 3);
+    await new Promise(r2 => setTimeout(r2, 40));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: from.x + 46, clientY: from.y + 2, bubbles: true,
+    }));
+    await new Promise(r2 => setTimeout(r2, 40));
+    const ghostDuringSelection = !!document.querySelector('.diary-block-ghost');
+    window.dispatchEvent(new PointerEvent('pointerup', {
+      clientX: from.x + 46, clientY: from.y + 2, bubbles: true,
+    }));
+    await new Promise(r2 => setTimeout(r2, 40));
+
+    return {
+      ghostDuringSelection,
+      blockCount: document.querySelectorAll('.diary-block').length,
+      selection: ta.selectionStart !== ta.selectionEnd,
+      value: ta.value,
+    };
+  `);
+  checkTrue('dragging across the words does not move the block',
+    !selectionResult.ghostDuringSelection);
+  checkTrue('the drag leaves the words alone',
+    selectionResult.value === '第一段文字');
+  checkTrue('the block is still there',
+    selectionResult.blockCount === 1);
+
+  // The gallery's photos have a drag of their own. A drag that stays in
+  // the gallery is the photo's; a drag that walks out of it is the
+  // block's.
+  console.log('\n== 拖拽与图组内的照片 ==');
+  const galleryDragResult = await evalIn(win, `
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 80));
+
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = '第一段。';
+    ta.focus();
+    ta.dispatchEvent(new Event('input'));
+
+    // Two photos in one gallery — picked in one go, so they land in the
+    // same gallery.
+    const fileInput = document.getElementById('diary-photos');
+    fileInput.click = () => {
+      const f1 = new File([new Uint8Array([1, 2])], 'p1.jpg', { type: 'image/jpeg' });
+      const f2 = new File([new Uint8Array([3, 4])], 'p2.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(fileInput, 'files', { value: [f1, f2], configurable: true });
+      fileInput.dispatchEvent(new Event('change'));
+    };
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
+    await new Promise(r => setTimeout(r, 200));
+
+    const items = Array.from(document.querySelectorAll('.diary-gallery-item'));
+    const names = () => Array.from(document.querySelectorAll('.diary-gallery-item img'))
+      .map(i => i.getAttribute('src') || '');
+
+    // A drag that STAYS in the gallery is the photo's own drag: the two
+    // photos trade places, and the block does not move.
+    const order0 = Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+    const r0 = items[0].getBoundingClientRect();
+    const r1 = items[1].getBoundingClientRect();
+    const from = { x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 };
+    const to = { x: r1.left + r1.width / 2, y: r1.top + r1.height / 2 };
+    items[0].dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: from.x, clientY: from.y, bubbles: true, button: 0,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: from.x + 10, clientY: from.y + 2, bubbles: true,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: to.x, clientY: to.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 40));
+    const photoDragging = document.body.classList.contains('diary-reordering');
+    window.dispatchEvent(new PointerEvent('pointerup', {
+      clientX: to.x, clientY: to.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 60));
+
+    const order1 = Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+
+    // A drag that LEAVES the gallery is the block's: the gallery block
+    // swaps with the text block.
+    const items2 = Array.from(document.querySelectorAll('.diary-gallery-item'));
+    const blocks = Array.from(document.querySelectorAll('.diary-block'));
+    const galleryWrap = blocks.find(b => b.dataset.blockType === 'gallery');
+    const textWrap = blocks.find(b => b.dataset.blockType === 'text');
+    const gr = items2[0].getBoundingClientRect();
+    const tr = textWrap.getBoundingClientRect();
+    const gFrom = { x: gr.left + gr.width / 2, y: gr.top + gr.height / 2 };
+    const gTo = { x: tr.left + tr.width / 2, y: tr.top + tr.height / 2 };
+    items2[0].dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: gFrom.x, clientY: gFrom.y, bubbles: true, button: 0,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: gFrom.x + 10, clientY: gFrom.y + 2, bubbles: true,
+    }));
+    // Still inside the gallery: the photo's own drag is running.
+    const photoDragging2 = document.body.classList.contains('diary-reordering');
+    const blockDraggingInside = document.body.classList.contains('diary-block-dragging');
+    // Now the pointer walks out of the gallery — the block takes over.
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: gTo.x, clientY: gTo.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 40));
+    const blockDragging = document.body.classList.contains('diary-block-dragging');
+    const photoDraggingOut = document.body.classList.contains('diary-reordering');
+    const marked = document.querySelectorAll('.diary-block.drop-target').length;
+    window.dispatchEvent(new PointerEvent('pointerup', {
+      clientX: gTo.x, clientY: gTo.y, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 60));
+
+    const order2 = Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+
+    return {
+      order0, order1, order2,
+      photoDragging, blockDragging, photoDragging2, photoDraggingOut,
+      blockDraggingInside, marked,
+      ghostLeft: !!document.querySelector('.diary-block-ghost'),
+    };
+  `);
+  checkTrue('a drag inside the gallery is the photo\'s own drag',
+    galleryDragResult.photoDragging);
+  checkTrue('a drag inside the gallery does not move the block',
+    galleryDragResult.order1.join(',') === galleryDragResult.order0.join(','));
+  checkTrue('a drag out of the gallery is the block\'s drag',
+    galleryDragResult.blockDragging && !galleryDragResult.photoDraggingOut);
+  checkTrue('the block under the pointer is marked during the gallery drag',
+    galleryDragResult.marked === 1);
+  check('a drag out of the gallery swaps the blocks',
+    galleryDragResult.order2, ['gallery', 'text']);
+  checkTrue('no ghost is left behind after the gallery drag',
+    !galleryDragResult.ghostLeft);
+
+  // The list card is the page in miniature: it has to show the new order.
+  console.log('\n== 换位后的卡片 ==');
+  const cardOrderResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testUploads.clear();
+
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 80));
+
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = '第一段。';
+    ta.focus();
+    ta.dispatchEvent(new Event('input'));
+
+    const fileInput = document.getElementById('diary-photos');
+    fileInput.click = () => {
+      const file = new File([new Uint8Array([1,2,3])], 'one.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+      fileInput.dispatchEvent(new Event('change'));
+    };
+    window.__menu.open(ta);
+    window.__menu.click('[data-ctx-act="insert-image"]');
+    await new Promise(r => setTimeout(r, 150));
+
+    // Swap the two blocks: the gallery goes above the words.
+    const blocks = Array.from(document.querySelectorAll('.diary-block'));
+    const gallery = blocks.find(b => b.dataset.blockType === 'gallery');
+    const text = blocks.find(b => b.dataset.blockType === 'text');
+    const fig = gallery.querySelector('.diary-block-gallery');
+    const fr = fig.getBoundingClientRect();
+    const tr = text.getBoundingClientRect();
+    fig.dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: fr.left + 2, clientY: fr.top + 20, bubbles: true, button: 0,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: fr.left - 12, clientY: fr.top + 20, bubbles: true,
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: tr.left + tr.width / 2, clientY: tr.top + tr.height / 2, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 40));
+    window.dispatchEvent(new PointerEvent('pointerup', {
+      clientX: tr.left + tr.width / 2, clientY: tr.top + tr.height / 2, bubbles: true,
+    }));
+    await new Promise(r => setTimeout(r, 80));
+
+    const editorOrder = Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+
+    // Save it and look at the list: the card is the page in miniature,
+    // so it has to show the new order too.
+    document.getElementById('diary-title').value = '换过顺序的日记';
+    await window.__meta.confirm('2026-05-04T10:30', 'other', []);
+    await window.__list.render([], {});
+    await new Promise(r => setTimeout(r, 150));
+
+    const page = document.querySelector('.memorial-card-page');
+    const cardBlocks = page
+      ? Array.from(page.children).map(el => el.className)
+      : [];
+
+    return { editorOrder, cardBlocks };
+  `);
+  check('the editor holds the new order',
+    cardOrderResult.editorOrder, ['gallery', 'text']);
+  checkTrue('the card shows the gallery above the words',
+    cardOrderResult.cardBlocks.length === 2
+    && cardOrderResult.cardBlocks[0].includes('gallery')
+    && cardOrderResult.cardBlocks[1].includes('text'));
+
   console.log(`\n== ${pass} passed, ${fail} failed ==\n`);
   cleanup(win, fail === 0 ? 0 : 1);
 }).catch((e) => {

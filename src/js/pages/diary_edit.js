@@ -700,6 +700,10 @@ function makeReorderGhost(photo, e) {
 // Drag a photo onto another one to swap their places. The photo under
 // the pointer follows the cursor, and the gallery swaps the two photos as
 // soon as the drag reaches a neighbour.
+//
+// The photo's drag belongs to the GALLERY. A drag that walks out of the
+// gallery is not a photo drag any more — the user is carrying the whole
+// block away — so the gallery hands the gesture over and stops.
 function startGalleryReorder(block, photo, ev) {
   const items = block.itemsEl;
   if (!items || block.photos.length < 2) return;
@@ -709,7 +713,27 @@ function startGalleryReorder(block, photo, ev) {
   let ghost = null;
   let lastTarget = null;
 
+  // Give the gesture back: the listeners come off, the ghost goes away
+  // and the gallery looks as it did.
+  const stop = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    document.body.classList.remove('diary-reordering');
+    if (photo.el) photo.el.classList.remove('reordering');
+    if (ghost) { ghost.remove(); ghost = null; }
+    // The gallery is not "being dragged" any more, so a click on one of
+    // its photos works again.
+    block.dragging = false;
+    started = false;
+  };
+
   const onMove = (e) => {
+    // The pointer left the gallery: the block takes the gesture over.
+    if (!galleryHasPoint(block, e.clientX, e.clientY)) {
+      stop();
+      return;
+    }
     if (!started) {
       // A small movement is a click, not a drag.
       if (Math.abs(e.clientX - startX) < 5 && Math.abs(e.clientY - startY) < 5) return;
@@ -739,13 +763,9 @@ function startGalleryReorder(block, photo, ev) {
   };
 
   const onUp = () => {
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    window.removeEventListener('pointercancel', onUp);
-    document.body.classList.remove('diary-reordering');
-    if (photo.el) photo.el.classList.remove('reordering');
-    if (ghost) { ghost.remove(); ghost = null; }
-    if (started) {
+    const wasDragging = started;
+    stop();
+    if (wasDragging) {
       // The drag ends with a click event on the photo — swallow it, so
       // the picture doesn't open in the lightbox.
       block.dragging = true;
@@ -756,6 +776,16 @@ function startGalleryReorder(block, photo, ev) {
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
+}
+
+// Is a point inside the gallery? The rectangles are used instead of a
+// hit test, so this works in a window that is not on screen too.
+function galleryHasPoint(block, x, y) {
+  const el = block && block.el;
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  if (!r.width && !r.height) return false;
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 }
 
 // Switch the gallery's arrangement. The layout is the base size, so any
@@ -1103,6 +1133,343 @@ function fileToDataUrl(file) {
   });
 }
 
+// ---- Moving the blocks ---------------------------------------------------
+//
+// The document is a list of blocks, and the order they are in IS the
+// order they are read in — the words, the pictures and the movies follow
+// each other down the page. So the user has to be able to change that
+// order: a picture that ended up above the paragraph it belongs to has
+// to be able to go below it.
+//
+// The WHOLE BLOCK is the handle: a press anywhere on it picks it up.
+// The ⋮⋮ grip at the top-left is the visible sign of that, but it is
+// not the only place the drag starts.
+//
+// A block is not a plain box, though. It holds content that has
+// gestures of its own:
+//
+//   · a text block is a textarea — a press in it selects text;
+//   · a gallery holds a drag of its own (reordering the photos) and a
+//     resize handle;
+//   · a media block holds a player with its own controls.
+//
+// So the press is looked at before the drag begins. A press on the
+// content the user is really working with stays with that content; a
+// press on the block around it moves the block.
+//
+// Two presses cannot be told apart from a drag by the press alone, and
+// both are settled AFTER the pointer has moved, because only the
+// movement says what the user meant:
+//
+//   · in a textarea — dragging across the words selects them, and
+//     dragging away from them moves the block. If the drag drew a
+//     selection, the selection was meant, and the block stays put.
+//
+//   · in a gallery — the photos reorder with a drag of their own. A
+//     drag that stays inside the gallery is the photo's; a drag that
+//     walks out of it is the block's.
+//
+// The drag swaps two blocks: the one the user picked up and the one the
+// pointer is over. It is a swap and not an insert, so the two blocks
+// keep their relative order to everything else — the page does not
+// shuffle around them.
+//
+// The block that is being dragged follows the pointer as a GHOST, the
+// way a photo does inside a gallery, and the block under the pointer is
+// marked so the user can see where the swap will happen.
+
+// The pixels the pointer has to travel before a press becomes a drag.
+// A press that does not move is a press, not a drag.
+const BLOCK_DRAG_THRESHOLD = 5;
+
+// A ghost of the block that is being dragged. It shows the block's own
+// kind — a picture, a player, a paragraph of words — so the user sees
+// what they are carrying.
+function makeBlockGhost(block, e) {
+  const ghost = document.createElement('div');
+  ghost.className = 'diary-block-ghost';
+  const label = block.type === 'text' ? '文字'
+    : (block.type === 'gallery' ? '图组'
+      : (block.type === 'video' ? '视频' : '音频'));
+  ghost.innerHTML = `<span class="diary-block-ghost-icon" aria-hidden="true">⋮⋮</span>`
+    + `<span class="diary-block-ghost-label">${label}</span>`;
+  ghost.style.left = e.clientX + 'px';
+  ghost.style.top = e.clientY + 'px';
+  return ghost;
+}
+
+// The block wrapper under a point, if there is one. The rectangles are
+// used instead of a hit test, so this works in a window that is not on
+// screen too.
+function blockWrapAt(host, x, y) {
+  for (const el of Array.from(host.children)) {
+    const r = el.getBoundingClientRect();
+    if (!r.width && !r.height) continue;
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return el;
+  }
+  return null;
+}
+
+// Put two blocks in each other's places.
+//
+// The two blocks may be of different kinds — a picture and a paragraph,
+// a movie and a sound — that is the whole point of the gesture.
+function swapBlocks(a, b) {
+  const ia = pageState.blocks.indexOf(a);
+  const ib = pageState.blocks.indexOf(b);
+  if (ia < 0 || ib < 0 || ia === ib) return false;
+  pageState.blocks[ia] = b;
+  pageState.blocks[ib] = a;
+  return true;
+}
+
+// The content inside a block that owns its own gesture — the resize
+// handle of a picture and its delete button.
+//
+// A press on one of these is that content's business, not the block's:
+// dragging the handle resizes the picture, pressing the button deletes
+// it.
+//
+// The photos of a gallery are NOT in this list. A picture can be picked
+// up and carried out of its gallery, and the gallery decides what a
+// drag that stays inside it means (see startGalleryReorder).
+//
+// The text of a text block is NOT in this list either. A textarea can
+// be dragged away from the words it holds, and the selection it draws
+// during the drag is what tells the two apart (see startBlockDrag).
+//
+// The native controls of a movie and of a sound are not in this list
+// either, and they do not have to be: Chromium's own media controls
+// swallow the press and never let it reach the page, so the browser
+// has already decided that those presses belong to the player. The
+// surface of a movie — everything above the controls — is free, and
+// it makes a big, comfortable handle for carrying the block around.
+//
+// The list is walked from the pressed element upwards, so a press deep
+// inside a picture is recognized too.
+function ownsItsOwnGesture(el) {
+  let node = el;
+  while (node && node !== document.body) {
+    if (node.classList
+      && (node.classList.contains('diary-gallery-handle')
+        || node.classList.contains('photo-x'))) {
+      return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
+// The gallery the press landed in, if it landed in one. The gallery's
+// own photo drag keeps the gesture as long as the pointer stays inside
+// it; the block takes over when the pointer walks out.
+function galleryUnder(el) {
+  let node = el;
+  while (node && node !== document.body) {
+    if (node.classList && node.classList.contains('diary-block-gallery')) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+// The gallery block a gallery element belongs to.
+function galleryBlockOf(el) {
+  return pageState.blocks.find((b) => b.type === 'gallery' && b.el === el) || null;
+}
+
+// The textarea a press landed in, if the press landed in one. Its
+// selection is what tells a text drag apart from a block drag.
+function textareaUnder(el) {
+  let node = el;
+  while (node && node !== document.body) {
+    if (node.classList && node.classList.contains('diary-block-text')) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+// Drag a block onto another one to swap their places.
+//
+// The block follows the pointer as a ghost, and the block under the
+// pointer is marked as the swap's target. The swap itself happens when
+// the drag ends, so the user can carry the block past a neighbour and
+// come back — the order only changes when the pointer is released.
+//
+// `press` says what the press was: which textarea it landed in (if
+// any) and the selection that textarea had at the time.
+//
+// Two presses are ambiguous, and both are settled AFTER the pointer
+// has moved, because only the movement says what the user meant:
+//
+//   · a press in a textarea — dragging across the words selects them,
+//     and dragging the block away from them moves the block. So the
+//     first movement does not prevent the default action: the browser
+//     is left free to draw the selection, and the decision is made a
+//     tick later, when the selection has settled. A range that
+//     appeared means the user was selecting text.
+//
+//   · a press on a photo in a gallery — the photo has a drag of its
+//     own (reordering it inside the gallery). So the block only takes
+//     over when the pointer leaves the gallery: a drag that stays
+//     inside is the photo's, and a drag that walks out of the gallery
+//     is the block's.
+function startBlockDrag(block, ev, press) {
+  const host = document.getElementById('diary-blocks');
+  if (!host) return;
+  const startX = ev.clientX;
+  const startY = ev.clientY;
+  const ta = press.ta;
+  const selBefore = press.selBefore;
+  // The gallery the press landed in, if it landed in one. Its photos
+  // have a drag of their own, so the block waits until the pointer
+  // walks out of the gallery.
+  const gallery = press.gallery;
+  let started = false;
+  let ghost = null;
+  let target = null;
+  // Set once the press has been judged: an inner gesture that turned
+  // out to be the one that was meant cancels the block drag, and the
+  // rest of the gesture belongs to that inner gesture.
+  let cancelled = false;
+
+  const clearTarget = () => {
+    if (target) target.classList.remove('drop-target');
+    target = null;
+  };
+
+  // Has the drag drawn a selection in the textarea? The browser updates
+  // the selection after the pointer event has been handled, so the
+  // answer is one event behind — hence the check on the NEXT move.
+  //
+  // A RANGE is what counts. A press that only places the caret leaves
+  // the two ends equal, and that is not a selection — it is a click,
+  // and the click must still reach the textarea.
+  const selectionDrawn = () => {
+    if (!ta) return false;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start === end) return false;
+    // The range has to be one the drag made, not one that was already
+    // there when the press began.
+    return !(start === selBefore[0] && end === selBefore[1]);
+  };
+
+  const beginDrag = (e) => {
+    started = true;
+    document.body.classList.add('diary-block-dragging');
+    ghost = makeBlockGhost(block, e);
+    document.body.appendChild(ghost);
+  };
+
+  // The last pointer position, so the ghost can start where the
+  // pointer is even when the drag begins a tick after the press.
+  let lastEvent = ev;
+
+  const onMove = (e) => {
+    lastEvent = e;
+    if (cancelled) return;
+    if (!started) {
+      // A small movement is a press, not a drag.
+      if (Math.abs(e.clientX - startX) < BLOCK_DRAG_THRESHOLD
+        && Math.abs(e.clientY - startY) < BLOCK_DRAG_THRESHOLD) return;
+      if (ta) {
+        // The decision waits a tick: the browser draws the selection
+        // after this event, and the check has to read it after that.
+        // The check runs again on every later move, so a selection that
+        // the browser drew late still cancels the drag.
+        if (!press.judged) {
+          press.judged = true;
+          setTimeout(() => {
+            if (cancelled) return;
+            if (selectionDrawn()) {
+              // The user was selecting text. The block stays put.
+              cancelled = true;
+              return;
+            }
+            beginDrag(lastEvent);
+          }, 0);
+        }
+        return;
+      }
+      if (gallery) {
+        // The press was in a gallery. As long as the pointer stays in
+        // it, the photos' own drag owns the gesture. The gallery hands
+        // the gesture over when the pointer walks out of it.
+        if (galleryHasPoint(gallery, e.clientX, e.clientY)) return;
+        beginDrag(e);
+      } else {
+        beginDrag(e);
+      }
+    }
+    if (!started) return;
+    if (e.cancelable) e.preventDefault();
+    if (ghost) {
+      ghost.style.left = e.clientX + 'px';
+      ghost.style.top = e.clientY + 'px';
+    }
+    // The block under the pointer is the one the dragged block would
+    // swap with.
+    const wrap = blockWrapAt(host, e.clientX, e.clientY);
+    if (!wrap || wrap === block.wrap) {
+      clearTarget();
+      return;
+    }
+    if (wrap !== target) {
+      clearTarget();
+      target = wrap;
+      target.classList.add('drop-target');
+    }
+  };
+
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    document.body.classList.remove('diary-block-dragging');
+    if (ghost) { ghost.remove(); ghost = null; }
+    if (!started) return;
+    // The drag ends with a click event on the block — swallow it, so
+    // the press does not reach whatever is under the pointer. A drag
+    // that began on a photo must not open the picture either.
+    if (gallery) {
+      gallery.dragging = true;
+      setTimeout(() => { gallery.dragging = false; }, 0);
+    }
+    if (target) {
+      const other = pageState.blocks.find((b) => b.wrap === target);
+      clearTarget();
+      if (other && swapBlocks(block, other)) renderBlocks();
+    }
+  };
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+}
+
+// The grip of a block: the sign that the block can be picked up.
+//
+// It is the visible handle at the top-left, but the drag starts
+// anywhere on the block — this is only where the user is told so.
+function makeBlockGrip(block) {
+  const grip = document.createElement('span');
+  grip.className = 'diary-block-grip';
+  grip.title = '拖动可与其它块交换位置';
+  grip.textContent = '⋮⋮';
+  grip.addEventListener('pointerdown', (e) => {
+    // Only the left button moves a block — the right one opens the
+    // menu.
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    startBlockDrag(block, e, { ta: null, selBefore: null, gallery: null });
+  });
+  // A drag ends with a click event on the grip — don't let it through.
+  grip.addEventListener('click', (e) => e.stopPropagation());
+  grip.addEventListener('contextmenu', (e) => e.stopPropagation());
+  return grip;
+}
+
 // Insert a block into the list at `index` and put it on the page.
 function insertBlock(index, block) {
   pageState.blocks.splice(index, 0, block);
@@ -1130,6 +1497,12 @@ function removeBlock(index) {
 // <textarea> nodes (they hold the user's cursor position and uncommitted
 // IME composition); the galleries keep their DOM too, so a photo that is
 // already on screen isn't rebuilt from scratch on every keystroke.
+//
+// Every block carries a GRIP — the sign that the block can be picked up
+// and swapped with another one. The grip belongs to the wrapper, not to
+// the block's own content, so it never competes with the text
+// selection of a textarea, with the photo drag inside a gallery, or
+// with the resize handle of a picture.
 function renderBlocks() {
   const host = document.getElementById('diary-blocks');
   if (!host) return;
@@ -1138,6 +1511,29 @@ function renderBlocks() {
     const wrap = document.createElement('div');
     wrap.className = 'diary-block';
     wrap.dataset.blockType = block.type;
+    // The wrapper is kept on the block: the drag looks the target up by
+    // it when the pointer is released.
+    block.wrap = wrap;
+    // The whole block is the handle: a press anywhere on it picks it
+    // up. The content that owns a gesture of its own — the words of a
+    // text block, the photos of a gallery — keeps it; the press is
+    // looked at before the drag begins.
+    wrap.addEventListener('pointerdown', (e) => {
+      if (e.button != null && e.button !== 0) return;
+      if (ownsItsOwnGesture(e.target)) return;
+      // The textarea under the press, and the selection it had when
+      // the press began. A drag that changes the selection was a text
+      // selection, not a move.
+      const ta = textareaUnder(e.target);
+      const selBefore = ta ? [ta.selectionStart, ta.selectionEnd] : null;
+      // The gallery under the press, if any. Its photos reorder with a
+      // drag of their own, so the block only takes over once the
+      // pointer leaves the gallery.
+      const galleryEl = galleryUnder(e.target);
+      const gallery = galleryEl ? galleryBlockOf(galleryEl) : null;
+      startBlockDrag(block, e, { ta, selBefore, gallery });
+    });
+    wrap.appendChild(makeBlockGrip(block));
     if (block.type === 'text') {
       // The text block is just the text: its controls live in the
       // right-click menu (see openTextMenu).
@@ -1424,6 +1820,7 @@ export async function render(args, params) {
             <li><b>右键某张图</b>：删除这张图片</li>
             <li><b>右键视频 / 音频</b>：插入图片 / 视频 / 音频、上下插入文字、播放 / 暂停、复制链接、删除这段媒体</li>
             <li><b>拖动图片</b>换顺序，<b>拖右下角手柄</b>改大小</li>
+            <li><b>按住块任意空白处拖动</b>，与另一块交换位置（块里划选文字、拖图组里的照片，都还归它们自己）</li>
           </ul>
         </section>
       </aside>
