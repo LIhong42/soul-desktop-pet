@@ -22,6 +22,7 @@
 // ?category=… param.
 import { api, toast, todayYmd, wireDateInputs } from '../api.js';
 import { register, navigate, getReferrerPath } from '../router.js';
+import { applyBackground } from '../page_background.js';
 import {
   MAIN_THEME,
   buildEventForm,
@@ -63,6 +64,15 @@ async function renderEdit(args, params) {
 
   const app = document.getElementById('app');
   const isNew = !args.id;
+
+  // The page wears the same background artwork as the 提醒 page — the user
+  // asked for it, and it is the same picture the list it belongs to wears,
+  // so the form does not look like a different app.
+  //
+  // It is applied before the form renders so the page doesn't flash the
+  // plain app surface first.
+  await applyBackground();
+
   let ev = {
     category,
     contact_id: params.contact_id || null,
@@ -82,6 +92,10 @@ async function renderEdit(args, params) {
     ev = await api.events.get(args.id);
   }
   const contacts = await api.contacts.list();
+  // The built-in festival catalog, for the 类型 dropdown's 节日 option. It
+  // comes from the server because the catalog lives in main/festivals.js
+  // and the two must not drift.
+  const festivals = await api.events.listFestivals();
   const listRoute = categoryListRoute(category);
   // The "back" target honors the page the user actually came from rather
   // than the hard-coded category list. Falling back to the category list
@@ -103,10 +117,15 @@ async function renderEdit(args, params) {
     showContact,
     ev,
     contacts,
+    festivals,
   });
 
+  // The `bg-page` wrapper is what the background stylesheet scopes itself
+  // to — it rebuilds the cards as translucent sheets of paper over the
+  // artwork. The 提醒 page uses the same wrapper, so the two pages read
+  // as one family.
   app.innerHTML = `
-    <div class="page-column">
+    <div class="bg-page">
       <div class="row between">
         <h1>${isNew ? '新建' : '编辑'}${categoryTitle(category)}</h1>
         <a class="back-link" href="${listHref}"><span class="icon-arrow-left"></span>返回列表</a>
@@ -133,13 +152,12 @@ async function renderEdit(args, params) {
   document.getElementById('save').onclick = async () => {
     const state = wired.read();
     // Tag kind comes from the 类型 dropdown. The dropdown includes an
-    // "(无)" option that maps to null. Festival events are system-managed
-    // and the dropdown is locked for them (see form HTML), so we just
-    // preserve the existing tag_kind in that case.
+    // "(无)" option that maps to null.
+    //
     // For 工作事件 the dropdown is not rendered, so we keep the existing
     // tag_kind untouched on the server (typically null).
     let tagKind = ev.tag_kind || null;
-    if (showTagKind && ev.tag_kind !== 'festival') {
+    if (showTagKind) {
       tagKind = state.tagKind || null;
     }
     const err = validateEventForm(state);
@@ -148,9 +166,24 @@ async function renderEdit(args, params) {
     // contact name (or a generic placeholder) on create, and falls back to
     // the existing title on update if the form somehow sends an empty value.
     // 工作事件没有关联联系人字段,提交时显式置 null,避免残留旧值。
+    //
+    // A festival row is the one case where the title IS the festival code:
+    // eventPayload puts the picked festival's code there, and the server
+    // rejects a festival row whose title is not a built-in code.
+    //
+    // Switching 类型 AWAY from 节日 must clear that code, otherwise the row
+    // would keep a festival code as its title while no longer being a
+    // festival — the server would then auto-fill it with the contact's name
+    // on create, but on UPDATE it falls back to the existing title, which
+    // is still the stale code. So the title is emptied here and the server
+    // re-derives it.
+    const wasFestival = ev.tag_kind === 'festival';
+    const isFestival = tagKind === 'festival';
+    let title = ev.title || '';
+    if (wasFestival && !isFestival) title = '';
     const input = eventPayload(state, {
       category,
-      title: ev.title || '',
+      title,
     });
     input.tag_kind = tagKind;
     if (!showContact) input.contact_id = null;

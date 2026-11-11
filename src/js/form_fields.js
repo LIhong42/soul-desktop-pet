@@ -89,12 +89,23 @@ export const REPEAT_OPTIONS = [
   { value: 'yearly', label: '每年' },
 ];
 
-// The 类型 (tag kind) options, minus 节日 — festivals are system-managed
-// and can only be chosen from the festival library, never typed in.
+// The 类型 (tag kind) options.
+//
+// 节日 is in the list now: picking it reveals a second dropdown listing
+// the built-in festivals, and the chosen festival's CODE is stored as the
+// event's title (the server accepts a festival code as the title and
+// rejects anything else for a festival-tagged row — see main/ipc.js
+// `events:create`). The 提醒 page resolves that code back to a human
+// label for display, so a festival row reads "父亲节" in the list.
+//
+// The festival LIST itself is not hard-coded here: it comes from the
+// server (`api.events.listFestivals()`), because the catalog lives in
+// main/festivals.js and the two must not drift.
 export const TAG_KIND_OPTIONS = [
   { value: '', label: '(无)' },
   { value: 'birthday', label: '生日' },
   { value: 'anniversary', label: '纪念日' },
+  { value: 'festival', label: '节日' },
 ];
 
 // ---- Style adapters -----------------------------------------------------
@@ -185,16 +196,27 @@ export function buildEventForm(opts = {}) {
     showContact = true,
     ev = {},
     contacts = [],
+    festivals = [],        // [{ code, label }] — the built-in festival catalog
   } = opts;
   const p = id || prefix;
   const t = theme;
 
   const initialCalMode = (ev.lunar_month && ev.lunar_day) ? 'lunar' : 'solar';
   const initialKind = ev.remind_kind || 'one_time';
+  // A festival row stores the festival CODE as its title, so the picker
+  // starts on that code.
+  const isFestival = ev.tag_kind === 'festival';
 
   const tagKindOptions = TAG_KIND_OPTIONS.map((o) => {
     const sel = (ev.tag_kind || '') === o.value ? ' selected' : '';
     return `<option value="${o.value}"${sel}>${escapeHtml(o.label)}</option>`;
+  }).join('');
+
+  // The festival picker's options. A festival row's title IS the code, so
+  // the option value is the code and the option text is the label.
+  const festivalOptions = festivals.map((f) => {
+    const sel = ev.title === f.code ? ' selected' : '';
+    return `<option value="${escapeHtml(f.code)}"${sel}>${escapeHtml(f.label)}</option>`;
   }).join('');
 
   const repeatOptions = REPEAT_OPTIONS.map((o) => {
@@ -213,6 +235,16 @@ export function buildEventForm(opts = {}) {
         ${tagKindOptions}
       </select>
     `) : ''}
+    ${showTagKind ? `
+      <div class="${t.field}${isFestival ? '' : ' ' + t.hidden}" id="${p}-festival-field">
+        <label>节日</label>
+        <select id="${p}-festival">
+          <option value="">请选择节日</option>
+          ${festivalOptions}
+        </select>
+        <div class="${t.meta}">选择内置节日，提醒会自动按节日每年的日期触发</div>
+      </div>
+    ` : ''}
     ${field(t, '描述', `<textarea id="${p}-desc">${escapeHtml(ev.description || '')}</textarea>`)}
     ${showContact ? field(t, '关联联系人（可选）', `
       <select id="${p}-contact">
@@ -222,7 +254,12 @@ export function buildEventForm(opts = {}) {
     `) : ''}
     ${inlineCheckbox(t, `${p}-remind`, '启用提醒', ev.remind !== false)}
     <div id="${p}-remind-fields"${ev.remind === false ? ' class="hidden"' : ''}>
-      <div class="${t.row}">
+      ${showTagKind ? `
+        <div class="${t.field}${isFestival ? '' : ' ' + t.hidden}" id="${p}-festival-note">
+          <div class="${t.meta}">节日提醒按节日当天的日期触发，每一年自动重复，无需设置日期</div>
+        </div>
+      ` : ''}
+      <div class="${t.row}" id="${p}-repeat-fields">
         ${field(t, '重复', `
           <select id="${p}-kind">
             ${repeatOptions}
@@ -264,10 +301,14 @@ export function buildEventForm(opts = {}) {
     theme: t,
     ids: {
       tagKind: `${p}-tag-kind`,
+      festivalField: `${p}-festival-field`,
+      festivalNote: `${p}-festival-note`,
+      festival: `${p}-festival`,
       desc: `${p}-desc`,
       contact: `${p}-contact`,
       remind: `${p}-remind`,
       remindFields: `${p}-remind-fields`,
+      repeatFields: `${p}-repeat-fields`,
       kind: `${p}-kind`,
       intervalField: `${p}-interval-field`,
       intervalDays: `${p}-interval-days`,
@@ -301,9 +342,41 @@ export function wireEventForm(root, ids, theme = MAIN_THEME) {
   const dateEl = $(ids.date);
   const intervalField = $(ids.intervalField);
   const remindFields = $(ids.remindFields);
+  const tagKindEl = $(ids.tagKind);
+  const festivalField = $(ids.festivalField);
+  const festivalNote = $(ids.festivalNote);
+  const repeatFields = $(ids.repeatFields);
+  const solarFields = $(ids.solarFields);
+  const lunarFields = $(ids.lunarFields);
 
   function toggleRemind() {
     if (remindFields) remindFields.classList.toggle('hidden', !remindEl.checked);
+  }
+
+  // The festival picker only exists when 类型 === 节日. Every other tag
+  // kind has no festival to choose, so the picker is hidden.
+  //
+  // A festival row also fires on the festival's OWN date, so the repeat /
+  // date / 阳历农历 controls are hidden for it: they would have no effect
+  // (the server derives the fire date from the festival code), and leaving
+  // them on screen would promise the user a control that does nothing.
+  function isFestivalKind() {
+    return !!(tagKindEl && tagKindEl.value === 'festival');
+  }
+
+  function toggleTagKind() {
+    const isFestival = isFestivalKind();
+    if (festivalField) festivalField.classList.toggle('hidden', !isFestival);
+    if (festivalNote) festivalNote.classList.toggle('hidden', !isFestival);
+    if (repeatFields) repeatFields.classList.toggle('hidden', isFestival);
+    // The date fields follow the repeat / calendar-mode rules normally,
+    // but a festival hides both outright.
+    if (isFestival) {
+      if (solarFields) solarFields.classList.add('hidden');
+      if (lunarFields) lunarFields.classList.add('hidden');
+    } else {
+      toggleCalMode();
+    }
   }
 
   function toggleKind() {
@@ -321,10 +394,11 @@ export function wireEventForm(root, ids, theme = MAIN_THEME) {
     const mode = root.querySelector(`input[name="${ids.calMode}"]:checked`)?.value || 'solar';
     const kind = kindEl.value;
     const noLunar = !lunarAllowedFor(kind);
-    const solarFields = $(ids.solarFields);
-    const lunarFields = $(ids.lunarFields);
-    if (solarFields) solarFields.classList.toggle('hidden', mode !== 'solar');
-    if (lunarFields) lunarFields.classList.toggle('hidden', mode !== 'lunar');
+    // A festival fires on its own date, so the calendar-mode fields stay
+    // hidden regardless of which radio is checked.
+    const festival = isFestivalKind();
+    if (solarFields) solarFields.classList.toggle('hidden', festival || mode !== 'solar');
+    if (lunarFields) lunarFields.classList.toggle('hidden', festival || mode !== 'lunar');
     const lunarRadio = root.querySelector(`input[name="${ids.calMode}"][value="lunar"]`);
     if (lunarRadio) {
       lunarRadio.disabled = noLunar;
@@ -346,12 +420,14 @@ export function wireEventForm(root, ids, theme = MAIN_THEME) {
 
   if (remindEl) remindEl.onchange = toggleRemind;
   if (kindEl) kindEl.onchange = () => { toggleKind(); toggleCalMode(); };
+  if (tagKindEl) tagKindEl.onchange = toggleTagKind;
   root.querySelectorAll(`input[name="${ids.calMode}"]`).forEach((el) => {
     el.addEventListener('change', toggleCalMode);
   });
   toggleRemind();
   toggleKind();
   toggleCalMode();
+  toggleTagKind();
 
   return {
     // Read the current state of the form.
@@ -365,6 +441,9 @@ export function wireEventForm(root, ids, theme = MAIN_THEME) {
         desc: ($(ids.desc)?.value || '').trim(),
         contactId: $(ids.contact)?.value || null,
         tagKind: $(ids.tagKind)?.value || null,
+        // The chosen festival's CODE (e.g. 'fathers_day'). Empty when the
+        // 类型 is not 节日.
+        festival: $(ids.festival)?.value || null,
         date: $(ids.date)?.value || null,
         time: $(ids.time)?.value || '09:00',
         lunarMonth: $(ids.lunarMonth)?.value ? Number($(ids.lunarMonth).value) : null,
@@ -381,6 +460,9 @@ export function wireEventForm(root, ids, theme = MAIN_THEME) {
 // null when the form is valid.
 export function validateEventForm(state) {
   if (!state.desc) return '请填写描述';
+  // A festival row needs a festival: the server stores the festival CODE
+  // as the title, so without a pick there is nothing to store.
+  if (state.tagKind === 'festival' && !state.festival) return '请选择节日';
   // A lunar anchor on a repeat kind that can't carry one. The UI already
   // prevents this (the radio is disabled and the mode resets to 阳历), so
   // this is the belt-and-braces check for the unreachable state — the same
@@ -409,6 +491,23 @@ export function eventPayload(state, opts = {}) {
     tag_kind: state.tagKind || null,
     advance_days: null,
   };
+  // A festival-tagged row stores the festival CODE as its title — that is
+  // the contract the server enforces (main/ipc.js `events:create` rejects
+  // a festival row whose title is not a built-in festival code), and the
+  // 提醒 page resolves the code back to a label for display.
+  if (state.tagKind === 'festival' && state.festival) {
+    payload.title = state.festival;
+    // A festival fires on the festival's own date, every year. The form
+    // hides the repeat / date controls for a festival, so the values read
+    // from them are leftovers from whatever was on screen before — sending
+    // them would store a repeat mode the server then ignores.
+    payload.remind_kind = 'yearly';
+    payload.lunar_month = null;
+    payload.lunar_day = null;
+    payload.remind_date = null;
+    payload.interval_days = null;
+    return payload;
+  }
   if (state.kind === 'every_n_days') {
     payload.interval_days = Math.min(Math.floor(Number(state.intervalDays)), 365);
   } else {

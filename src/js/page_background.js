@@ -44,6 +44,7 @@
 // off at the edges.
 
 import { api } from './api.js';
+import { matchRoute } from './router.js';
 
 // The pages that wear the artwork. Kept in sync with
 // main/page_background.js → BACKGROUND_ROUTES.
@@ -56,6 +57,11 @@ export const BACKGROUND_ROUTES = [
   // same artwork because it is the same page family and its translucent
   // paper sheets are drawn for that picture.
   '/card-life/stats',
+  // The new/edit reminder form. It is the form the 提醒 page's entries
+  // are edited in, so it wears the same picture as the list.
+  '/events/new',
+  '/events/:id',
+  '/events/:id/edit',
 ];
 
 // The scroll container the artwork is painted onto.
@@ -64,12 +70,38 @@ const contentEl = () => document.querySelector('.content');
 /**
  * Does this route wear the background artwork?
  *
- * Exact match, so `/contacts/:id` (the contact detail page, which paints the
- * artwork on its own wrapper) does not inherit the list page's background.
+ * Exact match by default, so `/contacts/:id` (the contact detail page, which
+ * paints the artwork on its own wrapper) does not inherit the list page's
+ * background.
+ *
+ * A list entry that carries a `:param` segment matches the CONCRETE path
+ * too: the router hands this function the real path (`/events/abc-123`),
+ * not the pattern it was registered under, so a pattern-only entry would
+ * never fire.
+ *
+ * The pattern match is the ROUTER's own match, not a local approximation
+ * of it. That matters because the router prefers a static route over a
+ * parameterised one: `/events/memorial` (the 回忆 list) is a static route
+ * and is handled by it, so it is NOT an event id and must not inherit the
+ * event form's artwork. Re-implementing the precedence here would let the
+ * two drift.
  */
 export function routeHasBackground(route, routes) {
   const list = (routes && routes.length) ? routes : BACKGROUND_ROUTES;
-  return list.includes(route);
+  if (!route) return false;
+  if (list.includes(route)) return true;
+  // Ask the router which pattern handles this path. When it is a static
+  // route, that route is the one that decides — a parameterised entry in
+  // the background list must not shadow it.
+  const matched = matchRoute(route);
+  if (matched && !matched.pattern.includes(':')) return false;
+  const segs = route.split('/').filter(Boolean);
+  return list.some((pattern) => {
+    if (!pattern.includes(':')) return false;
+    const ps = pattern.split('/').filter(Boolean);
+    if (ps.length !== segs.length) return false;
+    return ps.every((p, i) => p.startsWith(':') || p === segs[i]);
+  });
 }
 
 /**

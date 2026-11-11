@@ -23,6 +23,12 @@ const OUT_DIR = process.argv[2]
 
 const PAGES = ['/contacts', '/reminders'];
 
+// The 新建提醒 page wears the same artwork as the list it belongs to.
+// It is shot separately from PAGES because it needs its own wait
+// condition (its h1 is 新建提醒, and the festival picker has to be
+// revealed before the shot).
+const FORM_ROUTE = '/events/new?category=general';
+
 app.whenReady().then(async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'soulpet-bgpages-'));
   await db.open(path.join(dir, 'test.sqlite'));
@@ -141,6 +147,45 @@ app.whenReady().then(async () => {
     fs.writeFileSync(file, shot.toPNG());
     console.log(`wrote ${file}  (hash=${landed}, h1=${head})`);
   }
+
+  // ---- the 新建提醒 form ----------------------------------------------
+  //
+  // Two shots: the form as it opens (类型 = (无)), and the form with
+  // 类型 = 节日 chosen, so the festival picker and the hidden repeat /
+  // date controls can both be seen.
+  await winMain.webContents.executeJavaScript(`location.hash = '#${FORM_ROUTE}'; true`);
+  await winMain.webContents.executeJavaScript(`(async () => {
+    for (let i = 0; i < 60; i++) {
+      const h1 = document.querySelector('#app h1');
+      if (h1 && h1.textContent.includes('新建提醒')) {
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  })()`);
+  await new Promise((r) => setTimeout(r, 700));
+
+  const formShot = await winMain.webContents.capturePage();
+  fs.writeFileSync(path.join(OUT_DIR, 'events-new.png'), formShot.toPNG());
+  console.log(`wrote ${path.join(OUT_DIR, 'events-new.png')}`);
+
+  // Pick 节日 and reveal the picker.
+  await winMain.webContents.executeJavaScript(`(async () => {
+    const sel = document.querySelector('#e-tag-kind');
+    if (!sel) return 'no dropdown';
+    sel.value = 'festival';
+    sel.dispatchEvent(new Event('change'));
+    const f = document.querySelector('#e-festival');
+    if (f && f.options.length > 1) f.selectedIndex = 1;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return 'ok';
+  })()`);
+  await new Promise((r) => setTimeout(r, 500));
+  const festShot = await winMain.webContents.capturePage();
+  fs.writeFileSync(path.join(OUT_DIR, 'events-new-festival.png'), festShot.toPNG());
+  console.log(`wrote ${path.join(OUT_DIR, 'events-new-festival.png')}`);
 
   try { db.close(); } catch {}
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}

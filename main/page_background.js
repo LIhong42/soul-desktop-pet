@@ -98,6 +98,11 @@ const BACKGROUND_ROUTES = [
   '/card-life',
   // The 打卡墙 — the check-in wall for the 抽卡 page.
   '/card-life/stats',
+  // The new/edit reminder form. It is the form the 提醒 page's entries
+  // are edited in, so it wears the same picture as the list.
+  '/events/new',
+  '/events/:id',
+  '/events/:id/edit',
 ];
 
 /**

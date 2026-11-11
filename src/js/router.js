@@ -32,10 +32,22 @@ function parseHash() {
       params[decodeURIComponent(k)] = decodeURIComponent(v || '');
     }
   }
-  // Match path with optional :param. Static (non-parameterized) patterns are
-  // matched BEFORE parameterized ones so that e.g. "/contacts/new" wins over
-  // "/contacts/:id" regardless of registration order. This is critical —
-  // otherwise "new" gets parsed as an id and contacts:get("new") returns null.
+  const m = matchRoute(path);
+  if (!m) return null;
+  return { ...m, params, path, query: query || '' };
+}
+
+// Find the route pattern that handles `path`.
+//
+// Match path with optional :param. Static (non-parameterized) patterns are
+// matched BEFORE parameterized ones so that e.g. "/contacts/new" wins over
+// "/contacts/:id" regardless of registration order. This is critical —
+// otherwise "new" gets parsed as an id and contacts:get("new") returns null.
+//
+// The same precedence applies to "/events/memorial" (the 回忆 list, a
+// static route) against "/events/:id" (one event): the static one wins,
+// so "/events/memorial" is NOT an event id.
+export function matchRoute(path) {
   const patterns = Object.keys(routes);
   const staticPatterns = patterns.filter((p) => !p.includes(':'));
   const dynamicPatterns = patterns.filter((p) => p.includes(':'));
@@ -52,7 +64,7 @@ function parseHash() {
         ok = false; break;
       }
     }
-    if (ok) return { handler: routes[pattern], args, params, path, query: query || '' };
+    if (ok) return { handler: routes[pattern], pattern, args };
   }
   return null;
 }

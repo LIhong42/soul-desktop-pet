@@ -10,7 +10,7 @@
     "dev": "node scripts/run-electron.js . --dev",
     "doctor": "node scripts/doctor.js",
     "verify:cutout": "node scripts/verify-cutout.js",
-    "verify:reminders": "node scripts/verify-reminders.js && node scripts/run-electron.js scripts/test-reminder-dismiss.js && node scripts/run-electron.js scripts/test-reminder-pill.js",
+    "verify:reminders": "node scripts/verify-reminders.js && node scripts/verify-reminder-cleanup.js && node scripts/verify-festival-events.js && node scripts/run-electron.js scripts/test-reminder-dismiss.js && node scripts/run-electron.js scripts/test-reminder-pill.js",
     "verify:quick-record": "node scripts/run-electron.js scripts/verify-quick-record.js && node scripts/run-electron.js scripts/test-quick-record-ui.js && node scripts/run-electron.js scripts/test-form-parity.js",
     "verify:diary": "node scripts/verify-diary-db.js && node scripts/run-electron.js scripts/verify-diary-media-export.js && node scripts/run-electron.js scripts/test-diary-editor.js && node scripts/run-electron.js scripts/test-diary-media.js && node scripts/run-electron.js scripts/test-diary-audio-recording.js",
     "verify:card-draws": "node scripts/verify-card-draws.js && node scripts/run-electron.js scripts/test-card-life-design.js",

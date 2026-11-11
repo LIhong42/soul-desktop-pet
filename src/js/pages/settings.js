@@ -23,6 +23,9 @@ const PAGE_BG_ROUTE_LABELS = {
   '/reminders': '提醒',
   '/card-life': '抽卡',
   '/card-life/stats': '打卡墙',
+  '/events/new': '新建提醒页',
+  '/events/:id': '编辑提醒页',
+  '/events/:id/edit': '编辑提醒页',
 };
 
 // The pages that wear the artwork in a way the route list cannot express.

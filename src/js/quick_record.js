@@ -78,6 +78,10 @@ const subEl = document.getElementById('qr-sub');
 // The kind currently being recorded, and the contacts loaded for it.
 let currentKind = null;
 let contacts = [];
+// The built-in festival catalog, for the 类型 dropdown's 节日 option. It
+// comes from the server because the catalog lives in main/festivals.js and
+// the two must not drift.
+let festivals = [];
 
 // Handles returned by the shared form helpers (src/js/form_fields.js) for
 // the form currently on screen. `eventWiring.read()` returns the live
@@ -244,6 +248,7 @@ function eventForm(kindId) {
       interval_days: null,
     },
     contacts,
+    festivals,
   });
   form.html += `
     <div class="qr-actions">
@@ -311,6 +316,14 @@ async function openKind(kindId) {
   } catch (e) {
     contacts = [];
     say('联系人读取失败：' + ((e && e.message) || e), 'error');
+  }
+
+  // The festival catalog, for the 提醒 form's 类型 dropdown. A failure here
+  // only costs the 节日 option — the rest of the form still works.
+  try {
+    festivals = await api.events.listFestivals();
+  } catch (e) {
+    festivals = [];
   }
 
   applyTint(k.tint);

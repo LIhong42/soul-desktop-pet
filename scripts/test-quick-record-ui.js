@@ -210,6 +210,48 @@ app.whenReady().then(async () => {
   check('the interval field is hidden for one_time',
     await evalIn(win, `document.getElementById('qr-interval-field').classList.contains('hidden')`), true);
 
+  // The class alone is not enough: this window does NOT load styles.css, so
+  // the global `.hidden` rule that hides the field in the main window has
+  // to be repeated in quick_record.css. Without it the field kept the
+  // `hidden` class AND stayed on screen. So the assertion has to be on the
+  // COMPUTED display, not on the class.
+  check('the hidden interval field is really out of sight',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-interval-field')).display`), 'none');
+  check('the hidden lunar field set is really out of sight',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-lunar-fields')).display`), 'none');
+  check('the festival picker is really out of sight',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-festival-field')).display`), 'none');
+
+  // Picking 节日 reveals the festival picker and hides the repeat / date
+  // controls — which have no effect on a festival, because the reminder
+  // fires on the festival's own day.
+  await evalIn(win, `
+    const tagSel = document.getElementById('qr-tag-kind');
+    tagSel.value = 'festival';
+    tagSel.dispatchEvent(new Event('change'));
+  `);
+  await new Promise((r) => setTimeout(r, 100));
+  check('the festival picker appears for 节日',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-festival-field')).display`), 'flex');
+  check('the repeat controls are out of sight for a festival',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-repeat-fields')).display`), 'none');
+  check('the date controls are out of sight for a festival',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-solar-fields')).display`), 'none');
+  checkTrue('the festival picker lists the built-in festivals',
+    await evalIn(win, `document.getElementById('qr-festival').options.length > 1`));
+
+  // Back to (无): the repeat / date controls come back.
+  await evalIn(win, `
+    const tagSel2 = document.getElementById('qr-tag-kind');
+    tagSel2.value = '';
+    tagSel2.dispatchEvent(new Event('change'));
+  `);
+  await new Promise((r) => setTimeout(r, 100));
+  check('the repeat controls come back when 节日 is deselected',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-repeat-fields')).display`), 'flex');
+  check('the festival picker goes away when 节日 is deselected',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-festival-field')).display`), 'none');
+
   // Switching to 农历 reveals the lunar selects and hides the solar date.
   await evalIn(win, `
     document.querySelector('input[name="qr-cal-mode"][value="lunar"]').click();

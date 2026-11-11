@@ -288,6 +288,76 @@
   color: var(--bg-ink-soft);
 }
 
+/* ---- Form fields ---------------------------------------------------------
+   The new/edit reminder form wears the same artwork as the list it belongs
+   to, so its inputs need the same treatment the list's controls get: the
+   global rules paint them opaque white, which on the artwork reads as a
+   stack of bright stickers on a painting.
+
+   They get the DENSER sheet (--bg-paper-hover) rather than the lighter one
+   the list rows use. A form field carries what the user is typing, so it
+   has to be a solid, readable surface — a light sheet would let the
+   artwork's darker corners show through behind the caret. */
+.bg-page input[type="text"],
+.bg-page input[type="number"],
+.bg-page input[type="date"],
+.bg-page input[type="time"],
+.bg-page input[type="datetime-local"],
+.bg-page textarea {
+  background: var(--bg-paper-hover);
+  border-color: var(--bg-line-strong);
+  color: var(--bg-ink);
+}
+.bg-page textarea::placeholder,
+.bg-page input::placeholder {
+  color: var(--bg-ink-soft);
+}
+/* The date / time pickers carry their own background in the global rules
+   (`background-color: #fafbfc` — a cool grey). Over warm artwork that grey
+   reads as a foreign object, so it takes the warm sheet too. */
+.bg-page input[type="date"],
+.bg-page input[type="time"],
+.bg-page input[type="datetime-local"] {
+  background-color: var(--bg-paper-hover);
+}
+.bg-page input[type="date"]:hover,
+.bg-page input[type="time"]:hover,
+.bg-page input[type="datetime-local"]:hover {
+  background-color: var(--bg-paper-hover);
+  border-color: var(--accent);
+}
+/* The calendar-picker icon is drawn by Chromium in a colour that does not
+   follow `color`, so it is tinted to match the warm ink. */
+.bg-page input[type="date"]::-webkit-calendar-picker-indicator,
+.bg-page input[type="time"]::-webkit-calendar-picker-indicator,
+.bg-page input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  opacity: 0.55;
+  filter: sepia(0.35) saturate(1.4) hue-rotate(-12deg);
+}
+.bg-page input[type="date"]::-webkit-calendar-picker-indicator:hover,
+.bg-page input[type="time"]::-webkit-calendar-picker-indicator:hover,
+.bg-page input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+/* The radio buttons (阳历 / 农历) and the checkbox (启用提醒) are small
+   enough that the artwork behind them would show through the box and make
+   the control hard to see. `accent-color` tints the checked state with the
+   app's accent, which is what carries them. */
+.bg-page input[type="radio"],
+.bg-page input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* The 「返回列表」 link is furniture, so it takes the page's soft ink
+   rather than the app's neutral grey — the same warm brown the meta text
+   uses. */
+.bg-page .back-link {
+  color: var(--bg-ink-soft);
+}
+.bg-page .back-link:hover {
+  color: var(--accent);
+}
+
 /* The empty state. A dashed border reads as "nothing here" on the plain
    surface; over the artwork it would compete with the picture, so it gets
    the same translucent sheet as the rows. */

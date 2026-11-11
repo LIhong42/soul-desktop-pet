@@ -771,9 +771,12 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
     // attempt to write category='memorial' here so the UI is forced through
     // the new memorial_events:* channels.
     if (category === 'memorial') throw new Error('请使用新建回忆页面');
-    // Tag kind is no longer settable from the new-event form. The renderer
-    // never sends it. We accept it from internal callers (festival auto-
-    // create) but never from the form.
+    // Tag kind comes from the form's 类型 dropdown: null / 'birthday' /
+    // 'anniversary' / 'festival'.
+    //
+    // A festival row stores the festival CODE as its title, so the code
+    // has to be one of the built-ins — otherwise the row could never be
+    // resolved back to a festival and its fire date could not be computed.
     let tagKind = null;
     if (input.tag_kind && EVENT_TAG_KINDS.has(input.tag_kind)) {
       tagKind = input.tag_kind;

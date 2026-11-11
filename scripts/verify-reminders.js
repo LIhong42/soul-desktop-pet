@@ -126,6 +126,69 @@ check('every_n_days without interval → 1 day',
     new Date(2026, 2, 1, 12, 0))),
   '2026-03-02');
 
+console.log('\n== computeNextFireEvent: 节日 ==');
+
+// A festival row stores the festival CODE as its title, and fires on the
+// festival's own date — NOT on the date the form happened to carry.
+//
+// 圣诞节 is 12-25. The form's remind_date here is deliberately a
+// different day (2026-03-01): the festival's date has to win.
+check('a festival fires on the festival date, not the form date',
+  ymd(tu.computeNextFireEvent(
+    { ...base, title: 'christmas', tag_kind: 'festival',
+      remind_kind: 'yearly', remind_date: '2026-03-01' },
+    new Date(2026, 2, 1, 12, 0))),
+  '2026-12-25');
+
+// 父亲节 is the 3rd Sunday of June. 2026-06-21 is that Sunday.
+check('a floating festival fires on its computed date',
+  ymd(tu.computeNextFireEvent(
+    { ...base, title: 'fathers_day', tag_kind: 'festival',
+      remind_kind: 'yearly', remind_date: null },
+    new Date(2026, 2, 1, 12, 0))),
+  '2026-06-21');
+
+// The fire time is still the user's 提醒时间.
+check('a festival keeps the chosen remind time',
+  tu.computeNextFireEvent(
+    { ...base, remind_time: '08:30', title: 'christmas', tag_kind: 'festival',
+      remind_kind: 'yearly' },
+    new Date(2026, 2, 1, 12, 0)).getHours(),
+  8);
+
+// Once the festival has passed this year, the next one is next year.
+check('a past festival rolls into next year',
+  ymd(tu.computeNextFireEvent(
+    { ...base, title: 'christmas', tag_kind: 'festival',
+      remind_kind: 'yearly' },
+    new Date(2026, 11, 26, 12, 0))),
+  '2027-12-25');
+
+// A stale cached next_fire_at must NOT win over the festival's own date —
+// otherwise a row whose cache was computed before the festival changed
+// would keep firing on the old day.
+check('a stale cached next_fire_at does not override the festival date',
+  ymd(tu.computeNextFireEvent(
+    { ...base, title: 'christmas', tag_kind: 'festival',
+      remind_kind: 'yearly', next_fire_at: '2027-03-01 09:00:00' },
+    new Date(2026, 2, 1, 12, 0))),
+  '2026-12-25');
+
+// An unknown code has no date to fire on.
+check('an unknown festival code has no fire date',
+  tu.computeNextFireEvent(
+    { ...base, title: 'not_a_festival', tag_kind: 'festival',
+      remind_kind: 'yearly' },
+    new Date(2026, 2, 1, 12, 0)),
+  null);
+
+// A non-festival row is unaffected by the festival branch.
+check('a non-festival yearly row still uses its own date',
+  ymd(tu.computeNextFireEvent(
+    { ...base, remind_kind: 'yearly', remind_date: '2026-03-01' },
+    new Date(2026, 2, 1, 12, 0))),
+  '2027-03-01');
+
 console.log('\n== importantDateOccurrence (advance window) ==');
 
 const birthday = { month: 3, day: 15, advance_days: 7 };

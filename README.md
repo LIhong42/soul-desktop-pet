@@ -30,7 +30,10 @@
 - **Recurring reminders**: birthdays, anniversaries and festivals trigger on a cycle — **one-off / daily / weekly / every N days / monthly / yearly**;
 - **Work event reminders**: one-off or cron-scheduled, shown on a separate channel from personal events;
 - A built-in festival library, **lunar calendar** dates and floating festivals are all computed automatically;
+- The **new / edit reminder page** wears the **same background artwork** as the Reminders page, with its content laid over it as translucent sheets of paper;
+- The **类型 (type) dropdown** offers **(none) / 生日 / 纪念日 / 节日**. Picking **节日** reveals a **festival picker** listing the built-in library; the reminder then fires on that festival's own day, **repeating every year**, and the repeat / date inputs hide themselves because they would have no effect.
 - The pet shows an unread reminder badge in the corner and wakes you up when the time comes.
+- **Automatic cleanup**: a one-off reminder is **deleted from the database** once it has been done for a full day — it can never fire again, so there is no reason to keep it. The **Reminders** page therefore does not pile up over time. **Recurring** reminders (daily / weekly / monthly / yearly, and so on) and entries whose reminder is switched off are never deleted.
 
 ### 📷 Memory Events & Album Export
 - "Memory events" record moments on a timeline — in a **diary-style editor**, where the title, the body and the photos all live on one sheet of paper. Write first, save second;

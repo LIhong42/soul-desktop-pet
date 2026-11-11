@@ -68,9 +68,15 @@ app.whenReady().then(async () => {
 
   // The routes that wear the background. Kept in one place so the test and
   // the implementation can't disagree about which pages are covered.
+  //
+  // The 新建/编辑提醒 routes are here because the form wears the same
+  // artwork as the 提醒 list it belongs to. The concrete `/events/new` is
+  // listed rather than the pattern, so the list can be walked directly;
+  // the parameterised forms are covered by the leak test below.
   const BG_ROUTES = [
     '/today', '/contacts', '/reminders',
     '/card-life', '/card-life/stats',
+    '/events/new',
   ];
 
   // Seed enough work events and contacts for their lists to need more than
@@ -224,6 +230,29 @@ app.whenReady().then(async () => {
     check(`${route} computes no file:// background`,
       !bg.computed.includes('file://'), bg.computed);
   }
+
+  // `/events/memorial` is the 回忆 list — a STATIC route that the router
+  // matches before the parameterised `/events/:id`. So it is not an event
+  // id and must not inherit the event form's artwork.
+  //
+  // This is the case a naive pattern match gets wrong: matching
+  // `/events/:id` against the concrete path "/events/memorial" would say
+  // "yes, that's an event" and paint the 回忆 list with the form's
+  // background.
+  await goto('#/events/memorial', 600);
+  const memorialBg = await readBg();
+  check('the static /events/memorial is not treated as an event id',
+    !memorialBg.hasClass, memorialBg.computed);
+
+  // The parameterised route DOES wear the artwork. A bogus id still
+  // exercises the decision: the background is applied in the router's
+  // onChange, before the page's own render, so it is observable even when
+  // the page itself renders a "not found" state.
+  await goto('#/events/__no_such_event__', 600);
+  const eventBg = await readBg();
+  check('the event detail route wears the artwork', eventBg.hasClass && !!eventBg.image);
+  check('the event detail route computes a file:// background',
+    eventBg.computed.includes('file://'), eventBg.computed);
 
   // -------------------------------------------------------------------------
   // Test 4 — the contact DETAIL page does not inherit the list background

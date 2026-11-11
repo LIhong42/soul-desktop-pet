@@ -10,6 +10,7 @@ const db = require('./db');
 const petInteractions = require('./pet_interactions');
 const petMood = require('./pet_mood');
 const autoBehaviors = require('./auto_behaviors');
+const reminderCleanup = require('./reminder_cleanup');
 const { computeNextFireEvent, parseDateTime,
         importantDateOccurrence, fmtDateTime } = require('./time_util');
 
@@ -96,6 +97,11 @@ class ReminderQueue {
 
 let timer = null;
 
+// The calendar day (YYYY-MM-DD) the auto-cleanup last ran on. The cleanup
+// is measured in whole days, so running it once per day is enough — and
+// running it on every 20s tick would repeat the same SELECT for nothing.
+let lastCleanupDay = null;
+
 function start({ queue, getPetState, setPetState, setActiveReminder, petController }) {
   function tick() {
     try {
@@ -110,6 +116,10 @@ function start({ queue, getPetState, setPetState, setActiveReminder, petControll
 
 function stop() {
   if (timer) { clearInterval(timer); timer = null; }
+  // Reset the cleanup stamp so a subsequent start() re-runs the cleanup.
+  // (The app's own relaunch reloads this module anyway, so the stamp
+  // starts null there too — the reset just keeps start/stop balanced.)
+  lastCleanupDay = null;
 }
 
 function scanAndFire({ queue, getPetState, setPetState, setActiveReminder, petController }) {
@@ -123,6 +133,29 @@ function scanAndFire({ queue, getPetState, setPetState, setActiveReminder, petCo
   // today's set from the DB. See ReminderQueue.rollDay for why this is
   // load-bearing rather than cosmetic.
   queue.rollDay(now_str.slice(0, 10));
+
+  // Auto-delete the reminders that finished long ago and can never fire
+  // again. Runs once per calendar day: the rule needs a full day of
+  // elapsed time to elapse, so a 20s tick would only repeat the same
+  // work. The day stamp is tracked here rather than inside the cleanup
+  // module because the cleanup itself is stateless — it decides what to
+  // delete from the DB, not WHEN to run.
+  //
+  // It runs after rollDay so a reminder that completed yesterday is
+  // pruned right when the queue rolls over, and the pet's nag count is
+  // recomputed from the shorter queue below.
+  const today = now_str.slice(0, 10);
+  if (lastCleanupDay !== today) {
+    lastCleanupDay = today;
+    try {
+      const res = reminderCleanup.pruneCompletedReminders({ queue, now });
+      if (res.deleted > 0) {
+        console.log(`[reminder cleanup] 已自动删除 ${res.deleted} 条完成超过一天的提醒`);
+      }
+    } catch (e) {
+      console.error('reminder cleanup error:', e);
+    }
+  }
 
   // --- Events with due next_fire_at ---
   const due_events = db.all(

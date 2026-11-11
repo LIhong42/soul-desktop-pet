@@ -261,9 +261,110 @@ app.whenReady().then(async () => {
   check('only the anchored kinds may use a lunar date',
     lunarAllowed, [false, false, false, true, true, true]);
 
+  // ---- 节日类型 -----------------------------------------------------
+  console.log('\n== 节日类型 ==');
+
+  const FESTIVALS = [
+    { code: 'fathers_day', label: '父亲节' },
+    { code: 'christmas', label: '圣诞节' },
+  ];
+
+  // Both windows must offer the same festival picker, with the same
+  // options — the catalog comes from the server, so it is passed in.
+  const festivalForms = await evalIn(win, `
+    const m = window.__m;
+    const out = {};
+    for (const [name, t, p] of [['main', m.MAIN_THEME, 'e'], ['quick', m.QUICK_THEME, 'qr']]) {
+      const f = m.buildEventForm({
+        theme: t, id: p, showTagKind: true, showContact: true,
+        ev: { remind: true, remind_kind: 'one_time', remind_time: '09:00' },
+        contacts: [], festivals: ${JSON.stringify(FESTIVALS)},
+      });
+      const root = document.createElement('div');
+      root.innerHTML = f.html;
+      document.getElementById('probe').innerHTML = '';
+      document.getElementById('probe').appendChild(root);
+      m.wireEventForm(root, f.ids, t);
+      const sel = root.querySelector('#' + p + '-festival');
+      out[name] = {
+        options: Array.from(sel.options).map(o => o.value + '=' + o.textContent.trim()),
+        hiddenBefore: root.querySelector('#' + p + '-festival-field').classList.contains('hidden'),
+      };
+      // Choosing 节日 reveals the picker and hides the repeat / date
+      // controls, which have no effect on a festival.
+      const tag = root.querySelector('#' + p + '-tag-kind');
+      tag.value = 'festival';
+      tag.dispatchEvent(new Event('change'));
+      out[name].hiddenAfter = root.querySelector('#' + p + '-festival-field').classList.contains('hidden');
+      out[name].repeatHidden = root.querySelector('#' + p + '-repeat-fields').classList.contains('hidden');
+      out[name].dateHidden = root.querySelector('#' + p + '-solar-fields').classList.contains('hidden');
+      // Switching back restores them.
+      tag.value = '';
+      tag.dispatchEvent(new Event('change'));
+      out[name].repeatBack = root.querySelector('#' + p + '-repeat-fields').classList.contains('hidden');
+      out[name].dateBack = root.querySelector('#' + p + '-solar-fields').classList.contains('hidden');
+    }
+    return out;
+  `);
+  check('the festival picker is hidden until 节日 is chosen (main window)',
+    festivalForms.main.hiddenBefore, true);
+  check('the festival picker is hidden until 节日 is chosen (quick record)',
+    festivalForms.quick.hiddenBefore, true);
+  check('choosing 节日 reveals the picker (both windows)',
+    [festivalForms.main.hiddenAfter, festivalForms.quick.hiddenAfter], [false, false]);
+  check('the festival picker lists the catalog (both windows)',
+    [festivalForms.main.options, festivalForms.quick.options],
+    [
+      ['=请选择节日', 'fathers_day=父亲节', 'christmas=圣诞节'],
+      ['=请选择节日', 'fathers_day=父亲节', 'christmas=圣诞节'],
+    ]);
+  check('the repeat controls are hidden for a festival (both windows)',
+    [festivalForms.main.repeatHidden, festivalForms.quick.repeatHidden], [true, true]);
+  check('the date controls are hidden for a festival (both windows)',
+    [festivalForms.main.dateHidden, festivalForms.quick.dateHidden], [true, true]);
+  check('leaving 节日 restores the repeat controls (both windows)',
+    [festivalForms.main.repeatBack, festivalForms.quick.repeatBack], [false, false]);
+  check('leaving 节日 restores the date controls (both windows)',
+    [festivalForms.main.dateBack, festivalForms.quick.dateBack], [false, false]);
+
+  // The 类型 dropdown offers 节日 alongside the other tag kinds.
+  const tagOptions = await evalIn(win, `
+    const m = window.__m;
+    const f = m.buildEventForm({
+      theme: m.MAIN_THEME, id: 'e', showTagKind: true, showContact: true,
+      ev: { remind: true }, contacts: [], festivals: ${JSON.stringify(FESTIVALS)},
+    });
+    document.getElementById('probe').innerHTML = f.html;
+    const sel = document.querySelector('#e-tag-kind');
+    return Array.from(sel.options).map(o => o.value + '=' + o.textContent.trim());
+  `);
+  check('the 类型 dropdown offers 节日',
+    tagOptions.includes('festival=节日'), true);
+  check('the 类型 dropdown still offers the other kinds',
+    tagOptions,
+    ['=(无)', 'birthday=生日', 'anniversary=纪念日', 'festival=节日']);
+
+  // A festival without a pick is refused; the payload carries the code.
+  const festivalPayload = await evalIn(win, `
+    const m = window.__m;
+    const noPick = m.validateEventForm({ desc: 'x', tagKind: 'festival', festival: null });
+    const withPick = m.validateEventForm({ desc: 'x', tagKind: 'festival', festival: 'fathers_day' });
+    const payload = m.eventPayload(
+      { desc: 'x', tagKind: 'festival', festival: 'fathers_day', kind: 'one_time',
+        mode: 'solar', date: '2026-11-11', time: '09:00', contactId: null,
+        remind: true, intervalDays: 3, lunarMonth: null, lunarDay: null },
+      { category: 'general', title: '' });
+    return { noPick, withPick, payload };
+  `);
+  check('a festival without a pick is refused', festivalPayload.noPick, '请选择节日');
+  check('a festival with a pick passes', festivalPayload.withPick, null);
+  check('the festival code becomes the title', festivalPayload.payload.title, 'fathers_day');
+  check('a festival repeats every year', festivalPayload.payload.remind_kind, 'yearly');
+  check('a festival stores no date', festivalPayload.payload.remind_date, null);
+  check('a festival stores no lunar anchor', festivalPayload.payload.lunar_month, null);
+
   // ---- 回忆表单：主窗口 vs 快速记录 -------------------------------
   console.log('\n== 回忆表单：主窗口 vs 快速记录 ==');
-
   const mainMem = await evalIn(win, `
     const m = window.__m;
     const f = m.buildMemorialForm({

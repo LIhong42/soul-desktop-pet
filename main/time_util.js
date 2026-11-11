@@ -2,6 +2,7 @@
 
 const DEFAULT_REMIND_TIME = '09:00';
 const { nextSolarDateForLunar } = require('./lunar');
+const { nextFestivalSolar } = require('./festivals');
 
 // How many days before a date an "advance" reminder starts firing.
 // `null` on a row means "use this default" — the important-date rows get
@@ -288,6 +289,24 @@ function computeNextFireEvent(ev, now) {
   const timeStr = ev.remind_time || DEFAULT_REMIND_TIME;
   const time = parseHhmm(timeStr);
   if (!time) return null;
+
+  // A festival row fires on the festival's OWN date, which is derived from
+  // the festival code (stored as the row's title) rather than from the
+  // date the user typed into the form.
+  //
+  // This has to come before the "keep the cached next_fire_at" guard: the
+  // cached value was computed from the festival's date and is correct, but
+  // so is a fresh computation, and recomputing is what lets a *changed*
+  // festival (or a changed year) land on the right day. The guard below
+  // would otherwise keep a stale cached value forever.
+  if (ev.tag_kind === 'festival') {
+    const solar = nextFestivalSolar(ev.title, now);
+    if (!solar) return null;
+    return new Date(
+      solar.year, solar.month - 1, solar.day,
+      time.h, time.m, 0, 0
+    );
+  }
 
   // If next_fire_at is already set and in the future, keep it
   if (ev.next_fire_at) {

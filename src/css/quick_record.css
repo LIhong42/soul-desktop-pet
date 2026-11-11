@@ -4,6 +4,13 @@
    layout needs (no topbar, single column, form-first). The colour tokens
    below are copied from styles.css so the two windows read as one app. */
 * { box-sizing: border-box; }
+
+/* The shared form module (src/js/form_fields.js) hides fields by adding
+   the class `hidden` — the same class the main window's styles.css defines
+   globally. This window does NOT load styles.css, so the rule has to be
+   repeated here; without it the 间隔天数 / 农历 / 节日 pickers would stay
+   on screen even when the module marked them hidden. */
+.hidden { display: none !important; }
 :root {
   --bg: #f8f7f3;
   --panel: #ffffff;
