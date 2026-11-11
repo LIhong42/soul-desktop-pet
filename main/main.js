@@ -288,7 +288,7 @@ function recreatePetWindow(reason) {
 
 // ---- The microphone -------------------------------------------------------
 //
-// The diary editor can record a voice clip into a 回忆事件. That needs
+// The diary editor can record a voice clip into a 回忆. That needs
 // the microphone, and Chromium refuses to open a capture device until
 // the permission is answered.
 //

@@ -30,8 +30,8 @@ async function updateActiveLink(path) {
                   (path.startsWith(r) && r !== '/');
     a.classList.toggle('active', match);
   });
-  // Only some pages wear the background artwork (今日 / 联系人 / 提醒日期 /
-  // 工作事件 / 抽卡人生). The router fires onChange *before* the page's own
+  // Only some pages wear the background artwork (今日 / 联系人 / 提醒 /
+  // 工作事件 / 抽卡). The router fires onChange *before* the page's own
   // render() runs, so the artwork is cleared here on the way out and
   // re-applied by the page's render() on the way in. Leaving it up would
   // paint the artwork behind every other page too.

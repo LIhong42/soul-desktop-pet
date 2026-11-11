@@ -56,9 +56,9 @@ app.whenReady().then(async () => {
       [db.newId(), cid, label, day, month, year, kind, '09:00', 7, 1, ts, ts]
     );
   };
-  // A 提醒日期 — an anniversary recorded in the `events` table rather
+  // A 提醒 — an anniversary recorded in the `events` table rather
   // than on the contact. This is the row most users actually create,
-  // because the 提醒日期 page is the one in the nav bar.
+  // because the 提醒 page is the one in the nav bar.
   const mkEvent = (cid, title, tagKind, remindDate, lunar) => {
     const lm = lunar ? lunar[0] : null;
     const ld = lunar ? lunar[1] : null;
@@ -100,16 +100,16 @@ app.whenReady().then(async () => {
   // A date whose label repeats the contact's name.
   mkDate(c4, '小绮的纪念日', m2, d2, 2019, 'anniversary');
 
-  // A 提醒日期 tagged 纪念日, with its anchor 20 days out. The anchor's
+  // A 提醒 tagged 纪念日, with its anchor 20 days out. The anchor's
   // year is this year, so this card shows "至今 0 天".
   const evDate = new Date(today.getTime() + 20 * 86400000);
   const evYmd = `${evDate.getFullYear()}-${String(evDate.getMonth() + 1).padStart(2, '0')}-${String(evDate.getDate()).padStart(2, '0')}`;
   mkEvent(c3, '奶奶纪念日', 'anniversary', evYmd, null);
-  // A 农历 提醒日期 — its solar date shifts every year.
+  // A 农历 提醒 — its solar date shifts every year.
   mkEvent(c2, '农历纪念日', 'anniversary', null, [8, 22]);
   // A 节日 — not an anniversary, so it must not appear.
   mkEvent(c2, '春节', 'festival', '2026-02-01', null);
-  // A 生日 提醒日期 — a birthday, so it must not appear either.
+  // A 生日 提醒 — a birthday, so it must not appear either.
   mkEvent(c2, '爷爷生日', 'birthday', '2026-12-01', null);
 
   const winMain = new BrowserWindow({
@@ -202,7 +202,7 @@ app.whenReady().then(async () => {
   })()`);
 
   check('the carousel is rendered', shot1.hasRoot === true);
-  // Six important_dates rows (the birthday is excluded) + two 提醒日期
+  // Six important_dates rows (the birthday is excluded) + two 提醒
   // rows (the 农历 one and the solar one). The 节日 is not an
   // anniversary.
   check('every anniversary got a card', shot1.cardCount === 8, String(shot1.cardCount));
@@ -217,10 +217,10 @@ app.whenReady().then(async () => {
   check('the cards are stacked in one box', shot1.sameBox === true);
   check('the strip does not scroll', shot1.trackScrollable === false);
 
-  // The 提醒日期 anniversaries have to show up — they are the rows most
+  // The 提醒 anniversaries have to show up — they are the rows most
   // users actually create, and leaving them out is what made the
-  // carousel look empty to anyone who used the 提醒日期 page.
-  check('the 提醒日期 anniversaries are shown',
+  // carousel look empty to anyone who used the 提醒 page.
+  check('the 提醒 anniversaries are shown',
     shot1.texts.some((t) => t.includes('奶奶纪念日')) &&
     shot1.texts.some((t) => t.includes('农历纪念日')),
     JSON.stringify(shot1.texts));

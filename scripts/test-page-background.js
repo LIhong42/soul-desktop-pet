@@ -1,5 +1,5 @@
 // scripts/test-page-background.js — end-to-end check for the background
-// artwork the 今日 / 联系人 / 提醒日期 / 工作事件 pages wear.
+// artwork the 今日 / 联系人 / 提醒 / 工作事件 pages wear.
 //
 // What this guards against:
 //
@@ -14,7 +14,7 @@
 //      explicit teardown on route change every other page would inherit it.
 //
 //   3. A page that DOES wear it loses it. Several pages share one picture; a
-//      route-matching bug that clears the background on the way to 提醒日期
+//      route-matching bug that clears the background on the way to 提醒
 //      would leave three of the four pages bare.
 //
 //   4. The contact DETAIL page wrongly inherits it. `/contacts` is a prefix
@@ -353,11 +353,11 @@ app.whenReady().then(async () => {
     }
   }
 
-  // The 抽卡人生 page wears the artwork too, with its own translucent
+  // The 抽卡 page wears the artwork too, with its own translucent
   // treatment — it is a page of sheets of paper laid over the picture, the
   // same idea the 今日 page uses, so its cards must be translucent and
   // blurred rather than opaque panels pasted on the painting.
-  console.log('\n[7b] the 抽卡人生 page wears the translucent treatment');
+  console.log('\n[7b] the 抽卡 page wears the translucent treatment');
   await goto('#/card-life', 900);
   const clPage = await winMain.webContents.executeJavaScript(`(() => {
     const wrapper = document.querySelector('.cl-page');
@@ -374,11 +374,11 @@ app.whenReady().then(async () => {
     }
     return out;
   })()`);
-  check('the 抽卡人生 page wraps its content in .cl-page', clPage.hasWrapper);
+  check('the 抽卡 page wraps its content in .cl-page', clPage.hasWrapper);
   if (clPage.bg) {
-    check('the 抽卡人生 card is translucent (alpha < 1)', clPage.alpha < 1,
+    check('the 抽卡 card is translucent (alpha < 1)', clPage.alpha < 1,
       `${clPage.bg} (alpha ${clPage.alpha})`);
-    check('the 抽卡人生 card blurs the artwork behind it',
+    check('the 抽卡 card blurs the artwork behind it',
       /blur/.test(clPage.blur), clPage.blur);
   }
 
@@ -407,7 +407,7 @@ app.whenReady().then(async () => {
   // the background positioning area. With background-attachment: local that
   // area is the scroll container's CONTENT box, whose height is the page's
   // full content height — so a LONGER page scaled the artwork UP and cropped
-  // more of it away. The 提醒日期 page (1059px of content) zoomed the picture
+  // more of it away. The 提醒 page (1059px of content) zoomed the picture
   // 18% more than the 今日 page (898px), and the plant on the left of the
   // frame fell outside the crop entirely, even though both pages were using
   // the identical file.
@@ -438,13 +438,13 @@ app.whenReady().then(async () => {
   // The list shows a fixed number of rows per page, so a long list never
   // runs past the bottom of the frame the artwork is painted in.
   //
-  // Three pages share this behaviour — 提醒日期, 工作事件 and 联系人 — and
+  // Three pages share this behaviour — 提醒, 工作事件 and 联系人 — and
   // all three get it from src/js/pager.js. The rows have to come from a
   // subtree of their own, or turning a page would rebuild the filter bar
   // above it.
   console.log('\n[10] the list pages are paginated');
   const PAGED_PAGES = [
-    { route: '/reminders', list: '#reminders-list', label: '提醒日期' },
+    { route: '/reminders', list: '#reminders-list', label: '提醒' },
     { route: '/events/work', list: '#work-list', label: '工作事件' },
     { route: '/contacts', list: '#contacts-list', label: '联系人' },
   ];

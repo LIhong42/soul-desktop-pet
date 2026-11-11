@@ -138,12 +138,12 @@ app.whenReady().then(async () => {
   } catch (e) { attrErr = e; }
   checkTrue('empty contact_id rejected', !!attrErr, 'no error thrown');
 
-  // ---- 提醒日期 (reminder → events, category 'general') ---------------
+  // ---- 提醒 (reminder → events, category 'general') ---------------
   //
   // The anchor date is in the FUTURE on purpose: a one-time event whose
   // date has already passed has no next fire time (it would never fire
   // again), and computeNextFireEvent correctly returns null for it.
-  console.log('\n== 提醒日期 (reminder) ==');
+  console.log('\n== 提醒 (reminder) ==');
   const future = futureYmd(30);
   const reminder = await call('events:create', {
     title: '打电话确认一下',
@@ -231,8 +231,8 @@ app.whenReady().then(async () => {
   } catch (e) { lunarErr = e; }
   checkTrue('an out-of-range lunar month is rejected', !!lunarErr, 'no error thrown');
 
-  // ---- 回忆事件 (memorial → memorial_events) --------------------------
-  console.log('\n== 回忆事件 (memorial) ==');
+  // ---- 回忆 (memorial → memorial_events) --------------------------
+  console.log('\n== 回忆 (memorial) ==');
   const memorial = await call('memorial_events:create', {
     kind: 'first_time',
     title: '第一次去迪士尼',

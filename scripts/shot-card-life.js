@@ -1,4 +1,4 @@
-// scripts/shot-card-life.js — render the 抽卡人生 page in the REAL main
+// scripts/shot-card-life.js — render the 抽卡 page in the REAL main
 // window and save a PNG, so the page's visual design can be checked without
 // a human driving the app.
 //

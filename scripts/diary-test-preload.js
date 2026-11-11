@@ -71,7 +71,7 @@ const CONTACTS = [
 ];
 
 // The reminder-event table. The 工作事件 page reads from here (the
-// 回忆事件 page has its own table — see `memorialEvents` above). Kept
+// 回忆 page has its own table — see `memorialEvents` above). Kept
 // separate so a test that seeds one table cannot leak into the other.
 const eventRows = {};
 
@@ -94,7 +94,7 @@ const events = {
   debugFireDueNow: async () => null,
 };
 
-// The 抽卡人生 cards. The editor asks for the card it was opened from,
+// The 抽卡 cards. The editor asks for the card it was opened from,
 // so that the card's title and requirement can pre-fill the page. The
 // fake holds a couple of cards and records the links the editor makes.
 const cardRows = {};
@@ -158,7 +158,7 @@ contextBridge.exposeInMainWorld('__testPhotos', {
   all: () => Object.assign({}, photoBytes),
 });
 
-// The 抽卡人生 cards the fake holds, and the links the editor made to
+// The 抽卡 cards the fake holds, and the links the editor made to
 // them. A test seeds a card to check that the editor pre-fills the page
 // from it, and reads the links to check that saving links the new entry
 // back to the card.

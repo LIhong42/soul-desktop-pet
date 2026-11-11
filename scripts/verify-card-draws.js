@@ -1,4 +1,4 @@
-// scripts/verify-card-draws.js — checks the 抽卡人生 feature's rules.
+// scripts/verify-card-draws.js — checks the 抽卡 feature's rules.
 //
 // The feature has three moving parts:
 //

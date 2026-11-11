@@ -8,12 +8,12 @@
 //      day, an optional origin year and a `kind` (birthday / anniversary
 //      / deceased_date / custom).
 //
-//   2. `events` — a row in the 提醒日期 list, tagged 生日 or 纪念日. It
+//   2. `events` — a row in the 提醒 list, tagged 生日 or 纪念日. It
 //      is a yearly reminder, so its date lives in `remind_date`
 //      (solar) or in `lunar_month`/`lunar_day` (农历).
 //
 // Reading only the first left the carousel empty for anyone who had
-// only used 提醒日期 — which is the common case, since that is the page
+// only used 提醒 — which is the common case, since that is the page
 // in the nav bar. Both are merged here.
 //
 // The module is deliberately free of Electron so it can be required
@@ -99,7 +99,7 @@ function listAnniversaries(db, now = new Date()) {
     });
   }
 
-  // ---- 2. The 提醒日期 rows tagged as an anniversary -----------------------
+  // ---- 2. The 提醒 rows tagged as an anniversary -----------------------
   //
   // Only `yearly` rows qualify: a one-off appointment or a weekly chore
   // is not an anniversary.

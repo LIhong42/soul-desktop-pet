@@ -1,4 +1,4 @@
-// src/js/pages/card_life.js — 抽卡人生.
+// src/js/pages/card_life.js — 抽卡.
 //
 // The page draws one card a week. The pool it draws from is the official
 // deck in `resources/intersting-list/list.md` (read by the main process —
@@ -7,7 +7,7 @@
 //
 //   * 未抽 → a deck of cards and a 「抽一张卡」 button;
 //   * 已抽 → the card that was drawn, on a sheet of paper, with a
-//     「记录这一张」 button that opens the 回忆事件 editor with the card's
+//     「记录这一张」 button that opens the 回忆 editor with the card's
 //     title and requirement already filled in;
 //   * 规则 → a card of its own, beside the drawn card, that spells the
 //     game out;
@@ -69,7 +69,7 @@ async function render() {
   app.innerHTML = `
     <div class="cl-page">
       <div class="cl-head">
-        <h1>抽卡人生</h1>
+        <h1>抽卡</h1>
         <span class="cl-head-heart" aria-hidden="true"></span>
         <span class="cl-head-tagline">每周给生活一点刺激</span>
       </div>

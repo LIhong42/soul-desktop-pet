@@ -1,4 +1,4 @@
-// src/js/diary_meta_form.js — the 回忆事件 metadata dialog.
+// src/js/diary_meta_form.js — the 回忆 metadata dialog.
 //
 // The diary editor (src/js/pages/diary_edit.js) is a writing surface: the
 // title, the body and the photos live on one sheet of paper, and nothing
@@ -101,9 +101,9 @@ export function openMemorialMetaDialog(opts = {}) {
   const backdrop = document.createElement('div');
   backdrop.className = 'modal-backdrop diary-meta-modal-backdrop';
   backdrop.innerHTML = `
-    <div class="modal diary-meta-modal" role="dialog" aria-modal="true" aria-label="保存回忆事件">
+    <div class="modal diary-meta-modal" role="dialog" aria-modal="true" aria-label="保存回忆">
       <div class="modal-header">
-        <h3>保存回忆事件</h3>
+        <h3>保存回忆</h3>
         <button type="button" class="icon-btn" data-act="cancel" title="关闭">✕</button>
       </div>
       <div class="modal-body">

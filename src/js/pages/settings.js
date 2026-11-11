@@ -20,9 +20,9 @@ import { register } from '../router.js';
 const PAGE_BG_ROUTE_LABELS = {
   '/today': '今日',
   '/contacts': '联系人',
-  '/reminders': '提醒日期',
+  '/reminders': '提醒',
   '/events/work': '工作事件',
-  '/card-life': '抽卡人生',
+  '/card-life': '抽卡',
   '/card-life/stats': '打卡墙',
 };
 
@@ -579,7 +579,7 @@ async function renderBackupSection(body) {
     const picked = await api.backup.import();
     if (!picked || picked.canceled) return;
     // Step 2: confirm — full-string warning that names the destructive scope.
-    if (!confirm('导入会覆盖当前所有数据，包括联系人、提醒、回忆事件、照片和设置。建议先导出一份当前备份再继续。')) return;
+    if (!confirm('导入会覆盖当前所有数据，包括联系人、提醒、回忆、照片和设置。建议先导出一份当前备份再继续。')) return;
     // Step 3: swap.
     try {
       await api.backup.apply(picked.path);

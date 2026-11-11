@@ -77,7 +77,7 @@ function renderPresetOptions(nowGroups) {
 
 function renderContactChipList() {
   if (state.contacts.length === 0) {
-    return `<p class="meta">还没有联系人 — 先去添加联系人和回忆事件再回来。</p>`;
+    return `<p class="meta">还没有联系人 — 先去添加联系人和回忆再回来。</p>`;
   }
   return state.contacts.map((c) => {
     const selected = state.selectedContactIds.has(c.id);
@@ -91,7 +91,7 @@ function renderContactChipList() {
 
 function renderEventList() {
   if (state.events.length === 0) {
-    return `<p class="meta">没有匹配的事件。请调整筛选条件，或先到「回忆事件」页新增。</p>`;
+    return `<p class="meta">没有匹配的事件。请调整筛选条件，或先到「回忆」页新增。</p>`;
   }
   return state.events.map((e) => {
     const checked = state.selectedEventIds.has(e.id);
@@ -165,7 +165,7 @@ function render() {
   app.innerHTML = `
     <div class="page-column">
     <h1>导出回忆</h1>
-    <p class="meta">按联系人和时间段筛选已记录的回忆事件，导出为 PDF / Word 相册或 MP4 视频。素材仅来自「回忆事件」中已上传的事件与照片。</p>
+    <p class="meta">按联系人和时间段筛选已记录的回忆，导出为 PDF / Word 相册或 MP4 视频。素材仅来自「回忆」中已上传的事件与照片。</p>
 
     <div class="card">
       <h2>筛选条件</h2>

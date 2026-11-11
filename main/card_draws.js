@@ -1,11 +1,11 @@
-// main/card_draws.js — the 抽卡人生 deck and the weekly draw.
+// main/card_draws.js — the 抽卡 deck and the weekly draw.
 //
 // The official deck lives in `resources/intersting-list/list.md` — a plain
 // markdown file the user can edit without touching the app. Every
 // `### NN. 标题` heading is one card; the `要求：…` lines under it are
 // that card's requirement.
 //
-// The user can add cards of their own on the 抽卡人生 page. Those live in
+// The user can add cards of their own on the 抽卡 page. Those live in
 // the database (main/db.js, `custom_cards`) rather than in a file, because
 // they are data the app owns. A draw picks from BOTH pools, so a custom
 // card can come up just like an official one.
@@ -26,7 +26,7 @@ const path = require('path');
 // a photo, or more than 30 characters of text".
 //
 // It lives in its own module (main/card_progress.js) because the 打卡墙
-// needs it too, and there must be ONE rule: the 抽卡人生 page's history
+// needs it too, and there must be ONE rule: the 抽卡 page's history
 // list and the 打卡墙's squares answer the same question, and two pages
 // answering it differently would be worse than either answer.
 const cardProgress = require('./card_progress');
@@ -181,7 +181,7 @@ function weekEndKey(now = new Date()) {
 
 // ---- The page's state ----------------------------------------------------
 
-// Everything the 抽卡人生 page needs to draw itself:
+// Everything the 抽卡 page needs to draw itself:
 //
 //   weekKey / weekLabel — which week it is, and how it reads;
 //   deckSize            — how many cards the official deck holds;

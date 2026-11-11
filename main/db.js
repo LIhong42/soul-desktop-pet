@@ -127,7 +127,7 @@ CREATE INDEX IF NOT EXISTS idx_search_kind_ref ON search_index(kind, ref_id);
 CREATE TABLE IF NOT EXISTS memorial_events (
   id          TEXT PRIMARY KEY,
   -- The event's 分类: 是第一次 / 不是第一次 / 抽卡事件. The third value was
-  -- added for the 抽卡人生 page — a memory written down from a drawn card
+  -- added for the 抽卡 page — a memory written down from a drawn card
   -- is filed as 抽卡事件. Older databases carry a narrower CHECK, so
   -- migrateMemorialEventsV4 widens it.
   kind        TEXT NOT NULL DEFAULT 'other' CHECK (kind IN ('first_time','other','card_draw')),
@@ -175,17 +175,17 @@ CREATE TABLE IF NOT EXISTS memorial_event_photos (
 );
 CREATE INDEX IF NOT EXISTS idx_mep_event ON memorial_event_photos(memorial_event_id);
 
--- 抽卡人生：每周抽到的那张卡。
+-- 抽卡：每周抽到的那张卡。
 --
 -- The deck itself lives in resources/intersting-list/list.md (a file the
 -- user can edit); this table remembers what was drawn, when, and whether
--- the card was turned into a 回忆事件.
+-- the card was turned into a 回忆.
 --
 --   week_key — the Monday of the week the card belongs to (YYYY-MM-DD).
 --     One draw per week, so the unique index is the rule, not a
 --     convention.
 --   source — 'deck' for a card from list.md, 'custom' for one the user
---     added on the 抽卡人生 page.
+--     added on the 抽卡 page.
 --   card_ref_id — for a custom card, the custom_cards row it came from.
 --     The title and requirement are copied into the draw, so deleting a
 --     custom card later does not rewrite the history.
@@ -206,12 +206,12 @@ CREATE TABLE IF NOT EXISTS card_draws (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_card_draws_week
   ON card_draws(week_key);
 
--- 抽卡人生：用户自己添加的卡片。
+-- 抽卡：用户自己添加的卡片。
 --
 -- The official deck lives in a file (resources/intersting-list/list.md) so
 -- it can be edited with any text editor; the cards the user adds live here
 -- instead, because they are data the app owns — they are written from the
--- 抽卡人生 page and they travel with the database backup.
+-- 抽卡 page and they travel with the database backup.
 --
 --   title / requirement — the same two fields a deck card has.
 CREATE TABLE IF NOT EXISTS custom_cards (
@@ -1372,7 +1372,7 @@ function migrateMemorialEventsV3() {
 
 // ---- memorial events v4 migration ----
 // Widens the `kind` CHECK so a memorial event can be filed as 抽卡事件
-// (the third 分类, used by the 抽卡人生 page).
+// (the third 分类, used by the 抽卡 page).
 //
 // SQLite cannot ALTER a CHECK constraint, so the table is rebuilt — the
 // same shape as the v2 / v3 migrations above. The rebuild copies every row
@@ -1459,7 +1459,7 @@ function migrateMemorialEventsV4() {
 
 // ---- card draws v5 migration ----
 //
-// The 抽卡人生 page lets the user add their own cards. A drawn card has to
+// The 抽卡 page lets the user add their own cards. A drawn card has to
 // say where it came from, so `card_draws` gains two columns:
 //
 //   source      — 'deck' (from list.md) or 'custom' (the user's own)
@@ -1502,9 +1502,9 @@ function migrateCardDrawsV5() {
   }
 }
 
-// ---- card draws (抽卡人生) ----
+// ---- card draws (抽卡) ----
 //
-// The storage for the cards drawn on the 抽卡人生 page. One draw per week:
+// The storage for the cards drawn on the 抽卡 page. One draw per week:
 // `week_key` is the Monday of the week, and the unique index on it is what
 // enforces the rule.
 //
@@ -1512,7 +1512,7 @@ function migrateCardDrawsV5() {
 //   getCardDraw(id)       — one draw
 //   getCardDrawByWeek(key)— this week's draw (null when none)
 //   createCardDraw(row)   — insert a draw
-//   linkCardDraw(id, eventId) — point the draw at the 回忆事件 it became
+//   linkCardDraw(id, eventId) — point the draw at the 回忆 it became
 
 function listCardDraws(limit = 52) {
   const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 52;
@@ -1528,7 +1528,7 @@ function getCardDraw(id) {
 // How many cards have ever been drawn.
 //
 // A plain COUNT, so the number is the whole history however long it is.
-// The 抽卡人生 page's own list is capped at a year (a reading list, not a
+// The 抽卡 page's own list is capped at a year (a reading list, not a
 // ledger), but the 打卡墙's door says how far the user has got — and that
 // number must not stop at the cap.
 function countCardDraws() {
@@ -1565,7 +1565,7 @@ function createCardDraw(row = {}) {
   return getCardDraw(id);
 }
 
-// Point a draw at the 回忆事件 it became. Re-recording the same card
+// Point a draw at the 回忆 it became. Re-recording the same card
 // replaces the link (the entry may have been deleted and written again).
 function linkCardDraw(id, memorialEventId) {
   if (!id) return null;
@@ -1578,10 +1578,10 @@ function linkCardDraw(id, memorialEventId) {
   return getCardDraw(id);
 }
 
-// ---- card draws with their completion (抽卡人生 打卡墙) ----
+// ---- card draws with their completion (抽卡 打卡墙) ----
 //
 // The 打卡墙 needs, for every draw the user has made, the STATE of the
-// 回忆事件 it became: how many photos it has and how much text it holds.
+// 回忆 it became: how many photos it has and how much text it holds.
 // Both facts live on the memorial event, and the draw only holds the
 // event's id — so the two tables are joined here.
 //
@@ -1621,9 +1621,9 @@ function listCardDrawsWithProgress(limit = 200) {
       LIMIT ${n}`);
 }
 
-// ---- custom cards (抽卡人生) ----
+// ---- custom cards (抽卡) ----
 //
-// The cards the user added on the 抽卡人生 page. They are stored apart
+// The cards the user added on the 抽卡 page. They are stored apart
 // from the official deck (which lives in a file) and they are drawn from
 // the same pool as the official ones.
 //
@@ -2138,7 +2138,7 @@ module.exports = {
   deletePetData,
   listMemorialEvents, getMemorialEvent, listPhotosForMemorialEvent,
   listMemorialEventsForExport,
-  // 抽卡人生 — the cards drawn on the 抽卡人生 page, and the custom
+  // 抽卡 — the cards drawn on the 抽卡 page, and the custom
   // cards the user added.
   listCardDraws, getCardDraw, getCardDrawByWeek, createCardDraw, linkCardDraw,
   listCardDrawsWithProgress, countCardDraws,

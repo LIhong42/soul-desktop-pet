@@ -1,4 +1,4 @@
-// src/js/diary_kinds.js — the vocabulary of a 回忆事件's 分类.
+// src/js/diary_kinds.js — the vocabulary of a 回忆's 分类.
 //
 // The `kind` column says one thing about a memorial event: which 分类 it
 // belongs to. There are exactly three values (see the memorial_events
@@ -10,13 +10,13 @@
 //   first_time — 是第一次
 //   other      — 不是第一次
 //   card_draw  — 抽卡事件: the memory was written down from a card drawn
-//                on the 抽卡人生 page (src/js/pages/card_life.js)
+//                on the 抽卡 page (src/js/pages/card_life.js)
 //
 // Four places need to talk about it:
 //
 //   * src/js/diary_meta_form.js      — the 保存 dialog's 分类 choices
 //   * src/js/form_fields.js          — the 快速记录 form's 类型 select
-//   * src/js/pages/events_memorial.js — the 回忆事件 list card's tag
+//   * src/js/pages/events_memorial.js — the 回忆 list card's tag
 //   * src/js/pages/contact_detail.js — the contact's event list's tag
 //
 // They each used to spell the labels out on their own, which meant a

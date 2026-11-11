@@ -28,15 +28,15 @@ const RECORD_KINDS = [
   { id: 'like',     label: '喜好',     icon: '💖' },
   { id: 'taboo',    label: '忌讳',     icon: '🚫' },
   { id: 'gift',     label: '礼物',     icon: '🎁' },
-  { id: 'reminder', label: '提醒日期', icon: '⏰' },
-  { id: 'memorial', label: '回忆事件', icon: '🎞️' },
+  { id: 'reminder', label: '提醒', icon: '⏰' },
+  { id: 'memorial', label: '回忆', icon: '🎞️' },
   { id: 'work',     label: '工作事件', icon: '💼' },
 ];
 
 const RECORD_KIND_IDS = new Set(RECORD_KINDS.map((k) => k.id));
 
 // Window geometry. The forms are field-for-field the same as the main
-// window's, so the tallest one (回忆事件 — five text fields, a multi-contact
+// window's, so the tallest one (回忆 — five text fields, a multi-contact
 // picker and a photo picker) needs more room than the earlier trimmed-down
 // version did. The panel scrolls (`.qr { overflow-y: auto }`), so the
 // window never has to grow past the screen; the height here is just a

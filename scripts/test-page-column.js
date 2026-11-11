@@ -5,7 +5,7 @@
 //
 //   1. A page stretches edge to edge. The scroll container is a full-bleed
 //      strip, so a page that doesn't cap its width puts its cards flat
-//      against the window edges on a wide monitor — the 回忆事件 grid in
+//      against the window edges on a wide monitor — the 回忆 grid in
 //      particular would turn into four enormous slabs.
 //
 //   2. A page has no column at all. `.page-column` (and the two page
@@ -56,15 +56,15 @@ const COLUMN_MAX = 1080;
 // The class is the element that CARRIES the column. Four different
 // classes appear here, and that is deliberate: the app has four page
 // design systems (the plain one, the artwork one, the 今日 one and the
-// 抽卡人生 one), each with its own width rule. What they share is the
+// 抽卡 one), each with its own width rule. What they share is the
 // resulting width, not the mechanism.
 const PAGES = [
   { path: '/today',          label: '今日',     cls: '.today-page' },
   { path: '/contacts',       label: '联系人',   cls: '.bg-page' },
-  { path: '/reminders',      label: '提醒日期', cls: '.bg-page' },
+  { path: '/reminders',      label: '提醒', cls: '.bg-page' },
   { path: '/events/work',    label: '工作事件', cls: '.bg-page' },
-  { path: '/card-life',      label: '抽卡人生', cls: '.cl-page' },
-  { path: '/events/memorial', label: '回忆事件', cls: '.page-column' },
+  { path: '/card-life',      label: '抽卡', cls: '.cl-page' },
+  { path: '/events/memorial', label: '回忆', cls: '.page-column' },
   { path: '/events/new?category=general', label: '新建', cls: '.page-column' },
   { path: '/settings',       label: '设置',     cls: '.page-column' },
   { path: '/export',         label: '导出回忆', cls: '.page-column' },

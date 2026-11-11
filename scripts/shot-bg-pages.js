@@ -47,7 +47,7 @@ app.whenReady().then(async () => {
       [id, name, rel, icon, now, now]);
   }
 
-  // A few 提醒日期 rows (category='general') and 工作事件 rows
+  // A few 提醒 rows (category='general') and 工作事件 rows
   // (category='work'), spread over the near future so the countdown chips
   // show something other than "就是今天".
   const events = [
@@ -119,7 +119,7 @@ app.whenReady().then(async () => {
     // the DOM can be updated a frame or two before the compositor shows it.
     await winMain.webContents.executeJavaScript(`(async () => {
       const want = ${JSON.stringify(p)};
-      const label = ${JSON.stringify(p === '/contacts' ? '联系人' : p === '/reminders' ? '提醒日期' : '工作事件')};
+      const label = ${JSON.stringify(p === '/contacts' ? '联系人' : p === '/reminders' ? '提醒' : '工作事件')};
       for (let i = 0; i < 60; i++) {
         const h1 = document.querySelector('#app h1');
         if (h1 && h1.textContent.includes(label)) {

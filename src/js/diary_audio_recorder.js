@@ -1,7 +1,7 @@
 // src/js/diary_audio_recorder.js — the 录音 dialog.
 //
 // 「插入音频」 in the diary editor used to mean one thing only: pick a
-// file from the disk. But a 回忆事件 is a memory, and a lot of memories
+// file from the disk. But a 回忆 is a memory, and a lot of memories
 // are a voice — a sentence said out loud, a laugh, the sound of a
 // place. Making the user find a file for that is friction.
 //

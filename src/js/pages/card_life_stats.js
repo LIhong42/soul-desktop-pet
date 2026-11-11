@@ -1,15 +1,15 @@
 // src/js/pages/card_life_stats.js — the 打卡墙 (the check-in wall).
 //
-// The 抽卡人生 page draws one card a week and asks the user to write it
+// The 抽卡 page draws one card a week and asks the user to write it
 // down. Before this page existed there was no way to look back: the
-// 抽卡人生 page showed the current card and a flat list of the ones
+// 抽卡 page showed the current card and a flat list of the ones
 // before it, and neither said whether those older cards had actually been
 // written down. A user who drew for five weeks had no answer to "how
 // many of those did I finish?"
 //
 // This page is that answer. It is a SEPARATE route (#/card-life/stats)
-// rather than another block on the 抽卡人生 page, because it is a
-// different kind of thing: the 抽卡人生 page is about THIS week's card
+// rather than another block on the 抽卡 page, because it is a
+// different kind of thing: the 抽卡 page is about THIS week's card
 // and what to do with it, while this page is about the whole history.
 //
 // ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@
 //     shape of the habit: a run of filled squares IS the streak, seen at a
 //     glance;
 //   * the CARD — clicking a square puts THAT week's card on the table,
-//     drawn in exactly the same style as the 抽卡人生 page's own card.
+//     drawn in exactly the same style as the 抽卡 page's own card.
 //     One card, one place: the user clicks a square and sees the very
 //     thing they would have seen had they drawn that card this week.
 //
@@ -46,7 +46,7 @@
 import { api, escapeHtml } from '../api.js';
 import { register, navigate, getReferrerPath } from '../router.js';
 
-// The 抽卡人生 page — where the grid's squares and the summary's numbers
+// The 抽卡 page — where the grid's squares and the summary's numbers
 // come from. It is also where the 「返回」 link goes when there is no
 // referrer to go back to.
 const CARD_LIFE_ROUTE = '/card-life';
@@ -96,7 +96,7 @@ async function render(known) {
   app.innerHTML = `
     <div class="cl-page cl-stats-page">
       <a class="back-link cl-stats-back" href="#${escapeHtml(pageState.backTo)}">
-        <span class="icon-arrow-left"></span>返回抽卡人生
+        <span class="icon-arrow-left"></span>返回抽卡
       </a>
 
       <div class="cl-head">
@@ -118,9 +118,9 @@ async function render(known) {
 // Where the 「返回」 link goes.
 //
 // The referrer is whatever page the user was on when they opened this
-// one — usually the 抽卡人生 page, but the wall is linked from there and
+// one — usually the 抽卡 page, but the wall is linked from there and
 // the user may have come from anywhere. When there is no referrer (the
-// page was opened directly), it falls back to the 抽卡人生 page, which is
+// page was opened directly), it falls back to the 抽卡 page, which is
 // the only page that makes sense to return to.
 //
 // This is read ONCE per visit, when the page is first entered — see the
@@ -140,7 +140,7 @@ function emptyHtml(data) {
   return `
     <div class="cl-stats-empty">
       <p class="cl-stats-empty-text">还没有抽过卡。</p>
-      <p class="cl-stats-empty-hint">去抽卡人生抽一张，这里就会记下每一周。</p>
+      <p class="cl-stats-empty-hint">去抽卡抽一张，这里就会记下每一周。</p>
       <a class="btn cl-stats-empty-btn" href="#${escapeHtml(CARD_LIFE_ROUTE)}">去抽卡</a>
     </div>
   `;
@@ -238,7 +238,7 @@ function gridHtml(data) {
 
 // ---- The card on the table ------------------------------------------------
 //
-// The week the user clicked, drawn in the SAME style as the 抽卡人生
+// The week the user clicked, drawn in the SAME style as the 抽卡
 // page's card — the same paper, the same paperclip, the same badge, the
 // same button.
 //
@@ -249,7 +249,7 @@ function gridHtml(data) {
 // piece because it is in the past — it is the same card, still open.
 //
 // Only ONE card is on the table at a time. The table holds the current
-// card on the 抽卡人生 page; here it holds the week you are looking at.
+// card on the 抽卡 page; here it holds the week you are looking at.
 
 function cardHtml(data) {
   const entry = openEntry(data);
@@ -265,7 +265,7 @@ function cardHtml(data) {
     : `<span class="cl-card-no">第 <b>${escapeHtml(entry.cardNo == null ? '?' : String(entry.cardNo))}</b> 号卡片</span>`;
   // The note under the card says where this week stands.
   //
-  // The wording matches the 抽卡人生 page's own note, so the two read as
+  // The wording matches the 抽卡 page's own note, so the two read as
   // one thing — but the week is named, because here it is a week in the
   // past and not the current one.
   const note = done
@@ -273,7 +273,7 @@ function cardHtml(data) {
     : (recorded
       ? '已经写了一点，再补上照片或写长一点就算数'
       : '这一周还没有记录，去写一写');
-  // Why it counts, or does not. The 抽卡人生 page has no room for this
+  // Why it counts, or does not. The 抽卡 page has no room for this
   // (it shows one card, and the user knows whether they wrote it); on
   // the wall, a click can land on any week of any age, so the card
   // says what that week is holding.
@@ -390,7 +390,7 @@ function wire() {
     };
   });
 
-  // The button on the card. It behaves exactly as the 抽卡人生 page's own
+  // The button on the card. It behaves exactly as the 抽卡 page's own
   // button does: with an entry it opens the entry, without one it opens
   // the editor with the card's title and requirement filled in.
   //

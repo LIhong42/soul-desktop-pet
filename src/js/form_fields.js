@@ -167,9 +167,9 @@ function radioGroup(theme, name, options, checkedValue) {
   `;
 }
 
-// ---- The event form (提醒日期 / 工作事件) --------------------------------
+// ---- The event form (提醒 / 工作事件) --------------------------------
 //
-// Builds the 提醒日期 / 工作事件 form. `opts` describes the record being
+// Builds the 提醒 / 工作事件 form. `opts` describes the record being
 // edited (or the blank defaults for a new one) and `cfg` describes how
 // the surrounding window wants it rendered.
 //
@@ -430,9 +430,9 @@ export function eventPayload(state, opts = {}) {
   return payload;
 }
 
-// ---- The memorial form (回忆事件) ---------------------------------------
+// ---- The memorial form (回忆) ---------------------------------------
 //
-// Builds the 回忆事件 form. `opts.cb` supplies the contact picker markup
+// Builds the 回忆 form. `opts.cb` supplies the contact picker markup
 // and the photo picker markup, because those two differ in *mechanics*
 // between the windows (the main window edits an existing row and shows
 // the already-uploaded photos; the quick-record window only creates).
@@ -459,7 +459,7 @@ export function buildMemorialForm(opts = {}) {
 
   // The 分类 select. The options come from the shared vocabulary
   // (src/js/diary_kinds.js), so the third one — 抽卡事件, the 分类 used by
-  // the 抽卡人生 page — shows up here without this file having to know it.
+  // the 抽卡 page — shows up here without this file having to know it.
   const kindValue = ev.kind || 'other';
   const kindOptionsHtml = MEMORIAL_KINDS.map((k) => `
         <option value="${k.value}" ${kindValue === k.value ? 'selected' : ''}>${escapeHtml(memorialKindLabel(k.value))}</option>`).join('');

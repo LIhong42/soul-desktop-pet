@@ -359,7 +359,7 @@ function renderAnniversaryCarousel(dates) {
     // same thing twice.
     //
     // A date can also be a standalone reminder with no contact at all (a
-    // 提醒日期 the user never attached to anyone). There is nobody to
+    // 提醒 the user never attached to anyone). There is nobody to
     // introduce, so the line starts with the label itself — no lonely
     // leading "和".
     const name = who ? `和${who}的${stripContactPrefix(label, who)}` : label;
@@ -882,7 +882,7 @@ function moodNote(mood) {
 // ---- 背景 (background artwork) --------------------------------------------
 //
 // The 今日 page paints the artwork from `resources/ui/` behind its content.
-// The picture is shared with the 联系人 / 提醒日期 / 工作事件 / 抽卡人生
+// The picture is shared with the 联系人 / 提醒 / 工作事件 / 抽卡
 // pages, so the painting itself lives in src/js/page_background.js — this
 // page only asks for it. See that module for why the failure paths all
 // degrade to "no artwork".

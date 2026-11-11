@@ -62,7 +62,7 @@ export const api = {
       readMedia: (mediaId)      => M.memorialEvents.photos.readMedia(mediaId),
     },
   },
-  // 抽卡人生 — the weekly card draw. The official deck lives in
+  // 抽卡 — the weekly card draw. The official deck lives in
   // `resources/intersting-list/list.md` and is read by the main process;
   // the user's own cards live in the database. The renderer only asks for
   // the state and asks for a draw.
@@ -153,8 +153,8 @@ export const api = {
     get: (k) => M.settings.get(k),
     set: (k, v) => M.settings.set(k, v),
   },
-  // 页面背景（全应用共用同一张底图：「今日」「联系人」「提醒日期」「工作事件」
-  // 「抽卡人生」，以及联系人详情页的整页背景）。
+  // 页面背景（全应用共用同一张底图：「今日」「联系人」「提醒」「工作事件」
+  // 「抽卡」，以及联系人详情页的整页背景）。
   // `get()` → { list, chosen, current: {id,url}|null, noneId, routes };
   // `set(id)` stores the choice and returns the same shape. An empty id clears
   // the choice (back to "跟随默认"); `noneId` means "explicitly no background".
@@ -447,7 +447,7 @@ export function eventKindAttr(e) {
 
 // The human label for an event's repeat mode.
 //
-// Shared by every page that lists events (提醒日期 / 工作事件 / 联系人详情)
+// Shared by every page that lists events (提醒 / 工作事件 / 联系人详情)
 // so a "每 3 天" reminder reads the same wherever it shows up. The plain
 // kind→label map can't cover 'every_n_days' on its own, because that label
 // carries the stride the user chose.

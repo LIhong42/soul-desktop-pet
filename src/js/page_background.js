@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 // What this is
 // ---------------------------------------------------------------------------
-// The 今日 / 联系人 / 提醒日期 / 工作事件 / 抽卡人生 pages paint the artwork
+// The 今日 / 联系人 / 提醒 / 工作事件 / 抽卡 pages paint the artwork
 // from `resources/ui/` behind their content. The image is chosen in the main
 // process (main/page_background.js) and arrives as a `file://` URL, because
 // the renderer can't read the filesystem and the main window's CSP only
@@ -21,7 +21,7 @@
 // The 今日 page used to own this by itself. Several pages now wear the same
 // picture, and each of them has to *clean up* after itself when the user
 // navigates away — a background left on the scroll container would follow
-// the user to every other page (工具, 设置, 回忆事件 …) and paint the artwork
+// the user to every other page (工具, 设置, 回忆 …) and paint the artwork
 // there too.
 //
 // Centralising it here means the paint/teardown pair lives in one place, and
@@ -53,7 +53,7 @@ export const BACKGROUND_ROUTES = [
   '/reminders',
   '/events/work',
   '/card-life',
-  // The 打卡墙 — the check-in wall for the 抽卡人生 page. It wears the
+  // The 打卡墙 — the check-in wall for the 抽卡 page. It wears the
   // same artwork because it is the same page family and its translucent
   // paper sheets are drawn for that picture.
   '/card-life/stats',

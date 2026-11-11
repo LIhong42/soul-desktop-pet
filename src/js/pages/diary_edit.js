@@ -1,4 +1,4 @@
-// src/js/pages/diary_edit.js — the diary editor for 回忆事件.
+// src/js/pages/diary_edit.js — the diary editor for 回忆.
 //
 // This page replaces the old one-field-per-slot memorial form. Instead of
 // five narrow inputs (去了哪里 / 吃了什么 / 穿了什么 / 干了哪些事 / 补充描述)
@@ -113,7 +113,7 @@ const pageState = {
   pendingMedia: [],
   existingPhotos: [],
   returnTo: MEMORIAL_LIST_ROUTE,
-  // The 抽卡人生 card this entry was started from (null for every entry
+  // The 抽卡 card this entry was started from (null for every entry
   // that was not opened from a drawn card). It carries the card's title
   // and requirement into the page, and it is linked back to the card once
   // the entry is saved.
@@ -252,7 +252,7 @@ let blockSeq = 0;
 // so a gallery can end up with one big picture next to two small ones.
 //
 // The layout table and the width math live in src/js/diary_layout.js —
-// the 回忆事件 list draws the same galleries inside its cards, and the two
+// the 回忆 list draws the same galleries inside its cards, and the two
 // have to agree on what "双图" means.
 
 const DEFAULT_GALLERY_LAYOUT_FALLBACK = DIARY_GALLERY_LAYOUTS[1];
@@ -1688,9 +1688,9 @@ export async function render(args, params) {
       for (const cid of (ev.contact_ids || [])) pageState.selectedContactIds.add(cid);
     }
   }
-  // 抽卡人生: the entry starts from the card that was drawn. The card's
+  // 抽卡: the entry starts from the card that was drawn. The card's
   // title and requirement fill the page, and the entry is filed as
-  // 抽卡事件 — the 分类 the 抽卡人生 page records.
+  // 抽卡事件 — the 分类 the 抽卡 page records.
   let draw = null;
   if (params.draw) {
     try {
@@ -1719,7 +1719,7 @@ export async function render(args, params) {
   const themeVars = diaryThemeVars(theme);
 
   // The back link says where it goes. It follows the page the user came
-  // from: the 抽卡人生 page, the 打卡墙, or the 回忆事件 list.
+  // from: the 抽卡 page, the 打卡墙, or the 回忆 list.
   const backLabel = pageState.returnTo === '/card-life/stats'
     ? '返回打卡墙'
     : (pageState.returnTo === '/card-life' ? '返回抽卡' : '返回列表');
@@ -1733,13 +1733,13 @@ export async function render(args, params) {
       </div>
     </div>
 
-    <!-- The entry was started from a card drawn on the 抽卡人生 page, so the
+    <!-- The entry was started from a card drawn on the 抽卡 page, so the
          page says where it came from. The card's own title and requirement
          are already in the title field and the first text block. -->
     ${pageState.draw ? `
     <div class="diary-draw-banner">
       <span class="diary-draw-badge">抽卡</span>
-      <span>来自抽卡人生 · ${pageState.draw.source === 'custom'
+      <span>来自抽卡 · ${pageState.draw.source === 'custom'
         ? '我自己添加的卡片'
         : `第 ${escapeHtml(String(pageState.draw.card_no || '?'))} 张`} · ${escapeHtml(pageState.draw.week_key || '')} 那一周</span>
     </div>` : ''}
@@ -1848,7 +1848,7 @@ export async function render(args, params) {
 // open in the new editor without losing their text.
 //
 // The document is read with the shared parser (src/js/diary_layout.js), so
-// the editor and the 回忆事件 list card read the same document the same
+// the editor and the 回忆 list card read the same document the same
 // way.
 function loadBlocks(ev) {
   const blocks = [];
@@ -2271,7 +2271,7 @@ async function onSave() {
 
   const payload = {
     kind: meta.kind,
-    title: title || '回忆事件',
+    title: title || '回忆',
     // The plain text lives in `notes` (search + album export read it);
     // the interleaved document lives in `content`.
     notes: body || null,
@@ -2295,7 +2295,7 @@ async function onSave() {
     return;
   }
 
-  // The entry was written from a card drawn on the 抽卡人生 page — point
+  // The entry was written from a card drawn on the 抽卡 page — point
   // the card back at the entry, so the page can show that this card was
   // already recorded.
   if (pageState.draw && pageState.draw.id && pageState.isNew) {

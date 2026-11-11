@@ -261,8 +261,8 @@ app.whenReady().then(async () => {
   check('only the anchored kinds may use a lunar date',
     lunarAllowed, [false, false, false, true, true, true]);
 
-  // ---- 回忆事件表单：主窗口 vs 快速记录 -------------------------------
-  console.log('\n== 回忆事件表单：主窗口 vs 快速记录 ==');
+  // ---- 回忆表单：主窗口 vs 快速记录 -------------------------------
+  console.log('\n== 回忆表单：主窗口 vs 快速记录 ==');
 
   const mainMem = await evalIn(win, `
     const m = window.__m;
@@ -315,7 +315,7 @@ app.whenReady().then(async () => {
     all.filter((i) => chromeIds.includes(i)), []);
 
   // ---- The memorial form validates the same way -----------------------
-  console.log('\n== 回忆事件校验 ==');
+  console.log('\n== 回忆校验 ==');
   const memValidation = await evalIn(win, `
     const m = window.__m;
     const f = m.buildMemorialForm({

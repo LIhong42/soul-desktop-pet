@@ -1,7 +1,7 @@
-// main/card_progress.js — the 抽卡人生 打卡墙 (the check-in wall).
+// main/card_progress.js — the 抽卡 打卡墙 (the check-in wall).
 //
-// The 抽卡人生 page draws one card a week and the user is supposed to
-// write the card down: a 回忆事件 with pictures and words. But the page
+// The 抽卡 page draws one card a week and the user is supposed to
+// write the card down: a 回忆 with pictures and words. But the page
 // only ever showed the CURRENT card and a flat list of the ones before
 // it — there was no way to look back and see how many weeks had actually
 // been completed, which weeks were missed, and what each week's card was.
@@ -19,7 +19,7 @@
 // The completion rule
 // ---------------------------------------------------------------------------
 // A week counts as FINISHED when the user actually wrote the card down.
-// "Wrote it down" means the 回忆事件 the card points at is a real entry,
+// "Wrote it down" means the 回忆 the card points at is a real entry,
 // and it counts as written when EITHER of these holds:
 //
 //   * it has at least one photo attached   (图文并茂), or
@@ -112,7 +112,7 @@ function textLength(row) {
 // Is this draw finished?
 //
 // `row` is a row from listCardDrawsWithProgress(). A draw is finished
-// when it points at a 回忆事件 AND that entry is written enough.
+// when it points at a 回忆 AND that entry is written enough.
 //
 // Returns { done, hasPhoto, textLength, photoCount } — the parts, so the
 // page can say WHY a week counts (a photo? a long text?) rather than
@@ -301,7 +301,7 @@ function summary(rows, now = new Date()) {
   };
 }
 
-// The week a card belongs to, read the way the 抽卡人生 page reads it:
+// The week a card belongs to, read the way the 抽卡 page reads it:
 // the Monday and the Sunday of that week.
 function weekLabel(key) {
   const monday = parseWeekKey(key);

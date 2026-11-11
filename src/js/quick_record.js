@@ -49,11 +49,11 @@ const KINDS = {
     hint: '送过 / 想送的东西',
   },
   reminder: {
-    label: '提醒日期', icon: '⏰', tint: 'var(--cat-general)',
+    label: '提醒', icon: '⏰', tint: 'var(--cat-general)',
     hint: '到点提醒我一件事',
   },
   memorial: {
-    label: '回忆事件', icon: '🎞️', tint: 'var(--cat-memorial)',
+    label: '回忆', icon: '🎞️', tint: 'var(--cat-memorial)',
     hint: '值得记住的一刻',
   },
   work: {
@@ -81,7 +81,7 @@ let contacts = [];
 
 // Handles returned by the shared form helpers (src/js/form_fields.js) for
 // the form currently on screen. `eventWiring.read()` returns the live
-// state of the 提醒日期 / 工作事件 form; `memorialIds` locates the 回忆事件
+// state of the 提醒 / 工作事件 form; `memorialIds` locates the 回忆
 // fields. Both are null when a different kind is showing.
 let eventWiring = null;
 let memorialIds = null;
@@ -130,7 +130,7 @@ function wireContactPicker() {
   });
   // The toolbar (全选 / 清空) mirrors the main window's memorial contact
   // picker. It is optional chrome — the toolbar row is only rendered for
-  // the multi-select forms (回忆事件) — so every lookup is guarded.
+  // the multi-select forms (回忆) — so every lookup is guarded.
   const allBtn = formEl.querySelector('.qr-picker-all');
   if (allBtn) {
     allBtn.onclick = () => {
@@ -219,7 +219,7 @@ function attributeForm(kindId) {
   `;
 }
 
-// 提醒日期 / 工作事件 — both are rows in the `events` table, differing in
+// 提醒 / 工作事件 — both are rows in the `events` table, differing in
 // their `category` column ('general' vs 'work'). The work category drops
 // the 类型 and 关联联系人 fields, matching the main window's form.
 //
@@ -254,7 +254,7 @@ function eventForm(kindId) {
   return form;
 }
 
-// 回忆事件 — a memorial_events row.
+// 回忆 — a memorial_events row.
 //
 // The markup comes from src/js/form_fields.js, the same module the main
 // window's memorial form uses. The contact picker is supplied as markup
@@ -361,7 +361,7 @@ async function openKind(kindId) {
   formEl.onsubmit = (e) => { e.preventDefault(); save(kindId); };
 }
 
-// ---- Photo picker (回忆事件) -------------------------------------------
+// ---- Photo picker (回忆) -------------------------------------------
 //
 // The picked files are previewed locally (object URLs) so the user can
 // confirm them before saving. The actual upload happens after the event
@@ -460,7 +460,7 @@ async function saveAttribute(kindId) {
   await done(`已记录${KINDS[kindId].label}`);
 }
 
-// 提醒日期 / 工作事件 → the `events` table.
+// 提醒 / 工作事件 → the `events` table.
 //
 // Mirrors the main window's save handler (src/js/pages/event_edit.js):
 // the repeat kind lives in `remind_kind`, the anchor date in `remind_date`,
@@ -494,7 +494,7 @@ async function saveEvent(kindId) {
   await done(`已记录${KINDS[kindId].label}`);
 }
 
-// 回忆事件 → memorial_events.
+// 回忆 → memorial_events.
 async function saveMemorial() {
   // The shared reader owns the field names and the validation, so this
   // window and the main window accept exactly the same inputs.
@@ -532,14 +532,14 @@ async function saveMemorial() {
       }
     }
     if (failCount > 0) {
-      await done(`已记录回忆事件（${okCount} 张照片，${failCount} 张失败）`);
+      await done(`已记录回忆（${okCount} 张照片，${failCount} 张失败）`);
       return;
     }
-    await done(`已记录回忆事件（${okCount} 张照片）`);
+    await done(`已记录回忆（${okCount} 张照片）`);
     return;
   }
 
-  await done('已记录回忆事件');
+  await done('已记录回忆');
 }
 
 // Report success and reset the form. The window STAYS OPEN (rather than

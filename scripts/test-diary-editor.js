@@ -1487,11 +1487,11 @@ app.whenReady().then(async () => {
 
   // ---- 11. The list cards mirror the diary page ------------------------
   //
-  // The 回忆事件 list is a grid of cards, and each card is a miniature of
+  // The 回忆 list is a grid of cards, and each card is a miniature of
   // the page the entry was written on: the same header bar with the
   // title, the same text blocks and photo galleries in the same order,
   // the same decorative strip at the bottom.
-  console.log('\n== 回忆事件卡片 ==');
+  console.log('\n== 回忆卡片 ==');
   const cardResult = await evalIn(win, `
     window.__testRows.clear();
     window.__testRows.seed('card-1', {
@@ -1728,7 +1728,7 @@ app.whenReady().then(async () => {
   // The list is filtered by three independent axes — 时间 / 联系人 / 类型
   // — which compose with the free-text search box. All four are applied
   // client-side over the cached rows, so a change is instant.
-  console.log('\n== 回忆事件筛选 ==');
+  console.log('\n== 回忆筛选 ==');
   const filterResult = await evalIn(win, `
     window.__testRows.clear();
     // Three entries, one per axis, so each filter has something to
@@ -1885,7 +1885,7 @@ app.whenReady().then(async () => {
   // three controls, the pill around the search field, the icon slots and
   // the hairline dividers — so a later change that quietly drops one of
   // them shows up here rather than as a surprise screenshot.
-  console.log('\n== 回忆事件工具栏 ==');
+  console.log('\n== 回忆工具栏 ==');
   const toolbarResult = await evalIn(win, `
     window.__testRows.clear();
     window.__testRows.seed('tb-1', {
@@ -1992,8 +1992,8 @@ app.whenReady().then(async () => {
 
   checkTrue('the title carries its doodle', toolbarResult.hasArt);
   checkTrue('the doodle has width', toolbarResult.artWidth > 40);
-  checkTrue('the title still reads 回忆事件',
-    /回忆事件/.test(toolbarResult.titleText));
+  checkTrue('the title still reads 回忆',
+    /回忆/.test(toolbarResult.titleText));
 
   // ---- 15. The bulk-select round trip ------------------------------------
   //
@@ -2004,7 +2004,7 @@ app.whenReady().then(async () => {
   //
   // This walks the whole round trip and checks that select mode can
   // actually be entered AND left.
-  console.log('\n== 回忆事件批量选择 ==');
+  console.log('\n== 回忆批量选择 ==');
   const bulkResult = await evalIn(win, `
     const q = (sel) => document.querySelector(sel);
     const state = { };
@@ -2051,7 +2051,7 @@ app.whenReady().then(async () => {
 
   // ---- 16. A link to a memory that is gone -----------------------------
   //
-  // The 抽卡人生 page and the 打卡墙 both link to a 回忆记录 by its id.
+  // The 抽卡 page and the 打卡墙 both link to a 回忆记录 by its id.
   // That entry can be deleted, and the link can be stale. The editor used
   // to answer with a dead end — 「这篇回忆不存在或已被删除。」 — which left
   // the user with no way to write the memory the link was asking for.
@@ -2182,7 +2182,7 @@ app.whenReady().then(async () => {
   // what the list holds (a search, a filter, a reset) takes the user back
   // to the first page, so narrowing the list can never strand them on a
   // page that no longer exists.
-  console.log('\n== 回忆事件分页 ==');
+  console.log('\n== 回忆分页 ==');
   const pagerResult = await evalIn(win, `
     window.__testRows.clear();
     for (let i = 1; i <= 14; i++) {

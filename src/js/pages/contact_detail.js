@@ -9,7 +9,7 @@
 // Now every attribute row belongs to exactly one contact, and the contact
 // detail page owns all of it:
 //
-//   #/contacts/:id            → 概览 tab (统计 + 重要日期 + 回忆事件)
+//   #/contacts/:id            → 概览 tab (统计 + 重要日期 + 回忆)
 //   #/contacts/:id/likes      → 喜好 tab   (search / filter / 新增 / 批量删除)
 //   #/contacts/:id/taboos     → 忌讳 tab
 //   #/contacts/:id/gifts      → 礼物 tab
@@ -415,7 +415,7 @@ function memorialRow(e) {
   const photoId = e.first_photo_id || (e.photo_ids && e.photo_ids[0]) || '';
   const details = [e.place, e.activities, e.notes].filter(Boolean).join(' · ');
   const meta = [
-    e.photo_count > 0 ? `${e.photo_count} 张照片` : '回忆事件',
+    e.photo_count > 0 ? `${e.photo_count} 张照片` : '回忆',
     details ? clip(details, 28) : '',
   ].filter(Boolean).join(' · ');
   return `
@@ -502,11 +502,11 @@ async function renderOverview(c) {
       : `<div class="empty">还没有重要日期</div>`}
 
     <div class="section-header">
-      <h2>回忆事件</h2>
+      <h2>回忆</h2>
       <button class="btn secondary" id="add-memorial">+ 新增</button>
     </div>
     ${memorial.length === 0
-      ? `<div class="empty">还没有回忆事件</div>`
+      ? `<div class="empty">还没有回忆</div>`
       : memorial.map(memorialRow).join('')}
   `;
 

@@ -20,7 +20,7 @@
 // This module owns the two facts both the editor and the list card need:
 // the layout table, and the width a photo takes inside a gallery.
 //
-// The editor renders a gallery with real photos; the 回忆事件 list renders
+// The editor renders a gallery with real photos; the 回忆 list renders
 // the SAME gallery as a thumbnail inside a card. If the two disagreed
 // about a layout's width, the card would not be a miniature of the page
 // the user wrote — so the table lives here, once, and both read it.

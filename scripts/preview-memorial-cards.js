@@ -1,4 +1,4 @@
-// scripts/preview-memorial-cards.js — renders the 回忆事件 card list to a
+// scripts/preview-memorial-cards.js — renders the 回忆 card list to a
 // PNG so the layout can be eyeballed without a full app session.
 //
 // Run: node scripts/run-electron.js scripts/preview-memorial-cards.js

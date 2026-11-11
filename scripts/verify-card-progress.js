@@ -1,6 +1,6 @@
-// scripts/verify-card-progress.js — checks the 抽卡人生 打卡墙's rules.
+// scripts/verify-card-progress.js — checks the 抽卡 打卡墙's rules.
 //
-// The 打卡墙 answers a question the 抽卡人生 page used to leave open: of
+// The 打卡墙 answers a question the 抽卡 page used to leave open: of
 // the weeks you have drawn, how many did you actually write down?
 //
 // This script checks the two things that answer depends on:

@@ -65,7 +65,7 @@ async function render(args) {
   const backHash = '#' + backPath;
   const backLabel = /^\/contacts\/[^/]+\/(likes|taboos|gifts|important-dates)/.test(backPath) ? '返回联系人详情'
                   : /^\/contacts\/[^/]+$/.test(backPath) ? '返回联系人详情'
-                  : backPath === '/important-dates' ? '返回提醒日期'
+                  : backPath === '/important-dates' ? '返回提醒'
                   : '返回上一页';
   // Warm the avatar data URL cache so the contact photo paints on the same
   // tick as the rest of the page.

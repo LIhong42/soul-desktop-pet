@@ -64,7 +64,7 @@ async function main() {
     );
     return id;
   };
-  // A 提醒日期 row — an event in the `events` table, tagged as an
+  // A 提醒 row — an event in the `events` table, tagged as an
   // anniversary. `cal` picks solar (remind_date) or lunar.
   const mkEvent = (contactId, title, tagKind, cal, anchor, remind = 1) => {
     const id = db.newId();
@@ -105,20 +105,20 @@ async function main() {
   // one must not show up.
   mkDate(c2, '生日', today.getMonth() + 1, today.getDate(), 1995, 'birthday');
 
-  // A 提醒日期 tagged 纪念日 — the kind of row that used to be invisible
+  // A 提醒 tagged 纪念日 — the kind of row that used to be invisible
   // to the carousel. Its anchor is 12 days out, in 2026 (this year).
   const evSoon = new Date(today.getTime() + 12 * 86400000);
   const evSolar = mkEvent(c1, '爸爸纪念日', 'anniversary', 'solar',
     `${evSoon.getFullYear()}-${String(evSoon.getMonth() + 1).padStart(2, '0')}-${String(evSoon.getDate()).padStart(2, '0')}`);
-  // A 提醒日期 tagged 纪念日 with a LUNAR anchor.
+  // A 提醒 tagged 纪念日 with a LUNAR anchor.
   const evLunar = mkEvent(c2, '农历纪念日', 'anniversary', 'lunar', [8, 22]);
-  // A 提醒日期 tagged 节日 — NOT an anniversary, so it must not show up.
+  // A 提醒 tagged 节日 — NOT an anniversary, so it must not show up.
   const evFestival = mkEvent(c2, '春节', 'festival', 'solar', '2026-02-01');
-  // A 提醒日期 with no tag at all — also not an anniversary.
+  // A 提醒 with no tag at all — also not an anniversary.
   const evPlain = mkEvent(c2, '普通提醒', null, 'solar', '2026-05-01');
-  // A 提醒日期 tagged 生日 — a birthday, not an anniversary.
+  // A 提醒 tagged 生日 — a birthday, not an anniversary.
   const evBirthday = mkEvent(c1, '奶奶生日', 'birthday', 'solar', '2026-12-01');
-  // A one-off 提醒日期 tagged 纪念日 — not yearly, so not an anniversary.
+  // A one-off 提醒 tagged 纪念日 — not yearly, so not an anniversary.
   const evOneTime = db.newId();
   db.run(
     `INSERT INTO events(id, contact_id, title, description, remind, remind_kind,
@@ -177,22 +177,22 @@ async function main() {
   check('a row with reminders off keeps its remind_enabled flag', mutedRow.remind_enabled, false);
   check('a row with reminders off still counts days', mutedRow.days_until_next, 5);
 
-  // ---- The 提醒日期 side --------------------------------------------------
-  console.log('\n== 提醒日期里的纪念日 ==');
+  // ---- The 提醒 side --------------------------------------------------
+  console.log('\n== 提醒里的纪念日 ==');
 
   const evRow = byLabel('爸爸纪念日');
-  checkTrue('a 提醒日期 tagged 纪念日 is listed', !!evRow);
+  checkTrue('a 提醒 tagged 纪念日 is listed', !!evRow);
   check('it says where it came from', evRow.source, 'event');
   check('its contact name is joined in', evRow.contact_name, '妈妈');
   check('its tag becomes the card kind', evRow.kind, 'anniversary');
   check('it counts its days', evRow.days_until_next, 12);
   check('its anchor year is the origin year', evRow.year, evSoon.getFullYear());
-  // `remind_date`'s year IS the origin year, so the 提醒日期 side knows
+  // `remind_date`'s year IS the origin year, so the 提醒 side knows
   // the origin date and can report the day count too.
   check('it has a day count', typeof evRow.days_since, 'number');
 
   const lunarRow = byLabel('农历纪念日');
-  checkTrue('a 农历 提醒日期 is listed', !!lunarRow);
+  checkTrue('a 农历 提醒 is listed', !!lunarRow);
   check('it is marked as a lunar date', lunarRow.calendar, 'lunar');
   check('it keeps its lunar month', lunarRow.month, 8);
   check('it keeps its lunar day', lunarRow.day, 22);
@@ -206,8 +206,8 @@ async function main() {
 
   // The rows that are NOT anniversaries.
   check('a 节日 is not an anniversary', !!byLabel('春节'), false);
-  check('an untagged 提醒日期 is not an anniversary', !!byLabel('普通提醒'), false);
-  check('a one-off 提醒日期 is not an anniversary', !!byLabel('一次性纪念日'), false);
+  check('an untagged 提醒 is not an anniversary', !!byLabel('普通提醒'), false);
+  check('a one-off 提醒 is not an anniversary', !!byLabel('一次性纪念日'), false);
 
   // ---- Birthdays are not in the strip ------------------------------------
   console.log('\n== 生日不进轮播 ==');
@@ -217,7 +217,7 @@ async function main() {
   // day, and the contact's detail page lists it) — so it must not take
   // a slot in the strip.
   check('a birthday date is not in the list', !!byLabel('生日'), false);
-  check('a 提醒日期 tagged 生日 is not in the list', !!byLabel('奶奶生日'), false);
+  check('a 提醒 tagged 生日 is not in the list', !!byLabel('奶奶生日'), false);
   checkTrue('no row in the list is a birthday',
     all.every((r) => r.kind !== 'birthday'),
     all.map((r) => `${r.label}:${r.kind}`).join(','));

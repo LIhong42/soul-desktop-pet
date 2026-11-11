@@ -17,10 +17,10 @@
 //      shows 「已完成 3」 while the grid shows two filled squares would be
 //      worse than no page at all.
 //
-//   4. The page wears the shared background artwork, like the 抽卡人生
+//   4. The page wears the shared background artwork, like the 抽卡
 //      page it belongs to.
 //
-//   5. The 抽卡人生 page links to it, and the link goes to a real route.
+//   5. The 抽卡 page links to it, and the link goes to a real route.
 //
 // It drives the REAL main window with the REAL preload and IPC handlers,
 // because the failure would be in the seam between the renderer markup
@@ -169,9 +169,9 @@ app.whenReady().then(async () => {
   await winMain.webContents.executeJavaScript(`document.body.classList.remove('locked'); true`);
 
   // -------------------------------------------------------------------------
-  // Test 1 — the 抽卡人生 page links to the wall
+  // Test 1 — the 抽卡 page links to the wall
   // -------------------------------------------------------------------------
-  console.log('\n[1] the 抽卡人生 page links to the wall');
+  console.log('\n[1] the 抽卡 page links to the wall');
   await winMain.webContents.executeJavaScript(`location.hash = '#/card-life'; true`);
   await new Promise((r) => setTimeout(r, 1200));
 
@@ -185,7 +185,7 @@ app.whenReady().then(async () => {
     width: document.querySelector('.cl-checkin')
       ? document.querySelector('.cl-checkin').getBoundingClientRect().width : 0,
   }))()`);
-  check('the wall has a door on the 抽卡人生 page', link.door);
+  check('the wall has a door on the 抽卡 page', link.door);
   check('the door links to the wall route', link.href === '#/card-life/stats', link.href);
   check('the door is named', link.title.trim() === '打卡墙', link.title);
   check('the door says how many weeks are on the wall',
@@ -201,7 +201,7 @@ app.whenReady().then(async () => {
 
   const page = await winMain.webContents.executeJavaScript(`(() => ({
     page: !!document.querySelector('.cl-stats-page'),
-    // The page wears the SAME paper stylesheet as the 抽卡人生 page.
+    // The page wears the SAME paper stylesheet as the 抽卡 page.
     clPage: !!document.querySelector('.cl-page'),
     title: (document.querySelector('.cl-head h1') || {}).textContent || '',
     back: !!document.querySelector('.cl-stats-back'),
@@ -224,10 +224,10 @@ app.whenReady().then(async () => {
     appHeight: (document.getElementById('app') || {clientHeight: 0}).clientHeight,
   }))()`);
   check('the wall page is rendered', page.page);
-  check('the wall wears the 抽卡人生 page stylesheet', page.clPage);
+  check('the wall wears the 抽卡 page stylesheet', page.clPage);
   check('the title is 打卡墙', page.title.trim() === '打卡墙', page.title);
   check('the wall has a back link', page.back);
-  check('the back link goes to the 抽卡人生 page', page.backHref === '#/card-life',
+  check('the back link goes to the 抽卡 page', page.backHref === '#/card-life',
     page.backHref);
   check('the summary has four tiles', page.tiles === 4, `got ${page.tiles}`);
   check('the grid is rendered', page.grid);
@@ -357,7 +357,7 @@ app.whenReady().then(async () => {
   //
   // This is the page's whole interaction now. The grid is the index and
   // the card is the detail: click a square, and the card that was drawn
-  // that week comes back, in the 抽卡人生 page's own style.
+  // that week comes back, in the 抽卡 page's own style.
   console.log('\n[5] clicking a square puts the card on the table');
   await winMain.webContents.executeJavaScript(`(() => {
     // The newest week — W5, which has a photo AND text.
@@ -374,7 +374,7 @@ app.whenReady().then(async () => {
     const cs = el ? getComputedStyle(el) : null;
     return {
       present: !!el,
-      // The card must be the SAME card component as the 抽卡人生 page's.
+      // The card must be the SAME card component as the 抽卡 page's.
       isClCard: !!(el && el.classList.contains('cl-card')),
       hasClip: !!(el && el.querySelector('.cl-card-clip')),
       hasBadge: !!(el && el.querySelector('.cl-card-badge')),
@@ -393,7 +393,7 @@ app.whenReady().then(async () => {
     };
   })()`);
   check('clicking a square puts a card on the table', card.present);
-  check('the card IS the 抽卡人生 page\'s card component', card.isClCard);
+  check('the card IS the 抽卡 page\'s card component', card.isClCard);
   check('the card has the paperclip', card.hasClip);
   check('the card has the badge', card.hasBadge);
   check('the card has a title', card.hasTitle);
@@ -404,7 +404,7 @@ app.whenReady().then(async () => {
   check('the card is a paper surface', card.bg !== 'rgba(0, 0, 0, 0)', card.bg);
   check('the card has a border', parseFloat(card.border) > 0, card.border);
   // The note says why the week counts, in the same vocabulary as the
-  // 抽卡人生 page's own note.
+  // 抽卡 page's own note.
   check('the card says how many characters there are', /字/.test(card.note), card.note);
   check('the card says how many photos there are', /照片/.test(card.note), card.note);
   check('the card offers the entry', card.btn);
@@ -476,12 +476,12 @@ app.whenReady().then(async () => {
     bg.computed.includes('file://'), bg.computed);
 
   // -------------------------------------------------------------------------
-  // Test 7 — the 抽卡人生 page still works
+  // Test 7 — the 抽卡 page still works
   // -------------------------------------------------------------------------
   //
   // The wall was added to a page that already had a design test. This
   // checks that adding the door did not disturb the page.
-  console.log('\n[7] the 抽卡人生 page still works');
+  console.log('\n[7] the 抽卡 page still works');
   await winMain.webContents.executeJavaScript(`location.hash = '#/events/memorial'; true`);
   await new Promise((r) => setTimeout(r, 300));
   await winMain.webContents.executeJavaScript(`location.hash = '#/card-life'; true`);
@@ -499,7 +499,7 @@ app.whenReady().then(async () => {
       return cl && cl.sheet ? cl.sheet.cssRules.length : 0;
     })(),
   }))()`);
-  check('the 抽卡人生 page still renders', back.page);
+  check('the 抽卡 page still renders', back.page);
   check('the rules card is still there', back.rules);
   check('the own-cards block is still there', back.custom);
   check('the door is still there', back.door);

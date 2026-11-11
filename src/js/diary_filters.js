@@ -1,6 +1,6 @@
-// src/js/diary_filters.js — the vocabulary of a 回忆事件 list filter.
+// src/js/diary_filters.js — the vocabulary of a 回忆 list filter.
 //
-// The 回忆事件 page (src/js/pages/events_memorial.js) filters its list by
+// The 回忆 page (src/js/pages/events_memorial.js) filters its list by
 // three independent axes:
 //
 //   * 时间   — how long ago the entry happened ("最近 30 天", "今年", …)

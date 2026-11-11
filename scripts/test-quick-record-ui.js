@@ -87,7 +87,7 @@ app.whenReady().then(async () => {
   check('tile kinds', tiles.map((t) => t.kind),
     ['like', 'taboo', 'gift', 'reminder', 'memorial', 'work']);
   check('tile labels', tiles.map((t) => t.label),
-    ['喜好', '忌讳', '礼物', '提醒日期', '回忆事件', '工作事件']);
+    ['喜好', '忌讳', '礼物', '提醒', '回忆', '工作事件']);
 
   // The picker is visible and the form is hidden before a kind is chosen.
   check('picker visible initially',
@@ -171,8 +171,8 @@ app.whenReady().then(async () => {
   check('taboo description', tabooRows[0] && tabooRows[0].description, '不要提起前任');
   check('the two kinds stay separate', db.all('SELECT * FROM contact_attributes').length, 2);
 
-  // ---- 提醒日期: the event form ---------------------------------------
-  console.log('\n== 提醒日期 ==');
+  // ---- 提醒: the event form ---------------------------------------
+  console.log('\n== 提醒 ==');
   await evalIn(win, `document.getElementById('qr-back').click()`);
   await evalIn(win, `document.querySelector('.qr-tile[data-kind="reminder"]').click()`);
   await evalIn(win, `
@@ -297,8 +297,8 @@ app.whenReady().then(async () => {
   check('work event description', workRows[0] && workRows[0].description, '季度汇报');
   check('work event has no contact', workRows[0] && workRows[0].contact_id, null);
 
-  // ---- 回忆事件: the memorial form ------------------------------------
-  console.log('\n== 回忆事件 ==');
+  // ---- 回忆: the memorial form ------------------------------------
+  console.log('\n== 回忆 ==');
   await evalIn(win, `document.getElementById('qr-back').click()`);
   await evalIn(win, `document.querySelector('.qr-tile[data-kind="memorial"]').click()`);
   await evalIn(win, `
@@ -386,7 +386,7 @@ app.whenReady().then(async () => {
   // The main window's event form offers 阳历 / 农历. The quick-record form
   // must offer the same thing and store the same columns, otherwise a
   // lunar reminder captured from the pet would silently never fire.
-  console.log('\n== 农历提醒日期 ==');
+  console.log('\n== 农历提醒 ==');
   await evalIn(win, `document.getElementById('qr-back').click()`);
   await evalIn(win, `document.querySelector('.qr-tile[data-kind="reminder"]').click()`);
   await evalIn(win, `
@@ -458,7 +458,7 @@ app.whenReady().then(async () => {
   check('daily event has no lunar anchor',
     dailyRows[0] && dailyRows[0].lunar_month, null);
 
-  // ---- Photo upload (回忆事件) -----------------------------------------
+  // ---- Photo upload (回忆) -----------------------------------------
   //
   // The photos have to be uploaded AFTER the event row exists (the upload
   // endpoint needs the event id), so this exercises the whole chain: pick
@@ -521,7 +521,7 @@ app.whenReady().then(async () => {
     JSON.stringify(photoRows.map((p) => p.relative_path)));
   check('the success message mentions the photo count',
     await evalIn(win, `document.getElementById('qr-msg').textContent`),
-    '已记录回忆事件（2 张照片）');
+    '已记录回忆（2 张照片）');
 
   // ---- The window asks the main process which kind to open -------------
   console.log('\n== boot kind ==');

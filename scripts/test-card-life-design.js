@@ -1,4 +1,4 @@
-// scripts/test-card-life-design.js — guards the 抽卡人生 page's design
+// scripts/test-card-life-design.js — guards the 抽卡 page's design
 // system.
 //
 // What this protects:
@@ -8,7 +8,7 @@
 //      app's generic look — the exact regression this file exists to
 //      catch, because nothing else fails when it happens.
 //
-//   2. The page wears the shared background artwork. The 抽卡人生 page was
+//   2. The page wears the shared background artwork. The 抽卡 page was
 //      given `today-background.png` as its backdrop, and its cards are
 //      translucent sheets over that picture. A regression to opaque cards
 //      would turn the page back into "white boxes pasted on a painting",
@@ -43,7 +43,7 @@ function check(name, cond, detail) {
 }
 
 app.whenReady().then(async () => {
-  console.log('抽卡人生 page design system test (real Electron)');
+  console.log('抽卡 page design system test (real Electron)');
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'soulpet-cldesign-'));
   await db.open(path.join(dir, 'test.sqlite'));
@@ -177,7 +177,7 @@ app.whenReady().then(async () => {
   check('the deck is a stack of three cards', empty.deckStack === 3,
     `got ${empty.deckStack}`);
   check('the draw button is rendered', empty.drawBtn);
-  check('the title is 抽卡人生', empty.title.trim() === '抽卡人生',
+  check('the title is 抽卡', empty.title.trim() === '抽卡',
     JSON.stringify(empty.title));
   check('the tagline sits beside the title', empty.tagline.trim() === '每周给生活一点刺激',
     JSON.stringify(empty.tagline));

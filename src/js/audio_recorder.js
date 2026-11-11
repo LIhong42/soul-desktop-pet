@@ -1,6 +1,6 @@
 // src/js/audio_recorder.js — records a voice clip from the microphone.
 //
-// The diary editor can attach a sound to a 回忆事件 in two ways: pick a
+// The diary editor can attach a sound to a 回忆 in two ways: pick a
 // file from the disk, or speak it now. The second way is the one this
 // module serves — it asks the OS for the microphone, records what the
 // user says, and hands the result back as an ordinary `File`.

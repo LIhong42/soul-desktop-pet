@@ -35,7 +35,7 @@ const { relaunchApp } = require('./app_relaunch');
 // 文本框 catalog (resources/text_boxes) — scanned, not hard-coded.
 const petTextBoxes = require('./pet_text_boxes');
 // 页面背景 catalog (resources/ui) — scanned, not hard-coded.
-// 全应用共用同一张底图：「今日」「联系人」「提醒日期」「工作事件」「抽卡人生」，
+// 全应用共用同一张底图：「今日」「联系人」「提醒」「工作事件」「抽卡」，
 // 以及联系人详情页的整页背景。
 const pageBackground = require('./page_background');
 const videoFrameSplit = require('./video_frame_split');
@@ -47,9 +47,9 @@ const imageBatchResize = require('./image_batch_resize');
 const appUpdate = require('./app_update');
 // 日记正文的校验规则（文字块 + 图组），单独成模块便于单独测试。
 const { normDiaryContent } = require('./diary_content');
-// 抽卡人生：卡库（resources/intersting-list/list.md）与每周一次的抽卡规则。
+// 抽卡：卡库（resources/intersting-list/list.md）与每周一次的抽卡规则。
 const cardDraws = require('./card_draws');
-// 抽卡人生打卡墙：每周的完成情况与连续完成统计。
+// 抽卡打卡墙：每周的完成情况与连续完成统计。
 const cardProgress = require('./card_progress');
 
 // Tracks in-flight export jobs so the renderer can cancel them via
@@ -667,7 +667,7 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
   //
   // The gathering and the counting live in main/anniversaries.js, which
   // merges the two places an anniversary can be recorded — a contact's
-  // own date, and a 提醒日期 tagged 生日 / 纪念日 — and computes:
+  // own date, and a 提醒 tagged 生日 / 纪念日 — and computes:
   //
   //   days_until_next — whole days from today to the next occurrence of
   //     (month, day). 0 means it is today.
@@ -690,7 +690,7 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
   ipcMain.handle('important_dates:list_all', () => listAnniversaries(db));
 
   // ---- Events ----
-  // Categories: 'general' (the default "提醒日期" page), 'memorial' (回忆事件),
+  // Categories: 'general' (the default "提醒" page), 'memorial' (回忆),
   // 'work' (工作事件). Filtering by category is optional — without it the
   // handler returns all categories (used by contact_detail and search).
   const EVENT_CATEGORIES = new Set(['general', 'memorial', 'work']);
@@ -709,7 +709,7 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
     if (opts.category && EVENT_CATEGORIES.has(opts.category)) {
       sql += ' AND category = ?'; args.push(opts.category);
     }
-    // tag_kind filter (used by 提醒日期 list filters):
+    // tag_kind filter (used by 提醒 list filters):
     //   - 'birthday' / 'anniversary' / 'festival' — match that exact value
     //   - 'none' — only events without a tag_kind (user-created untagged)
     //   - 'any_tagged' — anything where tag_kind IS NOT NULL
@@ -770,7 +770,7 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
     // Memorial events have their own table + handlers now. Reject any
     // attempt to write category='memorial' here so the UI is forced through
     // the new memorial_events:* channels.
-    if (category === 'memorial') throw new Error('请使用新建回忆事件页面');
+    if (category === 'memorial') throw new Error('请使用新建回忆页面');
     // Tag kind is no longer settable from the new-event form. The renderer
     // never sends it. We accept it from internal callers (festival auto-
     // create) but never from the form.
@@ -842,7 +842,7 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
   ipcMain.handle('events:update', (_e, id, input) => {
     const now = db.nowStr();
     const category = EVENT_CATEGORIES.has(input.category) ? input.category : 'general';
-    if (category === 'memorial') throw new Error('请使用新建回忆事件页面');
+    if (category === 'memorial') throw new Error('请使用新建回忆页面');
     let tagKind = null;
     if (input.tag_kind && EVENT_TAG_KINDS.has(input.tag_kind)) {
       tagKind = input.tag_kind;
@@ -1035,9 +1035,9 @@ function normFreeText(s) {
 
   ipcMain.handle('memorial_events:get', (_e, id) => db.getMemorialEvent(id));
 
-  // ---- 抽卡人生 ----
+  // ---- 抽卡 ----
   //
-  // The 抽卡人生 page draws one card a week from the deck in
+  // The 抽卡 page draws one card a week from the deck in
   // `resources/intersting-list/list.md` plus the cards the user added on
   // the page itself. The deck and the weekly rule live in
   // main/card_draws.js; the drawn cards live in the `card_draws` table and
@@ -1047,7 +1047,7 @@ function normFreeText(s) {
   //               customCount, totalSize, card, history }
   //   draw()  → { ok, card, reason }   reason: drawn | already_drawn | empty_deck
   //   get(id) → one draw (the diary editor reads it to prefill the entry)
-  //   link(id, eventId) → point the draw at the 回忆事件 it became
+  //   link(id, eventId) → point the draw at the 回忆 it became
   ipcMain.handle('card_draws:state', () => cardDraws.state(null, db));
 
   ipcMain.handle('card_draws:draw', () => {
@@ -1093,7 +1093,7 @@ function normFreeText(s) {
       || input.kind === 'card_draw'))
       ? input.kind : 'other';
     const title = (typeof input.title === 'string' && input.title.trim())
-      ? input.title.trim() : '回忆事件';
+      ? input.title.trim() : '回忆';
     // 5 free-text fields, all nullable. Each is independently trimmed and
     // stored only if non-empty; an empty string from the form becomes NULL
     // so search_index doesn't include noise.
@@ -1694,7 +1694,7 @@ function normFreeText(s) {
 
   // ---- 页面背景 ----
   //
-  // The 今日 / 联系人 / 提醒日期 / 工作事件 / 抽卡人生 pages paint a background
+  // The 今日 / 联系人 / 提醒 / 工作事件 / 抽卡 pages paint a background
   // image behind their content, and the 联系人详情页 paints the same picture
   // across its whole page. The artwork lives in `resources/ui/`, is catalogued
   // by main/page_background.js, and reaches the renderer as a `file://` URL —

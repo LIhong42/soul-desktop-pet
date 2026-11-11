@@ -1,4 +1,4 @@
-// src/js/pages/events.js — 提醒日期 list (general-category events).
+// src/js/pages/events.js — 提醒 list (general-category events).
 //
 // This page now includes two independent filter dropdowns:
 //   - 类型 (tag_kind): 全部 / 生日 / 纪念日 / 节日 / 未分类
@@ -82,7 +82,7 @@ async function render(args, params) {
   app.innerHTML = `
     <div class="bg-page">
       <div class="row between">
-        <h1>提醒日期 ${pageState.selectMode.active ? '' : (filteredEvents.length > 0 ? bulkEnterLinkHtml() : '')}</h1>
+        <h1>提醒 ${pageState.selectMode.active ? '' : (filteredEvents.length > 0 ? bulkEnterLinkHtml() : '')}</h1>
         <button class="btn" id="new-event">+ 新建</button>
       </div>
       <div class="card">
@@ -144,10 +144,10 @@ async function render(args, params) {
       ${pageState.selectMode.active ? bulkToolbarHtml({
           count: pageState.selectMode.selected.size,
           total: total,
-          kindLabel: '个提醒日期',
+          kindLabel: '个提醒',
         }) : ''}
       ${total === 0
-        ? `<div class="empty">没有匹配的提醒日期</div>`
+        ? `<div class="empty">没有匹配的提醒</div>`
         : visible.map((e) => pageState.selectMode.active
             ? bulkSelectableRowHtml(rowInner(e, cById, festByCode), e.id, pageState.selectMode.selected.has(e.id), eventKindAttr(e))
             : renderRow(e, cById, festByCode)).join('')}
@@ -219,7 +219,7 @@ async function render(args, params) {
       t.outerHTML = bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
         total: filteredEvents.length,
-        kindLabel: '个提醒日期',
+        kindLabel: '个提醒',
       });
       wireBulkToolbar(document.getElementById('reminders-list'), pageState.selectMode, bulkHandlers);
     };

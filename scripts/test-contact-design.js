@@ -212,8 +212,8 @@ app.whenReady().then(async () => {
     markup.tabs.length === 4, JSON.stringify(markup.tabs));
   check('the 返回 control is rendered', markup.back);
   check('the page body is rendered', markup.body);
-  check('the overview shows 重要日期 and 回忆事件',
-    markup.sectionTitles.includes('重要日期') && markup.sectionTitles.includes('回忆事件'),
+  check('the overview shows 重要日期 and 回忆',
+    markup.sectionTitles.includes('重要日期') && markup.sectionTitles.includes('回忆'),
     JSON.stringify(markup.sectionTitles));
   check('the overview has cards', markup.cards > 0, `got ${markup.cards}`);
   check('the rows carry a date chip', markup.chips > 0, `got ${markup.chips}`);

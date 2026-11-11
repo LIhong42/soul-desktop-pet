@@ -27,7 +27,7 @@ import {
 } from '../form_fields.js';
 
 const CATEGORIES = ['general', 'memorial', 'work'];
-const CATEGORY_TITLE = { general: '提醒日期', memorial: '回忆事件', work: '工作事件' };
+const CATEGORY_TITLE = { general: '提醒', memorial: '回忆', work: '工作事件' };
 const CATEGORY_LIST_ROUTE = { general: '/reminders', memorial: '/events/memorial', work: '/events/work' };
 
 function resolveCategory(params) {
@@ -35,7 +35,7 @@ function resolveCategory(params) {
   return CATEGORIES.includes(c) ? c : 'general';
 }
 
-function categoryTitle(c) { return CATEGORY_TITLE[c] || '提醒日期'; }
+function categoryTitle(c) { return CATEGORY_TITLE[c] || '提醒'; }
 function categoryListRoute(c) { return CATEGORY_LIST_ROUTE[c] || '/reminders'; }
 
 async function renderEdit(args, params) {
@@ -168,10 +168,10 @@ async function renderEdit(args, params) {
 
 // ---- Memorial events ----
 //
-// Memorial events (回忆事件) have their own editor: the diary editor in
+// Memorial events (回忆) have their own editor: the diary editor in
 // src/js/pages/diary_edit.js. `renderEdit` redirects memorial routes
 // there, so the old one-field-per-slot memorial form no longer lives in
-// this file. The 提醒日期 / 工作事件 branches above are unchanged.
+// this file. The 提醒 / 工作事件 branches above are unchanged.
 
 // /events/:id and /events/:id/edit both render the edit form. Clicking an
 // event card from any list (or from contact_detail / search / today) lands

@@ -1,4 +1,4 @@
-// src/js/pages/events_memorial.js — 回忆事件 list.
+// src/js/pages/events_memorial.js — 回忆 list.
 //
 // Reads from `memorial_events` (independent of the reminder events table).
 // Each row carries its own kind ('first_time' / 'other' / 'card_draw'), its
@@ -159,7 +159,7 @@ export async function render(args, params, opts = {}) {
       <div class="memorial-toolbar" id="memorial-toolbar">
         <div class="memorial-toolbar-head" id="page-header">
           <h1 class="memorial-title">
-            回忆事件
+            回忆
             ${titleArtHtml()}
             ${!pageState.selectMode.active && pageState.allEvents.length > 0 ? bulkEnterLinkHtml() : ''}
           </h1>
@@ -172,7 +172,7 @@ export async function render(args, params, opts = {}) {
           <div class="memorial-search-field">
             <span class="memorial-search-icon" aria-hidden="true"></span>
             <input type="search" id="memorial-q" class="page-search-input"
-                   placeholder="搜索回忆事件、关键词或联系人…" autocomplete="off" />
+                   placeholder="搜索回忆、关键词或联系人…" autocomplete="off" />
             <button class="memorial-search-clear" id="memorial-clear" type="button"
                     title="清除搜索" style="${initialQ ? '' : 'display:none;'}">×</button>
           </div>
@@ -242,8 +242,8 @@ function rerenderList() {
   const host = document.getElementById('memorial-list');
   if (!host) return;
   const emptyMsg = filterActive
-    ? `没有符合筛选条件的回忆事件 · 已隐藏 ${suppressed} 条`
-    : (q ? `没有匹配「${escapeHtml(q)}」的回忆事件 · 已隐藏 ${suppressed} 条` : '');
+    ? `没有符合筛选条件的回忆 · 已隐藏 ${suppressed} 条`
+    : (q ? `没有匹配「${escapeHtml(q)}」的回忆 · 已隐藏 ${suppressed} 条` : '');
 
   // The wall shows one page of cards at a time. The shared pager does
   // the maths and clamps the index, so a filter that leaves fewer cards
@@ -258,10 +258,10 @@ function rerenderList() {
     ${pageState.selectMode.active ? bulkToolbarHtml({
         count: pageState.selectMode.selected.size,
         total: filtered.length,
-        kindLabel: '个回忆事件',
+        kindLabel: '个回忆',
       }) : ''}
     ${events.length === 0
-      ? `<div class="empty">还没有回忆事件 · 点 + 新建 创建一个</div>`
+      ? `<div class="empty">还没有回忆 · 点 + 新建 创建一个</div>`
       : filtered.length === 0
         ? `<div class="empty">${emptyMsg}</div>`
         : `<div class="memorial-grid">${visible.map((e) => pageState.selectMode.active
@@ -584,7 +584,7 @@ const bulkHandlers = {
       newHeader.className = 'memorial-toolbar-head';
       newHeader.innerHTML = `
         <h1 class="memorial-title">
-          回忆事件
+          回忆
           ${titleArtHtml()}
           ${bulkEnterLinkHtml()}
         </h1>
@@ -632,7 +632,7 @@ function bulkOnChange() {
   t.outerHTML = bulkToolbarHtml({
     count,
     total,
-    kindLabel: '个回忆事件',
+    kindLabel: '个回忆',
   });
   wireBulkToolbar(document.getElementById('app'), pageState.selectMode, bulkHandlers);
 }

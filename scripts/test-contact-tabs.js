@@ -108,8 +108,8 @@ app.whenReady().then(async () => {
   })`);
   check('the tab bar shows 概览 + three kinds', overview.tabs, ['概览', '喜好3', '忌讳1', '礼物1']);
   // 事件 used to be a section of its own; its rows now live in 重要日期.
-  check('the overview has only the 重要日期 / 回忆事件 sections',
-    overview.sections, ['重要日期', '回忆事件']);
+  check('the overview has only the 重要日期 / 回忆 sections',
+    overview.sections, ['重要日期', '回忆']);
   check('the event row moved into 重要日期',
     overview.rowTitles.some(t => t.includes('奶奶的生日')), true);
 
