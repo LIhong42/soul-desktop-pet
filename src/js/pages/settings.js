@@ -21,7 +21,6 @@ const PAGE_BG_ROUTE_LABELS = {
   '/today': '今日',
   '/contacts': '联系人',
   '/reminders': '提醒',
-  '/events/work': '工作事件',
   '/card-life': '抽卡',
   '/card-life/stats': '打卡墙',
 };

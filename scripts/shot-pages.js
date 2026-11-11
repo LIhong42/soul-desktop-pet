@@ -19,7 +19,7 @@ const OUT_DIR = process.argv[2]
   ? path.resolve(process.argv[2])
   : path.join(os.tmpdir(), 'soulpet-pages');
 
-const PAGES = ['/contacts', '/events/work', '/events/memorial', '/settings'];
+const PAGES = ['/contacts', '/events/memorial', '/settings'];
 
 app.whenReady().then(async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'soulpet-pages-'));

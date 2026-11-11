@@ -69,7 +69,7 @@ app.whenReady().then(async () => {
   // The routes that wear the background. Kept in one place so the test and
   // the implementation can't disagree about which pages are covered.
   const BG_ROUTES = [
-    '/today', '/contacts', '/reminders', '/events/work',
+    '/today', '/contacts', '/reminders',
     '/card-life', '/card-life/stats',
   ];
 
@@ -324,7 +324,7 @@ app.whenReady().then(async () => {
   // opaque white cards: an opaque card cuts a hard edge across the painting
   // and reads as a foreign panel pasted on top of it.
   console.log('\n[7] the list pages wear the translucent card treatment');
-  for (const route of ['/contacts', '/reminders', '/events/work']) {
+  for (const route of ['/contacts', '/reminders']) {
     await goto('#' + route, 800);
     const page = await winMain.webContents.executeJavaScript(`(() => {
       const wrapper = document.querySelector('.bg-page');
@@ -438,14 +438,13 @@ app.whenReady().then(async () => {
   // The list shows a fixed number of rows per page, so a long list never
   // runs past the bottom of the frame the artwork is painted in.
   //
-  // Three pages share this behaviour — 提醒, 工作事件 and 联系人 — and
-  // all three get it from src/js/pager.js. The rows have to come from a
+  // Two pages share this behaviour — 提醒 and 联系人 — and
+  // both get it from src/js/pager.js. The rows have to come from a
   // subtree of their own, or turning a page would rebuild the filter bar
   // above it.
   console.log('\n[10] the list pages are paginated');
   const PAGED_PAGES = [
     { route: '/reminders', list: '#reminders-list', label: '提醒' },
-    { route: '/events/work', list: '#work-list', label: '工作事件' },
     { route: '/contacts', list: '#contacts-list', label: '联系人' },
   ];
   for (const page of PAGED_PAGES) {

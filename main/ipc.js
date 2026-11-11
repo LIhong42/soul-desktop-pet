@@ -35,7 +35,7 @@ const { relaunchApp } = require('./app_relaunch');
 // 文本框 catalog (resources/text_boxes) — scanned, not hard-coded.
 const petTextBoxes = require('./pet_text_boxes');
 // 页面背景 catalog (resources/ui) — scanned, not hard-coded.
-// 全应用共用同一张底图：「今日」「联系人」「提醒」「工作事件」「抽卡」，
+// 全应用共用同一张底图：「今日」「联系人」「提醒」「抽卡」，
 // 以及联系人详情页的整页背景。
 const pageBackground = require('./page_background');
 const videoFrameSplit = require('./video_frame_split');
@@ -1694,7 +1694,7 @@ function normFreeText(s) {
 
   // ---- 页面背景 ----
   //
-  // The 今日 / 联系人 / 提醒 / 工作事件 / 抽卡 pages paint a background
+  // The 今日 / 联系人 / 提醒 / 抽卡 pages paint a background
   // image behind their content, and the 联系人详情页 paints the same picture
   // across its whole page. The artwork lives in `resources/ui/`, is catalogued
   // by main/page_background.js, and reaches the renderer as a `file://` URL —

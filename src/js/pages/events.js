@@ -1,11 +1,32 @@
-// src/js/pages/events.js — 提醒 list (general-category events).
+// src/js/pages/events.js — 提醒 list.
 //
 // This page now includes two independent filter dropdowns:
-//   - 类型 (tag_kind): 全部 / 生日 / 纪念日 / 节日 / 未分类
+//   - 类型 (tag_kind): 全部 / 生日 / 纪念日 / 节日 / 工作事件 / 未分类
 //   - 关联联系人 (contact_id): 全部 / a contact / (独立事件)
 //
 // Both filter values are reflected in the URL hash so the page can be
 // bookmarked / shared. Changing either triggers a re-fetch via events:list.
+//
+// ---- 工作事件 as a 类型 ----
+//
+// 工作事件 are not a separate page any more: they are one of the 类型 the
+// 提醒 page filters by. They live in the same `events` table as the other
+// reminders, tagged by `category='work'` rather than by `tag_kind` — the
+// two are different axes (类别 vs 类型), and a work event is a work event
+// no matter what tag kind it carries.
+//
+// So the 类型 dropdown's 工作事件 option selects a CATEGORY, while the
+// other options select a tag kind. The two are mutually exclusive: picking
+// 工作事件 switches the query to `category='work'` and clears the tag
+// kind, picking any other option goes back to `category='general'`.
+//
+// The work events themselves are still created through the work form
+// (category='work'), which the 新建 button reaches once 工作事件 is the
+// selected 类型.
+//
+// The page keeps its own name — the heading always reads 提醒, whichever
+// 类型 is selected. 工作事件 is a filter, not a page; the dropdown says
+// which slice of the reminders the list is showing.
 import { api, escapeHtml, displayName, eventKindAttr, formatRelative, countdownTo, categoryIcon, repeatLabel, eventDisplayTitle } from '../api.js';
 import { register, navigate } from '../router.js';
 import { applyBackground } from '../page_background.js';
@@ -15,13 +36,22 @@ import {
   wireBulkEnter, wireBulkToolbar, wireBulkRowChecks,
 } from '../bulk_delete.js';
 
+// The 类型 dropdown's options.
+//
+// `value` is the URL's `tag_kind` parameter. The 工作事件 option is
+// special: it selects the work CATEGORY rather than a tag kind, so its
+// value is the sentinel 'work'. See the note at the top of this file.
 const TAG_KIND_FILTER_OPTIONS = [
   { value: '',            label: '全部' },
   { value: 'birthday',    label: '生日' },
   { value: 'anniversary', label: '纪念日' },
   { value: 'festival',    label: '节日' },
+  { value: 'work',        label: '工作事件' },
   { value: 'none',        label: '未分类' },
 ];
+
+// The sentinel that stands for "the work category" in the 类型 dropdown.
+const WORK_KIND = 'work';
 
 // selectMode is per-page-instance state. We attach it to a module-scoped
 // object so toggling bulk-delete mode doesn't lose the user's checkbox
@@ -49,8 +79,13 @@ async function render(args, params) {
   const tagKindFilter = (params && params.tag_kind) || '';
   const contactFilter = (params && params.contact_id) || '';
 
-  const opts = { category: 'general' };
-  if (tagKindFilter) opts.tag_kind = tagKindFilter;
+  // The 工作事件 option selects the work CATEGORY instead of a tag kind.
+  // The two are mutually exclusive, so the work option wins and the tag
+  // kind filter is left out of the query entirely.
+  const isWork = tagKindFilter === WORK_KIND;
+
+  const opts = { category: isWork ? 'work' : 'general' };
+  if (tagKindFilter && !isWork) opts.tag_kind = tagKindFilter;
   // Note: we deliberately don't pre-filter by contact_id on the server side
   // when the filter is 'standalone' (independent events). The renderer applies
   // that filter locally after the fetch — see below.
@@ -81,7 +116,7 @@ async function render(args, params) {
   // dropdowns keep their open state and the page doesn't flash.
   app.innerHTML = `
     <div class="bg-page">
-      <div class="row between">
+      <div class="row between" id="page-header">
         <h1>提醒 ${pageState.selectMode.active ? '' : (filteredEvents.length > 0 ? bulkEnterLinkHtml() : '')}</h1>
         <button class="btn" id="new-event">+ 新建</button>
       </div>
@@ -111,7 +146,10 @@ async function render(args, params) {
     </div>
   `;
 
-  document.getElementById('new-event').onclick = () => navigate('/events/new?category=general');
+  // The 新建 button opens the form for the list's category: the work
+  // form when 工作事件 is the selected 类型, the reminder form otherwise.
+  document.getElementById('new-event').onclick = () =>
+    navigate('/events/new?category=' + (isWork ? 'work' : 'general'));
 
   // Filter dropdowns — both navigate to a new hash with the filter values
   // encoded in the query string. The router re-renders the page on each
@@ -140,14 +178,19 @@ async function render(args, params) {
 
     const { total, totalPages, visible } = pageSlice(filteredEvents, pageState);
 
+    // The noun for the current list — the toolbar counter and the empty
+    // state both name what the list holds, and the work view holds work
+    // events, not reminders.
+    const noun = isWork ? '工作事件' : '提醒';
+
     host.innerHTML = `
       ${pageState.selectMode.active ? bulkToolbarHtml({
           count: pageState.selectMode.selected.size,
           total: total,
-          kindLabel: '个提醒',
+          kindLabel: '个' + noun,
         }) : ''}
       ${total === 0
-        ? `<div class="empty">没有匹配的提醒</div>`
+        ? `<div class="empty">没有匹配的${noun}</div>`
         : visible.map((e) => pageState.selectMode.active
             ? bulkSelectableRowHtml(rowInner(e, cById, festByCode), e.id, pageState.selectMode.selected.has(e.id), eventKindAttr(e))
             : renderRow(e, cById, festByCode)).join('')}
@@ -156,7 +199,7 @@ async function render(args, params) {
 
     if (!pageState.selectMode.active) {
       host.querySelectorAll('.card.clickable').forEach((el) => {
-        el.onclick = () => navigate('/events/' + el.dataset.id + '?category=general');
+        el.onclick = () => navigate('/events/' + el.dataset.id + '?category=' + (isWork ? 'work' : 'general'));
       });
     }
 
@@ -180,54 +223,104 @@ async function render(args, params) {
   const bulkHandlers = {
     onDelete: async (ids) => {
       const result = await api.events.deleteMany(ids);
-      // Refresh from DB so the list reflects the deletion. Re-render via
-      // navigate() to also re-fetch filtered events from the server.
-      const tk = document.getElementById('filter-tag-kind').value || '';
-      const cf = document.getElementById('filter-contact').value || '';
-      const q = new URLSearchParams();
-      if (tk) q.set('tag_kind', tk);
-      if (cf) q.set('contact_id', cf);
-      const qs = q.toString();
-      navigate('/reminders' + (qs ? '?' + qs : ''));
+      // Re-fetch the list so the deleted rows actually disappear.
+      //
+      // A navigate() to the same URL would NOT do it: the filters are
+      // already in the hash, so setting the same hash fires no
+      // hashchange and the router would never re-render — the deleted
+      // rows would stay on screen. So the fetch is done here and the
+      // list is repainted from the fresh rows.
+      const opts2 = { category: isWork ? 'work' : 'general' };
+      if (tagKindFilter && !isWork) opts2.tag_kind = tagKindFilter;
+      if (contactFilter && contactFilter !== '__standalone__') opts2.contact_id = contactFilter;
+      const fresh = await api.events.list(opts2);
+      // The contact filter's 「独立事件」 bucket is applied locally, the
+      // same way the initial load does it.
+      const freshFiltered = fresh.filter((e) => {
+        if (!contactFilter) return true;
+        if (contactFilter === '__standalone__') return !e.contact_id;
+        return e.contact_id === contactFilter;
+      });
+      filteredEvents.length = 0;
+      filteredEvents.push(...freshFiltered);
       return result;
     },
     onExit: () => {
       pageState.selectMode.active = false;
       pageState.selectMode.selected = new Set();
-      // Re-navigate so we exit select mode and re-render in idle form.
-      const tk = document.getElementById('filter-tag-kind').value || '';
-      const cf = document.getElementById('filter-contact').value || '';
-      const q = new URLSearchParams();
-      if (tk) q.set('tag_kind', tk);
-      if (cf) q.set('contact_id', cf);
-      const qs = q.toString();
-      navigate('/reminders' + (qs ? '?' + qs : ''));
+      // Repaint the list subtree instead of re-navigating. The filters are
+      // already in the URL, so navigate() would set the SAME hash — and
+      // setting the same hash fires no hashchange, so the router would
+      // never re-render and the page would stay in select mode.
+      //
+      // The header (the title and its 「批量删除」 link) is rebuilt
+      // separately, because it lives OUTSIDE the list subtree that
+      // paintList() rewrites.
+      paintList();
+      restoreHeader();
     },
   };
-  if (pageState.selectMode.active) {
-    pageState.selectMode.onChange = () => {
-      const t = document.querySelector('[data-bulk-toolbar]');
-      if (!t) return;
-      // Sync every row checkbox with the current Set — otherwise hitting
-      // "全选" in the toolbar only updates the counter; the per-row boxes
-      // stay empty because they were rendered once at enter-time.
-      document.querySelectorAll('.bulk-row-check').forEach((cb) => {
-        const id = cb.dataset.bulkId;
-        if (!id) return;
-        cb.checked = pageState.selectMode.selected.has(id);
-      });
-      t.outerHTML = bulkToolbarHtml({
-        count: pageState.selectMode.selected.size,
-        total: filteredEvents.length,
-        kindLabel: '个提醒',
-      });
-      wireBulkToolbar(document.getElementById('reminders-list'), pageState.selectMode, bulkHandlers);
-    };
+
+  // Rebuild the page header (the title and its 「批量删除」 entry link) and
+  // re-bind the link, so entering and leaving select mode both leave the
+  // header in the right state.
+  //
+  // The header lives outside the list subtree, so paintList() cannot
+  // touch it — it has to be rebuilt by hand.
+  function restoreHeader() {
+    const header = document.getElementById('page-header');
+    if (!header) return;
+    // The 「批量删除」 link is only offered in idle mode — in select mode
+    // the toolbar carries the way out.
+    const enterLink = (!pageState.selectMode.active && filteredEvents.length > 0)
+      ? bulkEnterLinkHtml() : '';
+    header.innerHTML = `
+      <h1>提醒 ${enterLink}</h1>
+      <button class="btn" id="new-event">+ 新建</button>
+    `;
+    document.getElementById('new-event').onclick = () =>
+      navigate('/events/new?category=' + (isWork ? 'work' : 'general'));
+    wireBulkEnter(header, () => {
+      pageState.selectMode.active = true;
+      pageState.selectMode.selected = new Set();
+      paintList();
+      restoreHeader();
+    });
   }
+  // The counter refresh, wired unconditionally.
+  //
+  // It used to be assigned only when the page rendered in select mode,
+  // because entering select mode used to re-render the whole page. Now
+  // that entering only repaints the list, the page can reach select mode
+  // without ever passing through this branch — so the handler has to be
+  // there from the start, or the first checkbox flip would find
+  // `selectMode.onChange` undefined.
+  pageState.selectMode.onChange = () => {
+    const t = document.querySelector('[data-bulk-toolbar]');
+    if (!t) return;
+    // Sync every row checkbox with the current Set — otherwise hitting
+    // "全选" in the toolbar only updates the counter; the per-row boxes
+    // stay empty because they were rendered once at enter-time.
+    document.querySelectorAll('.bulk-row-check').forEach((cb) => {
+      const id = cb.dataset.bulkId;
+      if (!id) return;
+      cb.checked = pageState.selectMode.selected.has(id);
+    });
+    t.outerHTML = bulkToolbarHtml({
+      count: pageState.selectMode.selected.size,
+      total: filteredEvents.length,
+      kindLabel: '个' + (isWork ? '工作事件' : '提醒'),
+    });
+    wireBulkToolbar(document.getElementById('reminders-list'), pageState.selectMode, bulkHandlers);
+  };
   wireBulkEnter(app, () => {
     pageState.selectMode.active = true;
     pageState.selectMode.selected = new Set();
-    render(args, params);
+    // Repaint the list and the header in place rather than re-navigating:
+    // the filters are already in the URL, so a navigate() to the SAME
+    // hash would fire no hashchange and the router would never re-render.
+    paintList();
+    restoreHeader();
   });
 
   // First paint of the list subtree.
@@ -282,6 +375,12 @@ function renderRowInner(e, displayTitle, cById) {
   const metaParts = [];
   if (e.lunar_month && e.lunar_day) metaParts.push(`农历 ${e.lunar_month}-${e.lunar_day}`);
   metaParts.push(repeatLabel(e));
+  // A work event may still carry a linked contact, and it is the one
+  // piece of context the row cannot show in its main line — the work
+  // page this list absorbed showed it in the meta row too.
+  if (e.category === 'work' && e.contact_id && cById && cById[e.contact_id]) {
+    metaParts.push(displayName(cById[e.contact_id]));
+  }
   if (!e.active) metaParts.push('已结束');
   const meta = metaParts.join(' · ');
   // Time chip on the right: relative date + countdown.
@@ -293,7 +392,17 @@ function renderRowInner(e, displayTitle, cById) {
   // is auto-generated ("爷爷的提醒"), so the description is the only real
   // content — without this the list shows a label and hides what the user
   // actually wrote.
-  const titleText = eventDisplayTitle(e, displayTitle) || '(无标题)';
+  //
+  // Work events are the exception: their title is always the server's
+  // generic "新建提醒" placeholder, so the description IS the event's
+  // text. Showing "新建提醒 — 周报" would put a placeholder in front of
+  // the real content — the work page this list absorbed showed the
+  // description alone, so it still does.
+  const isWork = e.category === 'work';
+  const desc = (e.description || '').trim();
+  const titleText = isWork
+    ? (desc || displayTitle || '(无描述)')
+    : (eventDisplayTitle(e, displayTitle) || '(无标题)');
   return `
     <div class="lr-id">
       <span class="cat-icon" data-tone="${escapeHtml(kind)}">${escapeHtml(categoryIcon(e.category, e.tag_kind))}</span>

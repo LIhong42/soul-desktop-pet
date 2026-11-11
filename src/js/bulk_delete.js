@@ -16,8 +16,8 @@
 //      the selection.
 //
 // Why this lives in its own module:
-//   - Four pages (events/reminders, events/memorial, events/work, the
-//     pet window's 快速记录 list) plus contact_detail's three kind tabs
+//   - Three pages (events/reminders, events/memorial, the pet window's
+//     快速记录 list) plus contact_detail's three kind tabs
 //     (喜好 / 忌讳 / 礼物) all want the same UX. Duplicating it five
 //     times would make every tweak a multi-file chore.
 //   - contact_detail's kind tabs are rendered imperatively

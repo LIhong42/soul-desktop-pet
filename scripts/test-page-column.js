@@ -62,7 +62,7 @@ const PAGES = [
   { path: '/today',          label: '今日',     cls: '.today-page' },
   { path: '/contacts',       label: '联系人',   cls: '.bg-page' },
   { path: '/reminders',      label: '提醒', cls: '.bg-page' },
-  { path: '/events/work',    label: '工作事件', cls: '.bg-page' },
+  { path: '/reminders?tag_kind=work', label: '工作事件', cls: '.bg-page' },
   { path: '/card-life',      label: '抽卡', cls: '.cl-page' },
   { path: '/events/memorial', label: '回忆', cls: '.page-column' },
   { path: '/events/new?category=general', label: '新建', cls: '.page-column' },

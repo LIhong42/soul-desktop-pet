@@ -24,7 +24,7 @@
   /* The width of the app's reading column — the centred band every page's
      content sits in, so a wide window leaves breathing room on both sides
      instead of stretching one card across the whole screen. The 联系人 /
-     提醒日期 / 工作事件 pages (`.bg-page`) and the 今日 page (`.today-page`)
+     提醒日期 page (`.bg-page`) and the 今日 page (`.today-page`)
      hard-code the same number; this variable is the shared source for the
      pages that use `.page-column`. */
   --page-column-max: 1080px;
@@ -171,7 +171,7 @@ html, body {
    centred column of at most `--page-column-max` so the same breathing room
    appears on both sides of the content.
 
-   The 联系人 / 提醒日期 / 工作事件 pages get this for free from `.bg-page`
+   The 联系人 / 提醒日期 pages get this for free from `.bg-page`
    (which carries the same width in src/css/page_bg.css), and the 今日 page
    from `.today-page`. This class is for the pages that wear neither — the
    回忆事件 grid, the 具体事件 / 重要日期 / 属性 / 联系人 detail and edit
@@ -188,7 +188,7 @@ html, body {
 /* ---------------------------------------------------------------------------
    页面背景 (page background artwork)
    ---------------------------------------------------------------------------
-   The 今日 / 联系人 / 提醒日期 / 工作事件 pages paint the artwork from
+   The 今日 / 联系人 / 提醒日期 pages paint the artwork from
    `resources/ui/` behind their content. The image is set as an inline
    `background-image` on the scroll container (the URL comes from the main
    process as a `file://` URL — the renderer can't read the filesystem, so it

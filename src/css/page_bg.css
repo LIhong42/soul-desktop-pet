@@ -1,7 +1,7 @@
 /* ===========================================================================
    src/css/page_bg.css — the list pages that wear the background artwork
    ===========================================================================
-   The 联系人 / 提醒日期 / 工作事件 pages share one picture behind their
+   The 联系人 / 提醒日期 pages share one picture behind their
    content (src/js/page_background.js). This file is the *other half* of that
    feature: it makes the pages' own contents read well *over* the picture.
 

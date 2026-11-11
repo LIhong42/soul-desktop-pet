@@ -96,7 +96,7 @@
    fading downward into the warm centre of the painting. A flat scrim
    either under-protects the top or flattens the whole picture.
 
-   The artwork is shared with the 联系人 / 提醒日期 / 工作事件 pages (see
+   The artwork is shared with the 联系人 / 提醒日期 pages (see
    src/js/page_background.js), but the scrim is this page's own: its cards
    are translucent sheets, so it wants a lighter wash than the list pages,
    whose cards are opaque and carry their own contrast.
@@ -109,7 +109,7 @@
    The rule is scoped to the 今日 page by `:has(.today-page)` rather than
    being left unscoped. It used to be written as a bare `.content.page-bg`,
    which meant it also won against the app default in styles.css for EVERY
-   page that wears the artwork — so the 联系人 / 提醒日期 / 工作事件 list
+   page that wears the artwork — so the 联系人 / 提醒日期 list
    pages were painting the 今日 page's light wash instead of the denser one
    styles.css intends for them. Scoping it lets each page's own stylesheet
    choose its scrim, which is what the 抽卡人生 page now does too.

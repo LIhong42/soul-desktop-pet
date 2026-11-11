@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 // What this is
 // ---------------------------------------------------------------------------
-// The 今日 / 联系人 / 提醒 / 工作事件 / 抽卡 pages paint the artwork
+// The 今日 / 联系人 / 提醒 / 抽卡 pages paint the artwork
 // from `resources/ui/` behind their content. The image is chosen in the main
 // process (main/page_background.js) and arrives as a `file://` URL, because
 // the renderer can't read the filesystem and the main window's CSP only
@@ -51,7 +51,6 @@ export const BACKGROUND_ROUTES = [
   '/today',
   '/contacts',
   '/reminders',
-  '/events/work',
   '/card-life',
   // The 打卡墙 — the check-in wall for the 抽卡 page. It wears the
   // same artwork because it is the same page family and its translucent

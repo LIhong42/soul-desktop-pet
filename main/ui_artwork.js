@@ -4,7 +4,7 @@
 // What this is
 // ---------------------------------------------------------------------------
 // `resources/ui/` holds the images the app paints as decoration: the shared
-// page background the 今日 / 联系人 / 提醒 / 工作事件 / 抽卡 pages
+// page background the 今日 / 联系人 / 提醒 / 抽卡 pages
 // wear, and the one the contact detail page wears across its whole page.
 // The renderer
 // cannot read the filesystem and the main window's CSP is

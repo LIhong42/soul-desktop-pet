@@ -5,7 +5,7 @@
 // What this is
 // ---------------------------------------------------------------------------
 // Several pages paint one of the images in `resources/ui/` behind their
-// content: the 今日 page, the 联系人 list, the 提醒 list, the 工作事件
+// content: the 今日 page, the 联系人 list, the 提醒 list,
 // list and the 抽卡 page. They all wear the SAME picture, and the user
 // picks that picture once in 设置.
 //
@@ -95,7 +95,6 @@ const BACKGROUND_ROUTES = [
   '/today',
   '/contacts',
   '/reminders',
-  '/events/work',
   '/card-life',
   // The 打卡墙 — the check-in wall for the 抽卡 page.
   '/card-life/stats',

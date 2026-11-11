@@ -70,13 +70,21 @@ const CONTACTS = [
   { id: 'c2', name: '小红' },
 ];
 
-// The reminder-event table. The 工作事件 page reads from here (the
-// 回忆 page has its own table — see `memorialEvents` above). Kept
-// separate so a test that seeds one table cannot leak into the other.
+// The reminder-event table. The 提醒 page reads from here (the 回忆 page
+// has its own table — see `memorialEvents` above). Kept separate so a
+// test that seeds one table cannot leak into the other.
 const eventRows = {};
 
 const events = {
-  list: async () => Object.values(eventRows),
+  // Honours the `category` filter, because the 提醒 page asks for
+  // category='general' by default and category='work' when the 工作事件
+  // 类型 is selected — a fake that ignored it would hand the work view
+  // every row, general ones included.
+  list: async (opts = {}) => {
+    const all = Object.values(eventRows);
+    if (!opts.category) return all;
+    return all.filter((r) => (r.category || 'general') === opts.category);
+  },
   get: async (id) => eventRows[id] || null,
   create: async (payload) => {
     const id = 'v' + (nextId++);
@@ -88,7 +96,15 @@ const events = {
     return eventRows[id];
   },
   delete: async (id) => { delete eventRows[id]; return true; },
-  deleteMany: async () => ({ deleted: 0 }),
+  // Actually removes the rows, so a test can check that a deleted row
+  // really leaves the list.
+  deleteMany: async (ids) => {
+    let deleted = 0;
+    for (const id of ids || []) {
+      if (eventRows[id]) { delete eventRows[id]; deleted++; }
+    }
+    return { deleted };
+  },
   listToday: async () => [],
   listFestivals: async () => [],
   debugFireDueNow: async () => null,
@@ -135,7 +151,7 @@ contextBridge.exposeInMainWorld('__testRows', {
   clear: () => { for (const k of Object.keys(rows)) delete rows[k]; },
 });
 
-// The reminder-event table, reached the same way. The 工作事件 page's
+// The reminder-event table, reached the same way. The 提醒 page's
 // bulk-select round trip is checked against this one.
 contextBridge.exposeInMainWorld('__testEventRows', {
   all: () => Object.assign({}, eventRows),

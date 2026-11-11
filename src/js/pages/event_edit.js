@@ -7,6 +7,10 @@
 //      历 or 农历 / 日期 / 时间. They continue to be persisted via the
 //      `events` table and the `api.events.*` namespace.
 //
+//      Work events have no page of their own — the 提醒 page's 类型 filter
+//      lists them (see src/js/pages/events.js) — but they keep their own
+//      form shape here: no 类型 dropdown and no 关联联系人 field.
+//
 //   2. Memorial events (category 'memorial'). These live in the
 //      `memorial_events` table and are edited by the diary editor
 //      (src/js/pages/diary_edit.js) — a full page where the user writes
@@ -28,7 +32,14 @@ import {
 
 const CATEGORIES = ['general', 'memorial', 'work'];
 const CATEGORY_TITLE = { general: '提醒', memorial: '回忆', work: '工作事件' };
-const CATEGORY_LIST_ROUTE = { general: '/reminders', memorial: '/events/memorial', work: '/events/work' };
+// Where each category's list lives. Work events have no page of their own
+// any more: they are the 工作事件 option of the 提醒 page's 类型 filter,
+// so their "back to list" target is that page with the filter applied.
+const CATEGORY_LIST_ROUTE = {
+  general: '/reminders',
+  memorial: '/events/memorial',
+  work: '/reminders?tag_kind=work',
+};
 
 function resolveCategory(params) {
   const c = (params && params.category) || 'general';

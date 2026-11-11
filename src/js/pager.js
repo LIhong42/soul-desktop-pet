@@ -1,10 +1,10 @@
 // src/js/pager.js — Shared list pagination.
 //
-// Four pages show a long list over the shared background artwork:
-// 提醒 (events.js), 工作事件 (events_work.js), 联系人 (contacts_list.js)
-// and the contact detail page's kind tabs (contact_detail.js). All four
-// want the same thing: a fixed number of rows per page, a pager under the
-// list, and a repaint that touches nothing but the list itself.
+// Three pages show a long list over the shared background artwork:
+// 提醒 (events.js), 联系人 (contacts_list.js) and the contact detail
+// page's kind tabs (contact_detail.js). All three want the same thing: a
+// fixed number of rows per page, a pager under the list, and a repaint
+// that touches nothing but the list itself.
 //
 // Why this lives in its own module:
 //

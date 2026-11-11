@@ -169,7 +169,7 @@ contextBridge.exposeInMainWorld('mp', {
   },
   // 页面背景（resources/ui 里的图片）。主进程扫描目录并把图片解析成
   // file:// URL —— 渲染进程读不了文件系统，只能这样拿到本地图片。
-  // 全应用共用同一张底图：「今日」「联系人」「提醒」「工作事件」「抽卡」，
+  // 全应用共用同一张底图：「今日」「联系人」「提醒」「抽卡」，
   // 以及联系人详情页的整页背景。
   //   get()     → { list, chosen, current: {id,url}|null, noneId, routes }
   //   set(id)   → 同 get()，并把 id 存进 settings

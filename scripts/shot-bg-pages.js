@@ -21,7 +21,7 @@ const OUT_DIR = process.argv[2]
   ? path.resolve(process.argv[2])
   : path.join(os.tmpdir(), 'soulpet-bgpages');
 
-const PAGES = ['/contacts', '/reminders', '/events/work'];
+const PAGES = ['/contacts', '/reminders'];
 
 app.whenReady().then(async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'soulpet-bgpages-'));
@@ -49,7 +49,8 @@ app.whenReady().then(async () => {
 
   // A few 提醒 rows (category='general') and 工作事件 rows
   // (category='work'), spread over the near future so the countdown chips
-  // show something other than "就是今天".
+  // show something other than "就是今天". The work rows are not on their
+  // own page any more — the 提醒 page's 工作事件 类型 lists them.
   const events = [
     ['e1', 'general', '林小满的生日',     'c1', 'birthday',    12,  '一起吃顿好的'],
     ['e2', 'general', '结婚纪念日',       'c1', 'anniversary', 40,  '第三十年'],
@@ -119,7 +120,7 @@ app.whenReady().then(async () => {
     // the DOM can be updated a frame or two before the compositor shows it.
     await winMain.webContents.executeJavaScript(`(async () => {
       const want = ${JSON.stringify(p)};
-      const label = ${JSON.stringify(p === '/contacts' ? '联系人' : p === '/reminders' ? '提醒' : '工作事件')};
+      const label = ${JSON.stringify(p === '/contacts' ? '联系人' : '提醒')};
       for (let i = 0; i < 60; i++) {
         const h1 = document.querySelector('#app h1');
         if (h1 && h1.textContent.includes(label)) {

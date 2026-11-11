@@ -10,7 +10,7 @@ import { pageSlice, pagerHtml, wirePager } from '../pager.js';
 // "next page" click a history entry.
 //
 // The page's own state lives at module scope, like the other list pages'
-// (events.js / events_work.js), so it survives a repaint of the list
+// (events.js), so it survives a repaint of the list
 // subtree.
 const pageState = { page: 0 };
 
