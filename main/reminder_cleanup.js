@@ -77,8 +77,8 @@ function fmtStamp(d) {
 
 // Whether an event row is a candidate for auto-deletion.
 //
-// Pure: takes the row and a `now` (Date) so the rule can be tested without
-// a database or a wall clock.
+// Pure: takes the row and a `now` (Date) so the rule needs neither a
+// database nor a wall clock.
 //
 // Returns true when the row has completed AND can never fire again AND
 // finished at least RETENTION_DAYS days ago.
@@ -166,8 +166,8 @@ function findPrunableEvents(now) {
 //
 // `queue` is the live ReminderQueue — its entries for the deleted events
 // are dropped so the pet stops nagging about an event that no longer
-// exists. It is optional so this can run without a queue (tests, or the
-// scheduler before the queue exists).
+// exists. It is optional so this can run without a queue (the scheduler
+// before the queue exists).
 //
 // Returns a summary: { deleted, ids, skipped }.
 //

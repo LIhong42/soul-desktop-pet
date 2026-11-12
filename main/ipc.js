@@ -44,7 +44,7 @@ const autostart = require('./autostart');
 const imageBgRemove = require('./image_bg_remove');
 const imageBatchResize = require('./image_batch_resize');
 const appUpdate = require('./app_update');
-// 日记正文的校验规则（文字块 + 图组），单独成模块便于单独测试。
+// 日记正文的校验规则（文字块 + 图组），单独成模块，便于复用与校验。
 const { normDiaryContent } = require('./diary_content');
 // 抽卡：卡库（resources/intersting-list/list.md）与每周一次的抽卡规则。
 const cardDraws = require('./card_draws');
@@ -919,15 +919,6 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
   ipcMain.handle('events:delete', (_e, id) => {
     db.run('DELETE FROM events WHERE id = ?', [id]);
     db.deleteSearch('event', id);
-    return true;
-  });
-
-  ipcMain.handle('events:debug_fire_due_now', () => {
-    db.run(
-      `UPDATE events SET next_fire_at = ?
-       WHERE active = 1 AND remind = 1 AND remind_kind != 'none'`,
-      [db.nowStr()]
-    );
     return true;
   });
 
@@ -3190,8 +3181,8 @@ function normFreeText(s) {
       }
     }
 
-    // Fallback for a host that cannot recreate the window (the unit test
-    // drives the recovery without one): reload the page in place.
+    // Fallback for a host that cannot recreate the window: reload the page
+    // in place.
     try {
       petDiagnostics.append({
         src: 'main',

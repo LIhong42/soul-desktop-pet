@@ -101,24 +101,6 @@ function pngSize(bytes) {
   return { w, h };
 }
 
-// Take the first frame in a variant directory and return its dimensions.
-// PetRegistry requires defaultSize, so the `default` variant directory
-// must yield at least one parseable frame.
-function frameSizeFromDir(absDir) {
-  let entries;
-  try { entries = fs.readdirSync(absDir); }
-  catch { throw new Error(`无法读取目录 ${absDir}`); }
-  for (const name of entries) {
-    if (!FRAME_RE.test(name)) continue;
-    let buf;
-    try { buf = fs.readFileSync(path.join(absDir, name)); }
-    catch { continue; }
-    try { return pngSize(buf); }
-    catch { continue; }
-  }
-  return null;
-}
-
 // Strip the leading root prefix from an entry name so the rest of the
 // pipeline can see the variant directories at the top level. Strips
 // platform-specific separators and trailing slashes; returns null when
@@ -457,6 +439,4 @@ function removeImported(petId, userDataPath, rootDir) {
 module.exports = {
   installPetZip,
   removeImported,
-  // exported for future callers
-  _internal: { pickRootPrefix, pngSize, frameSizeFromDir, VARIANT_DIR_RE },
 };

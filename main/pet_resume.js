@@ -76,9 +76,8 @@
 // reload, because the reload keeps the very same native window.
 //
 // This module deliberately has NO Electron import of its own beyond
-// `powerMonitor`, and it takes its collaborators as arguments, so it can be
-// unit-tested under a stubbed `electron` module (see
-// scripts/test-pet-resume.js).
+// `powerMonitor`, and it takes its collaborators as arguments, so it stays
+// independent of the window it recovers.
 
 'use strict';
 

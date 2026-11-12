@@ -119,7 +119,7 @@ function textLength(row) {
 // only that it does.
 function evaluate(row) {
   // The photo count comes out of a COUNT(*), so it is a number — but the
-  // row may also have been built by hand (the tests do that), where it is
+  // row may also have been built by hand (e.g. assembled in memory), where it is
   // whatever the caller wrote. Number() handles both, and a value that is
   // not a number at all becomes 0 rather than NaN.
   const photoCount = Math.max(0, Number((row && row.photo_count) || 0) || 0);

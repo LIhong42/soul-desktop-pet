@@ -165,7 +165,7 @@ function ymd(d) {
 // 'YYYY-MM-DD'. Local time, so the week changes at the user's midnight and
 // not at UTC's.
 //
-// `now` is injectable so the tests can pin the clock.
+// `now` is injectable so the caller can pin the clock.
 function weekKey(now = new Date()) {
   const day = (now.getDay() + 6) % 7; // Monday = 0
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);

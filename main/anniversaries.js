@@ -17,7 +17,7 @@
 // in the nav bar. Both are merged here.
 //
 // The module is deliberately free of Electron so it can be required
-// directly by the test scripts.
+// directly by plain-node tooling.
 //
 // SCOPE: the list holds the **anniversaries** only — 结婚纪念日,
 // 认识纪念日, 忌日, 领证纪念日 and the like. Birthdays are NOT here; a

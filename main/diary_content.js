@@ -34,7 +34,7 @@
 // never contains anything but strings and numbers.
 //
 // This module is deliberately free of Electron and database imports, so
-// the rules can be checked on their own (scripts/verify-diary-db.js).
+// the rules can be checked on their own.
 
 'use strict';
 

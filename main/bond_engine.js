@@ -6,7 +6,7 @@
 //   • weekly_ritual        table: per-(pet, week) tallies of 10 dimensions
 //
 // Hardcoded tier thresholds + per-dim saturation caps live here so the
-// formula has exactly one home and is testable in isolation.
+// formula has exactly one home and lives independent of any I/O.
 
 const TIER_THRESHOLDS = [
   // value >= threshold  -> tier index+1
@@ -49,18 +49,6 @@ const WEEKLY_MAX = DIMENSION_FORMULA.reduce(
   (acc, [, cap, weight]) => acc + Math.min(cap, cap) * weight,
   0,
 ); // not used at runtime — keeps the saturation caps honest at read-time only.
-
-// Returns the Monday-of-this-week date string in local time, YYYY-MM-DD.
-// Kept for reading historical weekly_ritual rows written before the switch
-// to daily settlement.
-function weekStart(d) {
-  const now = d instanceof Date ? d : new Date();
-  const dow = now.getDay();            // 0 (Sun) .. 6 (Sat)
-  // Treat Monday as week start. Monday = 1.
-  const diffToMon = (dow + 6) % 7;     // 0 if Monday, 6 if Sunday
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMon);
-  return fmtYMD(monday);
-}
 
 // The settlement bucket key. Bond is now settled DAILY, so a "period" is
 // one calendar day and the ritual row is keyed by that date rather than by
@@ -128,7 +116,7 @@ function computeBondDelta(weeklyScore, streakWeeks, streakSkip) {
 
 // ---- DB-coupled helpers ----
 // Each function takes a small db-shaped object { one, all, run, setSetting,
-// getSetting, nowStr } so they're testable with a fake db in tests.
+// getSetting, nowStr } so they can be driven with any db-shaped object.
 
 // Returns the current settlement-period key (a calendar date) and makes
 // sure a ritual row exists for it. Named for the ritual dimensions rather
@@ -414,7 +402,7 @@ function getWeeklyBreakdown(db, petId) {
 
 module.exports = {
   TIER_THRESHOLDS, TIER_LABELS, DIMENSION_FORMULA,
-  weekStart, periodStart, fmtYMD, clamp, sat,
+  periodStart, fmtYMD, clamp, sat,
   computeWeeklyScore, computeTier, computeBondDelta,
   nextTierThreshold, tierLabel, tierFloor,
   ensureCurrentPeriodRow, incrementWeekDimension, logContactReviewed,

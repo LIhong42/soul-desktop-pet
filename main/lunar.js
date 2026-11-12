@@ -80,21 +80,6 @@ function validateLunar(month, day) {
   return { ok: false, reason: '该农历日期不存在' };
 }
 
-// Compute the solar YYYY-MM-DD for a given lunar (year, month, day).
-// `year` is the *solar* year the lunar date falls in (see file header).
-// Returns null on failure (out of range, day doesn't exist, etc.).
-function lunarToSolarYmd(lunarYear, lunarMonth, lunarDay) {
-  const { Lunar } = lib();
-  try {
-    const lun = Lunar.fromYmd(lunarYear, lunarMonth, lunarDay);
-    const solar = lun.getSolar();
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${solar.getYear()}-${pad(solar.getMonth())}-${pad(solar.getDay())}`;
-  } catch (e) {
-    return null;
-  }
-}
-
 // The lunar date of a solar date, as { year, month, day }.
 //
 // The lunar *year* is what "how many years has this been" counts for a
@@ -184,7 +169,6 @@ function nextLunarOccurrence(lunarMonth, lunarDay, originLunarYear, today) {
 module.exports = {
   nextSolarDateForLunar,
   validateLunar,
-  lunarToSolarYmd,
   solarToLunar,
   nextLunarOccurrence,
 };

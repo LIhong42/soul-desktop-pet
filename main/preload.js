@@ -44,7 +44,6 @@ contextBridge.exposeInMainWorld('mp', {
     update: (id, input) => ipcRenderer.invoke('events:update', id, input),
     delete: (id) => ipcRenderer.invoke('events:delete', id),
     deleteMany: (ids) => ipcRenderer.invoke('events:delete_many', ids),
-    debugFireDueNow: () => ipcRenderer.invoke('events:debug_fire_due_now'),
     listFestivals: () => ipcRenderer.invoke('events:list_festivals'),
   },
   // memorial events (independent from the reminder events table)

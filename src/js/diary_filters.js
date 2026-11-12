@@ -54,7 +54,7 @@ export const TIME_RANGES = [
 // it is better to show an entry we cannot place than to hide it behind a
 // filter.
 //
-// `now` is injectable so the tests can pin the clock.
+// `now` is injectable so the caller can pin the clock.
 export function matchesTimeRange(occurredAt, value, now = new Date()) {
   if (!value) return true;
   const range = TIME_RANGES.find((x) => x.value === value);

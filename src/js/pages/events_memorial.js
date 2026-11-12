@@ -88,8 +88,7 @@ const pageState = {
   basePath: '/events/memorial',
 };
 
-// Exported so the test harness (scripts/test-diary-editor.js) can drive
-// the list directly, the way the router does.
+// Exported so the router can drive the list directly.
 //
 // `opts.keepPage` tells the render to hold the current page index
 // instead of starting at the first page. It is set when the page

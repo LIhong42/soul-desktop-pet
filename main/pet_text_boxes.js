@@ -35,8 +35,8 @@
 //
 // The scan result is memoised because it's read on every settings-page render
 // and the folder is static at runtime; re-stat'ing seven files per render
-// would be wasted work. `invalidate()` exists for tests and for the packaging
-// case where resources land next to the app rather than inside it.
+// would be wasted work. `invalidate()` exists for the packaging case where
+// resources land next to the app rather than inside it.
 
 const fs = require('fs');
 const path = require('path');
@@ -249,20 +249,6 @@ function invalidate() {
 }
 
 /**
- * Is `id` a text box this install actually has?
- *
- * The point of this check is that the id reaches us from a persisted config
- * the user may have written on a different machine, or against a folder that
- * has since had files removed. A stale id must degrade to "use the CSS
- * default", never to an <img> pointing at a missing file.
- */
-function isKnown(appPath, id) {
-  const s = String(id == null ? '' : id).trim();
-  if (!s || s === DEFAULT_BOX) return false;
-  return list(appPath).some((b) => b.id === s);
-}
-
-/**
  * Resolve a persisted id to something renderable: `{ id, url }`, or `null` when
  * the choice is the default or names a box we don't have. The renderer treats
  * `null` as "keep the CSS bubble", so every caller gets the same degradation.
@@ -305,7 +291,6 @@ module.exports = {
   boxDir,
   list,
   resolve,
-  isKnown,
   invalidate,
 
   // The measured bubble-inside-canvas table, so the settings page can render
@@ -314,6 +299,4 @@ module.exports = {
   GEOMETRY,
   geometryFor,
   interiorAspectFor,
-
-  _internals: { cache },
 };

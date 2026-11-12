@@ -134,16 +134,11 @@ function close() {
   currentKind = null;
 }
 
-function isOpen() {
-  return !!(winQuick && !winQuick.isDestroyed());
-}
-
 module.exports = {
   RECORD_KINDS,
   RECORD_KIND_IDS,
   show,
   close,
-  isOpen,
   getKind,
   get currentKind() { return currentKind; },
 };

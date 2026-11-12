@@ -7,8 +7,7 @@
 //   2. Reduce a contact + range filter into a `previewFilter` payload
 //      (`applyFilter({contactIds, presetValue, customRange})`).
 //
-// Kept side-effect free: no DOM, no api, no I/O. Easy to unit-test by
-// re-importing from the renderer.
+// Kept side-effect free: no DOM, no api, no I/O.
 
 const ALL = '__all__';      // value: no time range restriction
 const CUSTOM = '__custom__'; // value: user picked two dates manually

@@ -19,10 +19,6 @@ function parseHhmm(s) {
   return { h, m: min };
 }
 
-function formatHhmm(t) {
-  return `${String(t.h).padStart(2, '0')}:${String(t.m).padStart(2, '0')}`;
-}
-
 function fmtDateTime(d) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
@@ -371,7 +367,6 @@ module.exports = {
   DEFAULT_ADVANCE_DAYS,
   DAY_MS,
   parseHhmm,
-  formatHhmm,
   fmtDateTime,
   parseDateTime,
   parseDate,

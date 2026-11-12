@@ -117,8 +117,8 @@ function list(appPath) {
 }
 
 /**
- * Drop the memoised scan. Called by tests, and defensively on the settings
- * page render in case a dev adds a PNG while the app is running.
+ * Drop the memoised scan. Called defensively on the settings page render in
+ * case a dev adds a PNG while the app is running.
  */
 function invalidate() {
   cache = null;

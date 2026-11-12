@@ -1962,8 +1962,7 @@ async function makePendingPhotos(files) {
 
 // ---- Page ----------------------------------------------------------------
 
-// Exported so the test harness (scripts/test-diary-editor.js) can drive
-// the editor directly, the way the router does.
+// Exported so the router can drive the editor directly.
 export async function render(args, params) {
   const app = document.getElementById('app');
   // Whether the page is writing a NEW entry. It starts as "the URL named
@@ -2673,10 +2672,6 @@ function plainTextFromBlocks() {
 // True while the 保存 dialog is open. A second press on 保存 while the
 // dialog is up would open a second one on top of it.
 let metaDialogOpen = false;
-
-// Exposed for the test harness: the guard's state is invisible from the
-// page, and a stuck guard would look like a dead 保存 button.
-export function isMetaDialogOpen() { return metaDialogOpen; }
 
 async function onSave() {
   if (metaDialogOpen) return;

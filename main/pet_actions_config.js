@@ -310,8 +310,8 @@ function cloneDefaults() {
 function getEffectVariant(cfg, cozyActionId, petRegistry, petId) {
   const binding = EFFECT_BINDINGS.find((b) => b.id === cozyActionId);
   const hardFallback = binding ? binding.default_variant : 'default';
-  // Allow the caller to skip manifest validation (e.g. tests); the
-  // production IPC path always passes both. `petManifestExposes` returns
+  // Allow the caller to skip manifest validation (e.g. a caller that has no
+  // manifest); the production IPC path always passes both. `petManifestExposes` returns
   // true for `default` even without looking at the manifest, so the
   // common case (any pet, default fallback) is safe.
   const variantExists = (v) => {

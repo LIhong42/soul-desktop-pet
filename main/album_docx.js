@@ -39,7 +39,7 @@ const { app } = require('electron');
 // OPC 约定 [Content_Types].xml 必须是包里的第一个条目。
 //
 // 所以下面自己拼 zip 字节，字段对齐 Word 的写法。adm-zip 仍可用于读取
-// （测试脚本就在用），只是不参与生成。
+// （解包走的是它的读取路径），只是不参与生成。
 
 // CRC-32（与 zip 使用的多项式一致），表延迟构建。
 let CRC_TABLE = null;

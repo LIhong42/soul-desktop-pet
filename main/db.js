@@ -2143,8 +2143,4 @@ module.exports = {
   listCardDraws, getCardDraw, getCardDrawByWeek, createCardDraw, linkCardDraw,
   listCardDrawsWithProgress, countCardDraws,
   listCustomCards, getCustomCard, createCustomCard, deleteCustomCard,
-  // Exposed so ipc.js can call them (avoids duplicating logic in IPC handlers).
-  // These wrap require() at call-time so we don't introduce a require cycle
-  // between db.js and the helpers.
-  _seedFestivals: () => seedDefaultFestivals(),
 };

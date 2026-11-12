@@ -40,7 +40,6 @@ export const api = {
     update: (id, input) => M.events.update(id, input),
     delete: (id) => M.events.delete(id),
     deleteMany: (ids) => M.events.deleteMany(ids),
-    debugFireDueNow: () => M.events.debugFireDueNow(),
     listFestivals: () => M.events.listFestivals(),
   },
   memorialEvents: {

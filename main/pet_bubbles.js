@@ -56,8 +56,8 @@
 // Rules, the event bus, persistence, and the IPC push all run inside one
 // synchronous tick. `build()` receives a snapshot of that tick's world
 // (clock, fed-window latches, OS idle time) so a rule can
-// never observe a half-updated state, and so a rule is testable by handing it
-// a literal object.
+// never observe a half-updated state, and so a rule can be handed a literal
+// object.
 
 const db = require('./db');
 const petBubbleTypes = require('./pet_bubble_types');
@@ -545,9 +545,8 @@ function currentMealWindow(rule, now) {
 // ---------------------------------------------------------------------------
 //
 // OS idle seconds arrive from the host process (powerMonitor in ipc.js) so
-// this module stays free of an Electron dependency and remains testable under
-// plain node. -1 means "the platform didn't tell us", which every idle-based
-// rule must treat as "don't nag".
+// this module stays free of an Electron dependency. -1 means "the platform
+// didn't tell us", which every idle-based rule must treat as "don't nag".
 let runtimeIdleSeconds = -1;
 function setIdleSeconds(v) {
   runtimeIdleSeconds = (typeof v === 'number' && Number.isFinite(v)) ? v : -1;
@@ -627,10 +626,6 @@ function clearUpdateNotice(version) {
  */
 function resetUpdateReminder() {
   runtimeUpdateWindow = null;
-}
-
-function getUpdateWindow() {
-  return runtimeUpdateWindow;
 }
 
 // ---------------------------------------------------------------------------
@@ -866,7 +861,7 @@ function syncRuntime(lines) {
 }
 
 // Clear the pool on stop() so a line can't outlive the process that
-// produced it (relevant to the smoke tests, which start/stop repeatedly).
+// produced it.
 function resetRuntime() {
   for (const old of runtimePlugged) {
     petActionTexts.dequeueRuntime(RUNTIME_TARGET_ACTION, old.text);
@@ -1016,9 +1011,9 @@ function stop() {
   if (timer) { clearInterval(timer); timer = null; }
   if (warmupTimer) { clearTimeout(warmupTimer); warmupTimer = null; }
   lastBroadcastKey = null;
-  // Drop the plugged-in rule lines too, so a stop()/start() cycle (or the
-  // smoke tests) can't leave a 吃饭提醒 line stranded in the `default`
-  // action's pool with no rule behind it to remove it.
+  // Drop the plugged-in rule lines too, so a stop()/start() cycle can't
+  // leave a 吃饭提醒 line stranded in the `default` action's pool with no
+  // rule behind it to remove it.
   resetRuntime();
   // The 有新版本 time window is a runtime value, so it dies with the engine
   // that owns it. Nothing about it is persisted: every detection opens a
@@ -1073,7 +1068,6 @@ module.exports = {
   // 有新版本 time window (opened by main/app_update.js on every detection)
   setUpdateNotice,
   clearUpdateNotice,
-  getUpdateWindow,
   // 开发模式调试用：把模拟出来的提醒收掉。
   resetUpdateReminder,
 
@@ -1095,19 +1089,10 @@ module.exports = {
   // rule-bubble card the user would never see for real.
   forcePlugOnly,
 
-  // internals, exported for tests
+  // internals, exposed so the IPC layer can build a preview of what each
+  // rule would say right now
   _internals: {
     loadState,
-    saveState,
     buildSnapshot,
-    pickRule,
-    collectPlugOnly,
-    parseHhmmToMinutes,
-    currentMealWindow,
-    dayKeyOf,
-    maybeRunOnStart,
-    syncRuntime,
-    resetRuntime,
-    ORDERED_RULES,
   },
 };

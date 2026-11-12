@@ -48,8 +48,7 @@ process.on('uncaughtException', (err) => {
 //
 // A refused lock CAN be asked for again: the lock is a named OS object
 // that is released when its holder dies, and the request is a fresh
-// attempt each time. `scripts/test-app-relaunch.js` proves both halves of
-// that statement against a real Electron.
+// attempt each time.
 const LOCK_RETRY_MS = 6000;
 const LOCK_RETRY_STEP_MS = 200;
 

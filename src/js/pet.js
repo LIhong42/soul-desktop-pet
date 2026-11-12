@@ -535,9 +535,9 @@ function applyArtGeometry(box) {
     lineW = textW;
     finalW = Math.max(ART_MIN_W, Math.min(ART_MAX_W, Math.round(textW + padBox + slackPx)));
   } else {
-    // No layout available (hidden ancestor, or a non-rendering environment such
-    // as a headless test). Scale by the text's character count, which is all we
-    // can know here and is far better than a fixed box.
+    // No layout available (hidden ancestor, or an offscreen or otherwise
+    // non-rendering context). Scale by the text's character count, which is
+    // all we can know here and is far better than a fixed box.
     const estW = Math.max(ART_MIN_W, Math.min(ART_MAX_W, padBox + raw.length * ART_CHAR_W));
     finalW = estW;
     lineW = Math.min(raw.length, ART_MAX_GROW_STEPS * ART_MAX_W) * ART_CHAR_W;

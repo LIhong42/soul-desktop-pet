@@ -4,7 +4,7 @@
 // ---------------
 // "The pet cannot be dragged any more after the machine sleeps" is a bug
 // that only reproduces on real hardware: it needs an actual system
-// suspend, which no automated test can perform. Guessing at the cause
+// suspend, which cannot be reproduced automatically. Guessing at the cause
 // from the code alone is how the first two attempts at this bug went
 // wrong — both were plausible, both were wrong, and both looked right.
 //
@@ -56,8 +56,8 @@ function logPath() {
     cachedPath = path.join(app.getPath('userData'), 'pet-diagnostics.log');
   } catch (e) {
     // No Electron (a plain-node script) — fall back to the OS temp
-    // directory, NEVER to the working directory: a test run must not leave
-    // files behind in the repository.
+    // directory, NEVER to the working directory: a plain-node run must not
+    // leave files behind in the repository.
     cachedPath = path.join(require('os').tmpdir(), 'pet-diagnostics.log');
   }
   return cachedPath;
@@ -92,8 +92,8 @@ function append(entry) {
   }
 }
 
-// Read the log back. Used by the tests and by anyone who wants to look
-// at it from the main process.
+// Read the log back. Anyone who wants to look at it from the main process
+// can.
 function read() {
   try {
     return fs.readFileSync(logPath(), 'utf8');
@@ -102,10 +102,4 @@ function read() {
   }
 }
 
-// Forget where the log lives. Only used by the tests, which need a
-// different file per case.
-function _resetPath() {
-  cachedPath = null;
-}
-
-module.exports = { append, read, logPath, _resetPath, MAX_BYTES };
+module.exports = { append, read, logPath, MAX_BYTES };

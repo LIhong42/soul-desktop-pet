@@ -61,7 +61,6 @@ const { getFfmpegPath } = require('./video_frame_split');
 // re-exported here, because this tool drives them directly.
 const {
   cutoutToPng,
-  estimateBorderColor,
   MAX_PIXELS,
   _internal,
 } = require('./png_border_cutout');
@@ -93,16 +92,6 @@ function toleranceFor(name) {
   return Object.prototype.hasOwnProperty.call(TOLERANCE_PRESETS, key)
     ? TOLERANCE_PRESETS[key]
     : TOLERANCE_PRESETS.normal;
-}
-
-// Estimate the background color from the outer perimeter of the image.
-//
-// Kept as a named export for backwards compatibility; the implementation
-// now lives in png_border_cutout.js and samples a perimeter *band*
-// (not just the four corners), so a vignette or a character pixel
-// touching the edge cannot drag the estimate off the true backdrop.
-function estimateBackground(rgba, width, height) {
-  return estimateBorderColor(rgba, width, height);
 }
 
 // Main entry point.
@@ -141,11 +130,8 @@ function removeBackground({ inputPath, outPath, tolerance, softness, progressCb,
 module.exports = {
   removeBackground,
   probeSize,
-  estimateBackground,
   toleranceFor,
   TOLERANCE_PRESETS,
   MAX_PIXELS,
   getFfmpegPath,
-  // Exported for future callers that need the raw ffmpeg runner.
-  _internal: { runFfmpeg },
 };

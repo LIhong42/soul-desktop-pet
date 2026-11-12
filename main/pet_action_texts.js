@@ -54,12 +54,6 @@ const CONFIG_PREFIX = 'pet_action_texts:';
 // clear). Purely a backstop: pet_bubbles always dequeues explicitly.
 const RUNTIME_TTL_MS = 2 * 60 * 60_000;
 
-// The sentinel for "say nothing". Kept as a module constant so the renderer
-// and the main process can't drift on how it's spelled on the wire — the
-// settings UI persists this exact string as a normal line, and the picker
-// filters it back out into "未绑定" when it reads the config back.
-const NO_TEXT = '';
-
 function configKey(petId) {
   return `${CONFIG_PREFIX}${petId}`;
 }
@@ -137,7 +131,7 @@ function listRuntime(action) {
   return out;
 }
 
-// Wipe the whole pool. Called on shutdown and by tests; a rule-driven line
+// Wipe the whole pool. Called on shutdown; a rule-driven line
 // must not outlive the process that produced it.
 function clearRuntime() {
   runtimePool.clear();
@@ -302,7 +296,7 @@ function candidatesFor(action, savedTexts) {
 // null when the sample landed on the "no text" entry (or when the action
 // has nothing bound at all — which collapses to a single `[null]` pool).
 //
-// Accepts an injected `rng` so tests can pin the sample. The sample is
+// Accepts an injected `rng` so the caller can pin the sample. The sample is
 // clamped into [0, 1) first: `Math.random()` can't produce a value outside
 // that range, but an injected sampler might, and clamping at the low end
 // (rather than letting a negative index silently fall through to the
@@ -374,7 +368,6 @@ function describeActions(db, petId, sources) {
 
 module.exports = {
   CONFIG_PREFIX,
-  NO_TEXT,
   RUNTIME_TTL_MS,
 
   // runtime pool (动态插拔)
@@ -397,6 +390,4 @@ module.exports = {
 
   // introspection
   describeActions,
-
-  _internals: { runtimePool, pruneRuntime },
 };

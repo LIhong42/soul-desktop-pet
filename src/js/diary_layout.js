@@ -100,7 +100,7 @@ export function effectivePhotoWidth(photo, layoutId) {
 export function parseDiaryContent(stored) {
   if (!stored) return [];
   // The column holds a JSON string. A caller that already has the parsed
-  // array (an in-memory row, a test fixture) is served as it is.
+  // array (an in-memory row) is served as it is.
   if (Array.isArray(stored)) return normalizeBlocks(stored);
   if (typeof stored !== 'string') return [];
   let parsed;

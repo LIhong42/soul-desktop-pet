@@ -105,7 +105,4 @@ module.exports = {
   listFestivals,
   nextFestivalSolar,
   festivalLabel,
-  // expose internals for testing
-  _STATIC: STATIC_FESTIVALS,
-  _FLOATING: FLOATING_FESTIVALS,
 };
