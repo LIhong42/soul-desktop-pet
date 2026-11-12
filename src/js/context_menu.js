@@ -91,7 +91,10 @@ function renderItem(item) {
   }
   if (item.row) {
     const row = document.createElement('div');
-    row.className = 'ctx-row';
+    // A row marked `wide` needs more room than a row of one-word buttons:
+    // the insertion rows carry two entries, one above the block and one
+    // below it.
+    row.className = 'ctx-row' + (item.wide ? ' wide' : '');
     for (const sub of item.row) row.appendChild(renderItem(sub));
     return row;
   }

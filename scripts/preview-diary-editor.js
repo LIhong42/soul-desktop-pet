@@ -79,7 +79,7 @@ fileInput.click = () => {
   fileInput.dispatchEvent(new Event('change'));
 };
 openMenu(ta, 200, 240);
-clickMenu('[data-ctx-act="insert-image"]');
+clickMenu('[data-ctx-act="insert-image"][data-ctx-value="after"]');
 
 // The insert is async (the files are read into data URLs first).
 await new Promise(r => setTimeout(r, 400));
@@ -92,7 +92,7 @@ await new Promise(r => setTimeout(r, 400));
 await new Promise(r => setTimeout(r, 300));
 const gallery = document.querySelector('.diary-block-gallery');
 openMenu(gallery, 200, 240);
-clickMenu('[data-ctx-act="insert-after"]');
+clickMenu('[data-ctx-act="insert-text"][data-ctx-value="after"]');
 await new Promise(r => setTimeout(r, 100));
 const tas = document.querySelectorAll('.diary-block-text');
 const lower = tas[tas.length - 1];

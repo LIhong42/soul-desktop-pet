@@ -282,14 +282,63 @@ function makeTextBlock(text) {
 
 // ---- The block menus -----------------------------------------------------
 //
-// The menu of a text block: the two actions the block used to carry, plus
-// the editing commands the browser's own right-click menu would have
-// offered (the custom menu replaces it, so they have to be here).
+// EVERY block carries the SAME insertions: a paragraph, a picture, a
+// movie, a sound — above or below the block that was pressed. That was
+// not always so: a text block could only hold pictures, a gallery could
+// only hold text, and a media block could do both. The result was a
+// document the user could not shape — a picture could not follow a
+// picture, and a paragraph could not be dropped under a gallery.
+//
+// So the insertions are built ONCE (insertionMenuItems) and every menu
+// uses them. The block's own business — the editing commands of a
+// paragraph, the layout switch of a gallery, the player commands of a
+// movie — sits around them.
 //
 // The caret is captured when the menu opens so the editing commands
-// (剪切 / 复制 / 粘贴) act on the text the user pointed at. The picture
-// does NOT land at the caret: it goes after the whole text block, so
-// the paragraph is never cut in two.
+// (剪切 / 复制 / 粘贴) act on the text the user pointed at. The inserted
+// block does NOT land at the caret: it goes above or below the whole
+// block, so the paragraph is never cut in two.
+
+// The kinds of block that can be inserted.
+const INSERT_KINDS = [
+  { kind: 'text', label: '文字' },
+  { kind: 'image', label: '图片' },
+  { kind: 'video', label: '视频' },
+  { kind: 'audio', label: '音频' },
+];
+
+// The insertions every block's menu carries.
+//
+// Each kind of block has two doors: one above the pressed block and one
+// below it. The two are asked for in one go, so the menu reads as a
+// choice of WHAT to put in and WHERE to put it.
+//
+// A sound has a third door: a recording made right now, instead of a
+// file from the disk. It lands in the same places.
+function insertionMenuItems() {
+  const items = [];
+  for (const k of INSERT_KINDS) {
+    items.push({
+      wide: true,
+      row: [
+        { act: 'insert-' + k.kind, value: 'before', label: '↑ ' + k.label },
+        { act: 'insert-' + k.kind, value: 'after', label: '↓ ' + k.label },
+      ],
+    });
+  }
+  items.push({
+    wide: true,
+    row: [
+      { act: 'record-audio', value: 'before', label: '↑ 录音' },
+      { act: 'record-audio', value: 'after', label: '↓ 录音' },
+    ],
+  });
+  return items;
+}
+
+// The menu of a text block: the insertions every block carries, plus the
+// editing commands the browser's own right-click menu would have offered
+// (the custom menu replaces it, so they have to be here).
 function openTextMenu(block, e) {
   const ta = block.el;
   const start = ta.selectionStart;
@@ -304,14 +353,8 @@ function openTextMenu(block, e) {
     x: e.clientX,
     y: e.clientY,
     items: [
-      { act: 'insert-image', label: '插入图片' },
-      { act: 'insert-video', label: '插入视频' },
-      // A sound has two doors: a file from the disk, or a recording
-      // made right now. Both land in the same place.
-      { row: [
-        { act: 'insert-audio', label: '插入音频（文件）' },
-        { act: 'record-audio', label: '录音' },
-      ]},
+      ...insertionMenuItems(),
+      { sep: true },
       { act: 'delete-block', label: '删除此段', danger: true },
       { sep: true },
       { row: [
@@ -329,36 +372,18 @@ function openTextMenu(block, e) {
 function handleTextMenuAction(block, act, value, sel) {
   const ta = block.el;
   switch (act) {
-    case 'insert-image': {
-      // The picture goes in AFTER the whole text block: the words the
-      // user wrote stay one unbroken piece.
-      const fileInput = document.getElementById('diary-photos');
-      pendingInsertFor = block;
-      ta.focus();
-      if (fileInput) fileInput.click();
-      break;
-    }
-    case 'insert-video': {
-      // A movie goes in after the whole text block too, for the same
-      // reason a picture does.
-      const fileInput = document.getElementById('diary-media');
-      pendingMediaFor = { block, kind: 'video' };
-      ta.focus();
-      if (fileInput) fileInput.click();
-      break;
-    }
-    case 'insert-audio': {
-      const fileInput = document.getElementById('diary-media');
-      pendingMediaFor = { block, kind: 'audio' };
-      ta.focus();
-      if (fileInput) fileInput.click();
-      break;
-    }
+    case 'insert-text':
+    case 'insert-image':
+    case 'insert-video':
+    case 'insert-audio':
     case 'record-audio': {
-      // The recording dialog hands back a File, and the File goes in
-      // exactly where a picked sound would.
+      // The insertion goes above or below the whole block, never at the
+      // caret: the words the user wrote stay one unbroken piece.
       ta.focus();
-      recordAudioFor(block);
+      // A recording is a sound that was made instead of picked, so it
+      // lands where a picked sound would.
+      const kind = act === 'record-audio' ? 'audio' : act.slice('insert-'.length);
+      startInsertion(block, kind, value, act === 'record-audio');
       break;
     }
     case 'delete-block': {
@@ -477,8 +502,8 @@ function buildGalleryEl(block) {
 }
 
 // The gallery's menu: the layout switch, the add button, the photo
-// counter and the two text insertions. Right-clicking one of the
-// pictures adds that picture's own action on top.
+// counter and the insertions every block carries. Right-clicking one of
+// the pictures adds that picture's own action on top.
 function openGalleryMenu(block, e) {
   const itemEl = e.target && e.target.closest
     ? e.target.closest('.diary-gallery-item')
@@ -501,8 +526,7 @@ function openGalleryMenu(block, e) {
   items.push({ act: 'gallery-add', label: '+ 加图' });
   items.push({ info: true, label: block.photos.length ? `${block.photos.length} 张` : '还没有照片' });
   items.push({ sep: true });
-  items.push({ act: 'insert-before', label: '↑ 上方插入文字' });
-  items.push({ act: 'insert-after', label: '↓ 下方插入文字' });
+  items.push(...insertionMenuItems());
 
   openContextMenu({
     x: e.clientX,
@@ -524,14 +548,13 @@ function handleGalleryMenuAction(block, act, value, photo) {
       if (fileInput) fileInput.click();
       break;
     }
-    case 'insert-before': {
-      const i = pageState.blocks.indexOf(block);
-      if (i >= 0) insertBlock(i, makeTextBlock(''));
-      break;
-    }
-    case 'insert-after': {
-      const i = pageState.blocks.indexOf(block);
-      if (i >= 0) insertBlock(i + 1, makeTextBlock(''));
+    case 'insert-text':
+    case 'insert-image':
+    case 'insert-video':
+    case 'insert-audio':
+    case 'record-audio': {
+      const kind = act === 'record-audio' ? 'audio' : act.slice('insert-'.length);
+      startInsertion(block, kind, value, act === 'record-audio');
       break;
     }
     case 'delete-photo':
@@ -965,10 +988,9 @@ function buildMediaEl(block) {
 // The block's menu.
 //
 // A media block is a thing of its own on the page, so its menu offers the
-// same things the other blocks offer — the picture and the text
-// insertions above and below it, and the ways to get a picture, a movie
-// or a sound in — plus the one thing that belongs to a media block alone:
-// removing it, and the commands that act on the file itself.
+// insertions every block carries — plus the one thing that belongs to a
+// media block alone: removing it, and the commands that act on the file
+// itself.
 //
 // The editing commands the browser's own menu would have offered (剪切 /
 // 复制 / 粘贴 / 全选) make no sense here: there is no text to cut. What
@@ -982,17 +1004,7 @@ function openMediaMenu(block, e) {
     x: e.clientX,
     y: e.clientY,
     items: [
-      { act: 'media-insert-image', label: '插入图片' },
-      { act: 'media-insert-video', label: '插入视频' },
-      // A sound has two doors: a file from the disk, or a recording
-      // made right now. Both land in the same place.
-      { row: [
-        { act: 'media-insert-audio', label: '插入音频（文件）' },
-        { act: 'media-record-audio', label: '录音' },
-      ]},
-      { sep: true },
-      { act: 'media-insert-before', label: '↑ 上方插入文字' },
-      { act: 'media-insert-after', label: '↓ 下方插入文字' },
+      ...insertionMenuItems(),
       { sep: true },
       { row: [
         { act: 'media-play', label: playing ? '暂停' : '播放' },
@@ -1000,44 +1012,20 @@ function openMediaMenu(block, e) {
       ]},
       { act: 'media-remove', label: '删除这段媒体', danger: true },
     ],
-    onAction: (act) => handleMediaMenuAction(block, act),
+    onAction: (act, value) => handleMediaMenuAction(block, act, value),
   });
 }
 
 // Run the action the user picked in a media block's menu.
-function handleMediaMenuAction(block, act) {
+function handleMediaMenuAction(block, act, value) {
   switch (act) {
-    case 'media-insert-image': {
-      // The picture goes in after the media block, the same way a
-      // picture goes after a text block.
-      pendingInsertFor = null;
-      pendingGalleryAfter = block;
-      const fileInput = document.getElementById('diary-photos');
-      if (fileInput) fileInput.click();
-      break;
-    }
-    case 'media-insert-video':
-    case 'media-insert-audio': {
-      const kind = act === 'media-insert-video' ? 'video' : 'audio';
-      pendingMediaFor = { block, kind };
-      const fileInput = document.getElementById('diary-media');
-      if (fileInput) fileInput.click();
-      break;
-    }
-    case 'media-record-audio': {
-      // The recording goes in right after this media block, the same
-      // place a picked sound would.
-      recordAudioFor(block);
-      break;
-    }
-    case 'media-insert-before': {
-      const i = pageState.blocks.indexOf(block);
-      if (i >= 0) insertBlock(i, makeTextBlock(''));
-      break;
-    }
-    case 'media-insert-after': {
-      const i = pageState.blocks.indexOf(block);
-      if (i >= 0) insertBlock(i + 1, makeTextBlock(''));
+    case 'insert-text':
+    case 'insert-image':
+    case 'insert-video':
+    case 'insert-audio':
+    case 'record-audio': {
+      const kind = act === 'record-audio' ? 'audio' : act.slice('insert-'.length);
+      startInsertion(block, kind, value, act === 'record-audio');
       break;
     }
     case 'media-play': {
@@ -1559,9 +1547,9 @@ function renderBlocks() {
   }
 }
 
-// Insert a gallery right after a text block. The text block is NOT
-// split: the picture lands after the whole paragraph, so the words the
-// user wrote stay one unbroken block.
+// Insert a gallery above or below a block. The block is NOT split: the
+// picture lands beside the whole paragraph, so the words the user wrote
+// stay one unbroken block.
 //
 // Splitting at the caret used to be the rule, but it cut the paragraph
 // in two around the picture — a sentence ended up with the picture in
@@ -1571,25 +1559,28 @@ function renderBlocks() {
 //
 // Every picked file lands in the SAME gallery — one insertion point can
 // hold any number of photos.
-async function insertGalleryAfterTextBlock(textBlock, files) {
-  const idx = pageState.blocks.indexOf(textBlock);
+async function insertGalleryBeside(anchor, files, where) {
+  const idx = pageState.blocks.indexOf(anchor);
   if (idx < 0) return;
 
   // Where the caret was, BEFORE the redraw: the re-render takes the
   // textarea out of the page and puts it back, and that can lose the
   // selection.
-  const ta = textBlock.el;
-  const caret = ta.selectionStart;
+  const ta = anchor.el;
+  const caret = ta && ta.selectionStart != null ? ta.selectionStart : null;
 
-  // The gallery goes right after the text block.
+  // The gallery goes right beside the anchor.
   const photos = await makePendingPhotos(files);
-  pageState.blocks.splice(idx + 1, 0, makeGalleryBlock(photos, null));
+  const at = where === 'before' ? idx : idx + 1;
+  pageState.blocks.splice(at, 0, makeGalleryBlock(photos, null));
   renderBlocks();
 
-  // Keep the caret in the text block, where it was, so the user keeps
+  // Keep the caret in the anchor, where it was, so the user keeps
   // typing where they left off.
-  ta.focus();
-  try { ta.setSelectionRange(caret, caret); } catch (err) { /* no selection */ }
+  if (ta) {
+    ta.focus();
+    try { ta.setSelectionRange(caret, caret); } catch (err) { /* no selection */ }
+  }
 }
 
 // Read the picked files into gallery photos and register them as pending
@@ -1629,10 +1620,8 @@ export async function render(args, params) {
   pageState.cleanupThemePicker = null;
   // A pending target from a previous visit to this page would send the
   // next file pick to the wrong place.
-  pendingInsertFor = null;
+  pendingInsert = null;
   pendingGalleryFor = null;
-  pendingGalleryAfter = null;
-  pendingMediaFor = null;
   // The back link and the post-save navigation follow the page the user
   // actually came from; the memorial list is the fallback.
   pageState.returnTo = getReferrerPath() || MEMORIAL_LIST_ROUTE;
@@ -1815,10 +1804,11 @@ export async function render(args, params) {
         <section class="card diary-side-card diary-help-card">
           <h2>编辑规则</h2>
           <ul class="diary-help-list">
-            <li><b>右键文字</b>：插入图片 / 视频 / 音频、删除此段、剪切 / 复制 / 粘贴</li>
-            <li><b>右键图组</b>：单图 / 双图 / 三图 / 网格、加图、上下插入文字</li>
+            <li><b>右键任意一块</b>：上 / 下方插入<b>文字、图片、视频、音频</b>，四样都能插在任意一块的上下</li>
+            <li><b>右键文字</b>：删除此段、剪切 / 复制 / 粘贴</li>
+            <li><b>右键图组</b>：单图 / 双图 / 三图 / 网格、加图</li>
             <li><b>右键某张图</b>：删除这张图片</li>
-            <li><b>右键视频 / 音频</b>：插入图片 / 视频 / 音频、上下插入文字、播放 / 暂停、复制链接、删除这段媒体</li>
+            <li><b>右键视频 / 音频</b>：播放 / 暂停、复制链接、删除这段媒体</li>
             <li><b>拖动图片</b>换顺序，<b>拖右下角手柄</b>改大小</li>
             <li><b>按住块任意空白处拖动</b>，与另一块交换位置（块里划选文字、拖图组里的照片，都还归它们自己）</li>
           </ul>
@@ -1986,26 +1976,103 @@ function wireThemePicker() {
   });
 }
 
-// ---- Photos --------------------------------------------------------------
+// ---- Insertions ----------------------------------------------------------
 
-// The text block whose 「插入图片」 action was picked. When set, the next
-// file pick becomes a gallery right after that block — the text is left
-// whole, the picture is not spliced into the middle of it.
-let pendingInsertFor = null;
+// The insertion the user asked for and has not supplied yet.
+//
+// Every block's menu asks for the same things — a paragraph, a picture,
+// a movie, a sound, above or below the block that was pressed — so
+// there is ONE record of the pending insertion instead of one per kind.
+//
+// It is { anchor, kind, where }:
+//
+//   anchor  the block the insertion hangs off
+//   kind    'text' | 'image' | 'video' | 'audio'
+//   where   'before' | 'after'
+//
+// A 'text' insertion needs no file at all, so it is placed right away
+// and never reaches this record. The other kinds wait for the file
+// picker to hand over a file.
+let pendingInsert = null;
 
 // The gallery whose "+ 加图" action was picked. When set, the next file
-// pick joins that gallery instead of starting a new one.
+// pick joins THAT gallery instead of starting a new one — that is the
+// one insertion that adds to a block rather than putting a new one
+// beside it.
 let pendingGalleryFor = null;
 
-// The block whose 「插入图片」 action was picked, when the block is not a
-// text block. When set, the next file pick becomes a gallery right after
-// that block.
-let pendingGalleryAfter = null;
+// Start an insertion above or below a block.
+//
+// A paragraph is placed at once: there is no file to wait for. The other
+// kinds open the file picker and leave a record behind, so the file that
+// comes back knows where it has to land.
+//
+// `recording` says the sound is being made right now instead of picked
+// from the disk — it lands in the same places either way.
+function startInsertion(anchor, kind, where, recording) {
+  const side = where === 'before' ? 'before' : 'after';
 
-// The block whose 「插入视频」 / 「插入音频」 action was picked, and which
-// kind of media it was. When set, the next file pick becomes a media
-// block right after that block.
-let pendingMediaFor = null;
+  if (kind === 'text') {
+    insertTextBeside(anchor, side);
+    return;
+  }
+
+  if (recording) {
+    recordAudioBeside(anchor, side);
+    return;
+  }
+
+  pendingInsert = { anchor, kind, where: side };
+  const fileInput = document.getElementById(kind === 'image' ? 'diary-photos' : 'diary-media');
+  if (fileInput) fileInput.click();
+}
+
+// Put a new paragraph above or below a block.
+function insertTextBeside(anchor, side) {
+  const i = pageState.blocks.indexOf(anchor);
+  if (i < 0) return null;
+  const block = makeTextBlock('');
+  insertBlock(side === 'before' ? i : i + 1, block);
+  // The new paragraph takes the caret, so the user can type into it
+  // straight away.
+  const ta = block.el;
+  if (ta) {
+    ta.focus();
+    try { ta.setSelectionRange(0, 0); } catch (err) { /* no selection */ }
+  }
+  return block;
+}
+
+// The index a new block of media takes next to an anchor.
+//
+// Media that follows the anchor is walked PAST, so two files picked one
+// after the other keep the order they were picked in. Going UP, the
+// media that already stands above the anchor is walked past the other
+// way — the new one lands below it, in the run of media the user is
+// already looking at.
+function insertionIndex(anchor, side) {
+  const idx = pageState.blocks.indexOf(anchor);
+  if (idx < 0) return -1;
+
+  if (side === 'after') {
+    let at = idx + 1;
+    while (at < pageState.blocks.length) {
+      const next = pageState.blocks[at];
+      if (next.type !== 'video' && next.type !== 'audio') break;
+      at += 1;
+    }
+    return at;
+  }
+  let at = idx;
+  while (at > 0) {
+    const prev = pageState.blocks[at - 1];
+    if (prev.type !== 'video' && prev.type !== 'audio') break;
+    at -= 1;
+  }
+  return at;
+}
+
+// ---- Photos --------------------------------------------------------------
 
 // The shared file picker. It is opened by the 「插入图片」 action on a text
 // block and by the "+ 加图" action on a gallery, so the picture always
@@ -2029,23 +2096,13 @@ function wirePhotoInput() {
       return;
     }
 
-    // 「插入图片」 on a text block: drop the gallery right after that
-    // block. The text is left whole — the picture does not cut it in
-    // two. Every picked file goes into that one gallery.
-    if (pendingInsertFor) {
-      const target = pendingInsertFor;
-      pendingInsertFor = null;
-      await insertGalleryAfterTextBlock(target, files);
-      return;
-    }
-
-    // 「插入图片」 on a media block: the gallery goes right after it.
-    if (pendingGalleryAfter) {
-      const target = pendingGalleryAfter;
-      pendingGalleryAfter = null;
-      const photos = await makePendingPhotos(files);
-      const i = pageState.blocks.indexOf(target);
-      if (i >= 0) insertBlock(i + 1, makeGalleryBlock(photos, null));
+    // An insertion of a picture: drop the gallery above or below the
+    // block it hangs off. The text is left whole — the picture does not
+    // cut it in two. Every picked file goes into that one gallery.
+    if (pendingInsert && pendingInsert.kind === 'image') {
+      const target = pendingInsert;
+      pendingInsert = null;
+      await insertGalleryBeside(target.anchor, files, target.where);
       return;
     }
 
@@ -2079,19 +2136,18 @@ function wireMediaInput() {
     // fires a change event.
     fileInput.value = '';
     if (!files.length) return;
-
-    // 「插入视频」 / 「插入音频」 on a text or a media block: the media
-    // goes right after that block, for the same reason a picture does.
-    if (pendingMediaFor) {
-      const target = pendingMediaFor;
-      pendingMediaFor = null;
-      await insertMediaAfterTextBlock(target.block, files[0], target.kind);
+    // An insertion of a movie or a sound: the media goes above or below
+    // the block it hangs off, for the same reason a picture does.
+    if (pendingInsert && (pendingInsert.kind === 'video' || pendingInsert.kind === 'audio')) {
+      const target = pendingInsert;
+      pendingInsert = null;
+      await insertMediaBeside(target.anchor, files[0], target.kind, target.where);
       return;
     }
 
     // No target: the picker was opened some other way. Put the media at
     // the end of the document.
-    await insertMediaAfterTextBlock(null, files[0], fileKindFor(files[0]));
+    await insertMediaBeside(null, files[0], fileKindFor(files[0]), 'after');
   };
 }
 
@@ -2104,22 +2160,22 @@ function fileKindFor(file) {
   return 'video';
 }
 
-// Insert a media block right after another block. A text block is NOT
-// split — the movie goes after the whole paragraph, so the words the user
-// wrote stay one unbroken piece, the same rule a picture follows.
+// Insert a media block above or below another block. A text block is NOT
+// split — the movie goes beside the whole paragraph, so the words the
+// user wrote stay one unbroken piece, the same rule a picture follows.
 //
-// The media lands after the anchor AND after any media already
+// The media lands beside the anchor AND past any media already
 // inserted there, so two attachments picked one after the other keep the
-// order they were picked in. (Straight after the anchor, the second
+// order they were picked in. (Straight beside the anchor, the second
 // one would jump in front of the first.)
 //
 // Only the first picked file is taken: a movie is a thing of its own,
 // not a row of things. Picking several at once takes the first one and
 // leaves the rest alone.
 //
-// The anchor is whichever block the user acted on — a text block or a
-// media block. The new media lands right after it.
-async function insertMediaAfterTextBlock(anchor, file, kind) {
+// The anchor is whichever block the user acted on. The new media lands
+// right beside it — above it or below it, as asked.
+async function insertMediaBeside(anchor, file, kind, where) {
   if (!file) return;
   const type = kind === 'audio' ? 'audio' : 'video';
 
@@ -2139,16 +2195,8 @@ async function insertMediaAfterTextBlock(anchor, file, kind) {
   setMediaSource(block, URL.createObjectURL(file));
 
   if (anchor) {
-    const idx = pageState.blocks.indexOf(anchor);
-    if (idx < 0) return;
-    // Walk past the media that already follows the anchor, so the new
-    // one goes behind them rather than in front.
-    let at = idx + 1;
-    while (at < pageState.blocks.length) {
-      const next = pageState.blocks[at];
-      if (next.type !== 'video' && next.type !== 'audio') break;
-      at += 1;
-    }
+    const at = insertionIndex(anchor, where);
+    if (at < 0) return;
     pageState.blocks.splice(at, 0, block);
   } else {
     pageState.blocks.push(block);
@@ -2162,7 +2210,7 @@ async function insertMediaAfterTextBlock(anchor, file, kind) {
 // very same path a picked sound does: the same pending-media list, the
 // same upload on save, the same audio block on the page. The only
 // difference is where the bytes came from.
-async function recordAudioFor(anchor) {
+async function recordAudioBeside(anchor, where) {
   let file = null;
   try {
     file = await openAudioRecorderDialog();
@@ -2173,7 +2221,7 @@ async function recordAudioFor(anchor) {
   }
   // The user closed the dialog without recording anything.
   if (!file) return;
-  await insertMediaAfterTextBlock(anchor, file, 'audio');
+  await insertMediaBeside(anchor, file, 'audio', where);
 }
 
 // ---- Serialize -----------------------------------------------------------

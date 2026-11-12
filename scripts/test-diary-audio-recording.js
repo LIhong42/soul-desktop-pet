@@ -233,7 +233,7 @@ window.__router = await import('./js/router.js');
       .map((b) => b.textContent.trim());
 
     // Press 「录音」.
-    document.querySelector('#ctx-menu [data-ctx-act="record-audio"]').click();
+    document.querySelector('#ctx-menu [data-ctx-act="record-audio"][data-ctx-value="after"]').click();
     await new Promise((r) => setTimeout(r, 150));
 
     // The dialog is on screen.
@@ -333,7 +333,7 @@ window.__router = await import('./js/router.js');
     ta.dispatchEvent(new MouseEvent('contextmenu', {
       bubbles: true, cancelable: true, clientX: 120, clientY: 140,
     }));
-    document.querySelector('#ctx-menu [data-ctx-act="record-audio"]').click();
+    document.querySelector('#ctx-menu [data-ctx-act="record-audio"][data-ctx-value="after"]').click();
     await new Promise((r) => setTimeout(r, 150));
 
     const dialog = document.querySelector('.diary-recorder-backdrop');

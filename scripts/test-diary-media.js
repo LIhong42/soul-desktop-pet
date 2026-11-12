@@ -373,7 +373,7 @@ window.__router = await import('./js/router.js');
         ta.dispatchEvent(new MouseEvent('contextmenu', {
           bubbles: true, cancelable: true, clientX: 120, clientY: 140,
         }));
-        const insertVideo = document.querySelector('#ctx-menu [data-ctx-act="insert-video"]');
+        const insertVideo = document.querySelector('#ctx-menu [data-ctx-act="insert-video"][data-ctx-value="after"]');
         if (insertVideo) insertVideo.click();
         pendingDetail = insertVideo ? 'menu clicked' : 'no 插入视频 entry';
       } else {

@@ -2563,6 +2563,9 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   padding: 5px 8px;
   text-align: center;
 }
+/* The insertion rows hold two labelled entries — one above the block, one
+   below it — so they need a little more room than the layout switcher. */
+.ctx-row.wide { min-width: 196px; }
 .ctx-sep {
   height: 1px;
   margin: 5px 2px;

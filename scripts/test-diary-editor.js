@@ -69,6 +69,7 @@ const list = await import('./js/pages/events_memorial.js');
 // more — they live in this menu.
 window.__menu = {
   open(el, x = 120, y = 140) {
+    if (!el) throw new Error('menu opened on a missing element');
     el.dispatchEvent(new MouseEvent('contextmenu', {
       bubbles: true, cancelable: true, clientX: x, clientY: y,
     }));
@@ -86,6 +87,17 @@ window.__menu = {
   click(sel) {
     const btn = document.querySelector('#ctx-menu ' + sel);
     if (!btn) throw new Error('menu entry missing: ' + sel);
+    btn.click();
+    return true;
+  },
+  // Click an insertion entry by its action AND its side. Every insertion
+  // has two doors — one above the block, one below — so the action alone
+  // does not say which one was picked.
+  clickInsert(act, where = 'after') {
+    const sel = '#ctx-menu [data-ctx-act="' + act + '"]'
+      + '[data-ctx-value="' + where + '"]';
+    const btn = document.querySelector(sel);
+    if (!btn) throw new Error('menu entry missing: ' + act + '/' + where);
     btn.click();
     return true;
   },
@@ -431,7 +443,7 @@ app.whenReady().then(async () => {
     };
 
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 60));
 
     const blocks = Array.from(document.querySelectorAll('.diary-block'));
@@ -554,7 +566,7 @@ app.whenReady().then(async () => {
     // Right-click the text block and pick 「插入视频」.
     window.__menu.open(ta);
     const menuActs = window.__menu.items().map(i => i.act);
-    window.__menu.click('[data-ctx-act="insert-video"]');
+    window.__menu.clickInsert('insert-video');
     await new Promise(r => setTimeout(r, 80));
 
     const afterVideo = Array.from(document.querySelectorAll('.diary-block'))
@@ -564,7 +576,7 @@ app.whenReady().then(async () => {
     // Now the sound, right-clicking the same block again.
     pickedKind = 'audio';
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-audio"]');
+    window.__menu.clickInsert('insert-audio');
     await new Promise(r => setTimeout(r, 80));
 
     const afterAudio = Array.from(document.querySelectorAll('.diary-block'))
@@ -667,7 +679,7 @@ app.whenReady().then(async () => {
 
     // Put a movie on the page.
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-video"]');
+    window.__menu.clickInsert('insert-video');
     await new Promise(r => setTimeout(r, 120));
 
     const videoWrap = document.querySelector('.diary-block-video');
@@ -699,16 +711,16 @@ app.whenReady().then(async () => {
     const menuActs = window.__menu.open(videoWrap).map(i => i.act);
     const menuLabels = window.__menu.items().map(i => i.label);
 
-    // 「↓ 下方插入文字」 puts a text block under the movie.
-    window.__menu.click('[data-ctx-act="media-insert-after"]');
+    // 「↓ 文字」 puts a text block under the movie.
+    window.__menu.clickInsert('insert-text', 'after');
     await new Promise(r => setTimeout(r, 60));
     const afterText = Array.from(document.querySelectorAll('.diary-block'))
       .map(b => b.dataset.blockType);
 
-    // 「↑ 上方插入文字」 puts one above it. The page was redrawn, so the
+    // 「↑ 文字」 puts one above it. The page was redrawn, so the
     // movie is looked up again — the old node is off the page.
     window.__menu.open(document.querySelector('.diary-block-video'));
-    window.__menu.click('[data-ctx-act="media-insert-before"]');
+    window.__menu.clickInsert('insert-text', 'before');
     await new Promise(r => setTimeout(r, 60));
     const afterTextBoth = Array.from(document.querySelectorAll('.diary-block'))
       .map(b => b.dataset.blockType);
@@ -730,24 +742,24 @@ app.whenReady().then(async () => {
     !!mediaMenuResult.blobAsMedia, String(mediaMenuResult.blobAsMedia));
   // The menu carries the same insertions the pictures carry.
   checkTrue('the media menu offers to insert a picture',
-    mediaMenuResult.menuActs.includes('media-insert-image'));
+    mediaMenuResult.menuActs.includes('insert-image'));
   checkTrue('the media menu offers to insert a movie',
-    mediaMenuResult.menuActs.includes('media-insert-video'));
+    mediaMenuResult.menuActs.includes('insert-video'));
   checkTrue('the media menu offers to insert a sound',
-    mediaMenuResult.menuActs.includes('media-insert-audio'));
+    mediaMenuResult.menuActs.includes('insert-audio'));
   checkTrue('the media menu offers a text block above',
-    mediaMenuResult.menuActs.includes('media-insert-before'));
-  checkTrue('the media menu offers a text block below',
-    mediaMenuResult.menuActs.includes('media-insert-after'));
+    mediaMenuResult.menuActs.includes('insert-text'));
+  checkTrue('the media menu offers a recording',
+    mediaMenuResult.menuActs.includes('record-audio'));
   checkTrue('the media menu offers to play and to copy the link',
     mediaMenuResult.menuActs.includes('media-play') &&
     mediaMenuResult.menuActs.includes('media-copy-link'));
   checkTrue('the media menu offers to remove the media',
     mediaMenuResult.menuActs.includes('media-remove'));
-  checkTrue('the media menu says 「↑ 上方插入文字」',
-    mediaMenuResult.menuLabels.includes('↑ 上方插入文字'));
-  checkTrue('the media menu says 「↓ 下方插入文字」',
-    mediaMenuResult.menuLabels.includes('↓ 下方插入文字'));
+  checkTrue('the media menu says 「↑ 文字」',
+    mediaMenuResult.menuLabels.includes('↑ 文字'));
+  checkTrue('the media menu says 「↓ 文字」',
+    mediaMenuResult.menuLabels.includes('↓ 文字'));
   // The text block lands under the movie, then above it.
   check('a text block can be inserted below the media',
     mediaMenuResult.afterText, ['text', 'video', 'text']);
@@ -943,7 +955,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 120));
 
     const gallery = document.querySelector('.diary-block-gallery');
@@ -1017,7 +1029,8 @@ app.whenReady().then(async () => {
   checkTrue('the gallery menu has no move buttons left',
     !multiResult.menuLabels.some(t => t.includes('前移') || t.includes('后移')));
   checkTrue('the gallery menu still carries every action',
-    ['gallery-add', 'insert-before', 'insert-after']
+    ['gallery-add', 'insert-text', 'insert-image', 'insert-video',
+     'insert-audio']
       .every(a => multiResult.menuActs.includes(a)));
   check('the saved gallery keeps the chosen layout', multiResult.savedLayout, 'two');
   check('the saved gallery keeps all three photos',
@@ -1053,7 +1066,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 120));
 
     const gallery = document.querySelector('.diary-block-gallery');
@@ -1144,7 +1157,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 150));
 
     const items = Array.from(document.querySelectorAll('.diary-gallery-item'));
@@ -1219,7 +1232,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 150));
 
     const item = document.querySelector('.diary-gallery-item');
@@ -1304,7 +1317,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 120));
 
     // Give the picture a real height — the picked bytes are not an image,
@@ -1424,7 +1437,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 80));
 
     const gallery = document.querySelector('.diary-block-gallery');
@@ -1466,15 +1479,17 @@ app.whenReady().then(async () => {
   checkTrue('right-clicking a text block opens the menu',
     menuResult.afterPress.menuOpen);
   check('the text menu carries the block actions',
-    ['insert-image', 'insert-video', 'insert-audio', 'delete-block']
+    ['insert-text', 'insert-image', 'insert-video', 'insert-audio',
+     'record-audio', 'delete-block']
       .every(a => menuResult.afterPress.acts.includes(a)), true);
   check('the text menu carries the editing commands',
     [menuResult.afterPress.hasCopy, menuResult.afterPress.hasPaste,
      menuResult.afterPress.hasSelectAll], [true, true, true]);
   checkTrue('the menu goes away again', !menuResult.afterClose.menuOpen);
   check('the gallery menu carries the layout switch, the add button and '
-    + 'the text insertions',
-    ['layout', 'gallery-add', 'insert-before', 'insert-after']
+    + 'the insertions',
+    ['layout', 'gallery-add', 'insert-text', 'insert-image', 'insert-video',
+     'insert-audio', 'record-audio']
       .every(a => menuResult.galleryActs.includes(a)), true);
   checkTrue('the gallery menu shows the photo counter',
     !!menuResult.counter && menuResult.counter.includes('张'));
@@ -2323,7 +2338,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 120));
 
     const mediaInput = document.getElementById('diary-media');
@@ -2333,7 +2348,7 @@ app.whenReady().then(async () => {
       mediaInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-video"]');
+    window.__menu.clickInsert('insert-video');
     await new Promise(r => setTimeout(r, 150));
 
     const order = () => Array.from(document.querySelectorAll('.diary-block'))
@@ -2466,7 +2481,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 120));
 
     const mediaInput = document.getElementById('diary-media');
@@ -2476,7 +2491,7 @@ app.whenReady().then(async () => {
       mediaInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-video"]');
+    window.__menu.clickInsert('insert-video');
     await new Promise(r => setTimeout(r, 150));
 
     const order = () => Array.from(document.querySelectorAll('.diary-block'))
@@ -2638,7 +2653,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 200));
 
     const items = Array.from(document.querySelectorAll('.diary-gallery-item'));
@@ -2748,7 +2763,7 @@ app.whenReady().then(async () => {
       fileInput.dispatchEvent(new Event('change'));
     };
     window.__menu.open(ta);
-    window.__menu.click('[data-ctx-act="insert-image"]');
+    window.__menu.clickInsert('insert-image');
     await new Promise(r => setTimeout(r, 150));
 
     // Swap the two blocks: the gallery goes above the words.
@@ -2796,6 +2811,155 @@ app.whenReady().then(async () => {
     cardOrderResult.cardBlocks.length === 2
     && cardOrderResult.cardBlocks[0].includes('gallery')
     && cardOrderResult.cardBlocks[1].includes('text'));
+
+  // ---- 3d. Every block can hold every kind of block --------------------
+  //
+  // The insertions used to be spread over three menus: a text block could
+  // take pictures and media but no other paragraph, a gallery could take
+  // nothing but text, and a media block could take anything. So a
+  // paragraph could not be dropped under a gallery, and a picture could
+  // not follow a picture.
+  //
+  // Now EVERY block's menu carries the same insertions — a paragraph, a
+  // picture, a movie, a sound — each of them above and below the block
+  // that was pressed. This section proves that, and that each insertion
+  // really lands where it was asked to.
+  console.log('\n== 任意块插入任意块 ==');
+  const anyInsertResult = await evalIn(win, `
+    window.__testRows.clear();
+    window.__testUploads.clear();
+
+    await window.__editor.render({}, {});
+    await new Promise(r => setTimeout(r, 80));
+
+    // Build a document with one block of each kind: a paragraph, a
+    // picture and a movie.
+    const ta = document.querySelector('.diary-block-text');
+    ta.value = '第一段。';
+    ta.focus();
+    ta.dispatchEvent(new Event('input'));
+
+    const fileInput = document.getElementById('diary-photos');
+    fileInput.click = () => {
+      const file = new File([new Uint8Array([1,2,3])], 'one.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+      fileInput.dispatchEvent(new Event('change'));
+    };
+    window.__menu.open(ta);
+    window.__menu.clickInsert('insert-image');
+    await new Promise(r => setTimeout(r, 120));
+
+    const mediaInput = document.getElementById('diary-media');
+    mediaInput.click = () => {
+      const file = new File([new Uint8Array([4,5,6])], 'clip.mp4', { type: 'video/mp4' });
+      Object.defineProperty(mediaInput, 'files', { value: [file], configurable: true });
+      mediaInput.dispatchEvent(new Event('change'));
+    };
+    window.__menu.open(ta);
+    window.__menu.clickInsert('insert-video');
+    await new Promise(r => setTimeout(r, 150));
+
+    const order = () => Array.from(document.querySelectorAll('.diary-block'))
+      .map(b => b.dataset.blockType);
+
+    // The MENU of each kind of block: it must carry every insertion, each
+    // of them twice — once above, once below.
+    const menus = {};
+    const probe = (name, el) => {
+      if (!el) return;
+      const items = window.__menu.open(el);
+      const byAct = {};
+      for (const i of items) {
+        if (!i.act.startsWith('insert-') && i.act !== 'record-audio') continue;
+        byAct[i.act] = byAct[i.act] || [];
+        byAct[i.act].push(i.value);
+      }
+      menus[name] = byAct;
+    };
+    probe('text', document.querySelector('.diary-block-text'));
+    probe('gallery', document.querySelector('.diary-block-gallery'));
+    probe('video', document.querySelector('.diary-block-video'));
+
+    // The INSERTIONS themselves. A paragraph goes in without a file, so
+    // it can be placed right away.
+    const startOrder = order();
+
+    // A paragraph above the picture. The picture is the second block.
+    window.__menu.open(document.querySelector('.diary-block-gallery'));
+    window.__menu.clickInsert('insert-text', 'before');
+    await new Promise(r => setTimeout(r, 60));
+    const afterTextBefore = order();
+
+    // A picture above the movie: a gallery right after the text block
+    // that was pressed. The movie is the last block.
+    window.__menu.open(document.querySelector('.diary-block-video'));
+    window.__menu.clickInsert('insert-image', 'before');
+    await new Promise(r => setTimeout(r, 150));
+    const afterImageBefore = order();
+
+    // A movie above the paragraph: a media block goes in beside the
+    // text block that was pressed.
+    window.__menu.open(document.querySelectorAll('.diary-block-text')[0]);
+    window.__menu.clickInsert('insert-video', 'before');
+    await new Promise(r => setTimeout(r, 150));
+    const afterVideoBefore = order();
+
+    // A picture below a picture — the case that could not be done at
+    // all before. The picture is the second block of the document now.
+    const galleryEl = document.querySelectorAll('.diary-block-gallery')[1];
+    window.__menu.open(galleryEl);
+    window.__menu.clickInsert('insert-image', 'after');
+    await new Promise(r => setTimeout(r, 150));
+    const afterImageAfter = order();
+
+    // A paragraph below a picture.
+    window.__menu.open(document.querySelectorAll('.diary-block-gallery')[1]);
+    window.__menu.clickInsert('insert-text', 'after');
+    await new Promise(r => setTimeout(r, 60));
+    const afterTextAfter = order();
+
+    return {
+      startOrder, menus,
+      afterTextBefore, afterImageBefore, afterVideoBefore,
+      afterImageAfter, afterTextAfter,
+    };
+  `);
+
+  // Every kind of block's menu carries the same insertions, each of them
+  // with a door above and a door below.
+  checkTrue('the insertion probe ran', !!anyInsertResult && !anyInsertResult.__threw,
+    anyInsertResult && anyInsertResult.__threw);
+  for (const kind of ['text', 'gallery', 'video']) {
+    const m = (anyInsertResult.menus && anyInsertResult.menus[kind]) || {};
+    check('the ' + kind + ' block offers every insertion',
+      ['insert-text', 'insert-image', 'insert-video', 'insert-audio',
+       'record-audio'].every(a => Array.isArray(m[a])), true);
+    check('the ' + kind + ' block offers each insertion above and below',
+      ['insert-text', 'insert-image', 'insert-video', 'insert-audio',
+       'record-audio']
+        .every(a => m[a] && m[a].sort().join(',') === 'after,before'), true);
+  }
+  check('the document starts with a paragraph, a movie and a picture',
+    anyInsertResult.startOrder, ['text', 'video', 'gallery']);
+  // The insertions really land where they were asked to. The document
+  // starts as a paragraph, a movie and a picture — the movie landed right
+  // after the paragraph it was inserted under, the way a movie always
+  // lands beside the block it was asked for.
+  check('a paragraph goes in above the picture',
+    anyInsertResult.afterTextBefore, ['text', 'video', 'text', 'gallery']);
+  check('a picture goes in above the movie',
+    anyInsertResult.afterImageBefore, ['text', 'gallery', 'video', 'text', 'gallery']);
+  check('a movie goes in above the paragraph',
+    anyInsertResult.afterVideoBefore,
+    ['video', 'text', 'gallery', 'video', 'text', 'gallery']);
+  check('a picture goes in below a picture',
+    anyInsertResult.afterImageAfter,
+    ['video', 'text', 'gallery', 'video', 'text', 'gallery', 'gallery']);
+  check('a paragraph goes in below a picture',
+    anyInsertResult.afterTextAfter,
+    ['video', 'text', 'gallery', 'video', 'text', 'gallery', 'text', 'gallery']);
+
+  // ---- 3d. Every block can hold every kind of block --------------------
 
   console.log(`\n== ${pass} passed, ${fail} failed ==\n`);
   cleanup(win, fail === 0 ? 0 : 1);
