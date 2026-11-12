@@ -298,6 +298,9 @@ function rerenderList() {
     const scroller = document.querySelector('.content');
     if (scroller) scroller.scrollTop = 0;
   });
+  // The frames are new nodes after every repaint, so the watcher follows
+  // the ones that are on the page now.
+  watchCardCovers();
 }
 
 // A card in select mode: the same card, with a checkbox on its title bar.
@@ -522,14 +525,16 @@ function applyPhotos() {
         const app = document.getElementById('app');
         if (!app) return;
         app.querySelectorAll(`img[data-photo-id="${CSS.escape(id)}"]`).forEach((imgEl) => {
-          if (imgEl.src !== url) {
-            imgEl.src = url;
-            // The picture's own shape is known once the bytes are
-            // decoded — that is what the mapping of the cover is placed
-            // against, so the mapping is placed again then.
+          if (imgEl.src !== url) imgEl.src = url;
+          // The picture's own shape is known once the bytes are decoded
+          // — that is what the mapping of the cover is placed against, so
+          // the mapping is placed again then. A card that was drawn again
+          // has a new picture node whose bytes may still be on their way.
+          if (imgEl.complete && imgEl.naturalWidth) {
+            placeCardCover(imgEl);
+          } else {
             imgEl.addEventListener('load', () => placeCardCover(imgEl), { once: true });
           }
-          if (imgEl.complete && imgEl.naturalWidth) placeCardCover(imgEl);
         });
       });
     }
@@ -945,6 +950,28 @@ function cardGalleryHtml(b) {
 function applyCardCovers() {
   for (const img of document.querySelectorAll('.memorial-card-frame img')) {
     if (img.complete && img.naturalWidth) placeCardCover(img);
+  }
+}
+
+// Watch the cards' frames.
+//
+// The mapping is measured against the frame's own size, and a frame has
+// no size until the card is laid out — a mapping placed against a frame
+// with no size is dropped, and the picture would be drawn plain. The
+// watcher places it as soon as the frame has its size, and keeps it right
+// when the frame changes size later.
+let cardCoverWatcher = null;
+
+function watchCardCovers() {
+  if (cardCoverWatcher) cardCoverWatcher.disconnect();
+  cardCoverWatcher = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const img = entry.target.querySelector('img');
+      if (img) placeCardCover(img);
+    }
+  });
+  for (const frame of document.querySelectorAll('.memorial-card-frame')) {
+    cardCoverWatcher.observe(frame);
   }
 }
 

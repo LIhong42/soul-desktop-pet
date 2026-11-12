@@ -874,6 +874,10 @@ function buildGalleryItem(block, photo) {
   // The picture's own size arrives with the bytes. It is what the
   // default mapping is worked out from.
   img.addEventListener('load', () => learnPhotoSize(photo, img));
+  // The frame's size is what the mapping is measured against, and the
+  // frame has no size until the gallery is in the page — the watcher
+  // places the mapping then.
+  watchCoverFrame(frame, photo);
   frame.appendChild(img);
 
   const del = document.createElement('button');
@@ -963,6 +967,39 @@ function applyPhotoCover(photo) {
   img.style.top = '';
 }
 
+// The mapping is worked out against the frame's own size — and the frame
+// only has a size once the gallery is in the page. The gallery is built
+// before it is put there, so the mapping is placed against a frame with
+// no size, which leaves the picture drawn plain. The watcher puts the
+// mapping back as soon as the frame has its real size, and keeps it
+// right when the frame changes size later (a wider window, a photo
+// dragged to a new width).
+const coverWatcher = new ResizeObserver((entries) => {
+  for (const entry of entries) {
+    const photo = entry.target.__coverPhoto;
+    if (photo) applyPhotoCover(photo);
+  }
+});
+
+// The frames the watcher keeps an eye on. A frame that has left the page
+// is let go, so the watcher does not hold on to the pictures of a page
+// that is gone.
+const watchedFrames = new Set();
+
+function watchCoverFrame(frame, photo) {
+  frame.__coverPhoto = photo;
+  coverWatcher.observe(frame);
+  watchedFrames.add(frame);
+}
+
+function pruneCoverFrames() {
+  for (const frame of watchedFrames) {
+    if (frame.isConnected) continue;
+    coverWatcher.unobserve(frame);
+    watchedFrames.delete(frame);
+  }
+}
+
 // The cover a photo shows when the user has not chosen one: the closest
 // allowed ratio, centred, at the widest zoom.
 //
@@ -977,7 +1014,12 @@ function defaultCoverFor(photo) {
 // out its default mapping the first time.
 function learnPhotoSize(photo, img) {
   if (!img || !img.naturalWidth || !img.naturalHeight) return;
-  if (photo.naturalW === img.naturalWidth && photo.naturalH === img.naturalHeight) return;
+  if (photo.naturalW === img.naturalWidth && photo.naturalH === img.naturalHeight) {
+    // The size is known already, but the mapping may not be: the frame
+    // had no size when the picture arrived. Put the mapping in again.
+    applyPhotoCover(photo);
+    return;
+  }
   photo.naturalW = img.naturalWidth;
   photo.naturalH = img.naturalHeight;
   // A photo the user has not given a cover of its own gets the default
@@ -1898,6 +1940,8 @@ function renderBlocks() {
     }
     host.appendChild(wrap);
   }
+  // The frames of the previous page are gone — let the watcher go of them.
+  pruneCoverFrames();
   // An empty document still needs one text block to type into.
   if (pageState.blocks.length === 0) {
     pageState.blocks.push(makeTextBlock(''));
