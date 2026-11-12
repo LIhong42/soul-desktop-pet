@@ -820,45 +820,49 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   color: var(--muted);
 }
 
-/* Photo lightbox. Appended to <body> on demand and reused across opens.
-   Click on the backdrop or the ✕ closes; Escape also closes. The .open
-   class toggles display so we don't keep the (potentially heavy) img in
-   the layout tree when not in use. */
-.photo-lightbox {
+/* ---- The cover editor ---------------------------------------------------
+   Clicking a picture in a gallery opens the REAL picture, with the frame
+   that the gallery will show lying on top of it. The frame is dragged to
+   move the picture, the wheel scales it, and the three buttons in the
+   corner change its shape. */
+.cover-editor {
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.75);
-  z-index: 300;
+  background: rgba(0, 0, 0, 0.82);
+  z-index: 320;
   justify-content: center;
   align-items: center;
 }
-.photo-lightbox.open {
-  display: flex;
-}
-.photo-lightbox-card {
+.cover-editor.open { display: flex; }
+.cover-editor-card {
   position: relative;
-  max-width: 92vw;
-  max-height: 92vh;
+  width: min(92vw, 980px);
+  height: min(92vh, 760px);
   background: var(--panel);
-  border-radius: 10px;
-  padding: 14px;
+  border-radius: 12px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
 }
-.photo-lightbox-card img {
-  max-width: 100%;
-  max-height: 80vh;
-  object-fit: contain;
-  border-radius: 6px;
+.cover-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
-.photo-lightbox-x {
-  position: absolute;
-  top: 6px;
-  right: 6px;
+.cover-editor-title {
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cover-editor-x {
   background: rgba(0, 0, 0, 0.6);
-  color: white;
+  color: #fff;
   border: none;
   border-radius: 999px;
   width: 28px;
@@ -867,11 +871,90 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
   font-size: 14px;
   line-height: 28px;
   padding: 0;
+  flex: 0 0 auto;
 }
-.photo-lightbox-caption {
-  text-align: center;
+/* The stage holds the picture; the frame lies on top of it. */
+.cover-editor-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cover-editor-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+/* The frame: the rectangle of the picture the gallery will show. */
+.cover-editor-frame {
+  position: absolute;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  cursor: move;
+  touch-action: none;
+}
+.cover-editor-frame.dragging { cursor: grabbing; }
+/* The frame's corners, so the shape it holds is readable at a glance. */
+.cover-editor-frame::before,
+.cover-editor-frame::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+}
+.cover-editor-frame::before {
+  top: -2px;
+  left: -2px;
+  border-right: none;
+  border-bottom: none;
+}
+.cover-editor-frame::after {
+  bottom: -2px;
+  right: -2px;
+  border-left: none;
+  border-top: none;
+}
+.cover-editor-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.cover-editor-ratios {
+  display: flex;
+  gap: 6px;
+}
+.cover-editor-ratio {
+  border: 1px solid var(--rule, rgba(0, 0, 0, 0.15));
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.cover-editor-ratio.selected {
+  background: var(--accent, #4a7dd6);
+  border-color: var(--accent, #4a7dd6);
+  color: #fff;
+}
+.cover-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+.cover-editor-hint {
   color: var(--muted);
   font-size: 12px;
+  text-align: center;
 }
 
 /* Memorial event form: multi-contact chip selector.
@@ -2368,21 +2451,31 @@ body.diary-block-dragging {
      text selection around it. */
   user-select: none;
 }
-.diary-gallery-item img {
-  display: block;
-  /* The photo fills its slot and keeps its own aspect ratio (no
-     cropping). The width is what the layout or the drag handle set. */
+/* The FRAME is the picture's shape: one of the five allowed ratios —
+   16:9, 4:3, 1:1, 3:4 or 9:16. It is set on the element by the editor,
+   from the photo's cover. The picture fills the frame, so a row of
+   pictures of different shapes has no holes in it. */
+.diary-gallery-frame {
+  position: relative;
   width: 100%;
-  height: auto;
-  max-height: 1200px;
-  object-fit: contain;
+  overflow: hidden;
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.06);
+}
+.diary-gallery-item img {
+  display: block;
+  /* The picture is drawn at its own shape and slid so that the cover's
+     part of it lands on the frame — the frame is a window onto the
+     picture. The size and the place are set by the script. */
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
   /* No browser image drag — it would take the pointer over and the
      picture could not be moved. */
   -webkit-user-drag: none;
 }
-.diary-gallery-item.selected img {
+.diary-gallery-item.selected .diary-gallery-frame {
   outline: 2px solid var(--diary-muted);
   outline-offset: 2px;
 }
@@ -3579,25 +3672,29 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
      shorter than its slot shows no empty plate behind it. */
   line-height: 0;
 }
-.memorial-card-photo img {
+/* The FRAME is the picture's shape — 16:9, 4:3, 1:1, 3:4 or 9:16 —
+   exactly as the editor draws it. The picture inside it is cropped to fill
+   the frame, so the card is a miniature of the page the user wrote and a
+   row of pictures has no holes in it. */
+.memorial-card-frame {
+  position: relative;
   display: block;
   width: 100%;
-  /* The photo keeps its OWN aspect ratio, exactly as it does on the
-     editor's page — no forced frame, no re-cropping. Forcing every
-     picture into a 4:3 box is what made the card look like a pile of
-     unrelated pieces: a portrait photo was cut in half while a
-     landscape one was padded, so the page stopped reading as the
-     document the user wrote.
-
-     The picture is simply drawn smaller, the way the whole page is
-     drawn smaller. When the card's edge cuts it, it is cut the way a
-     photo of a page is cut — the top of the picture shows, the rest
-     runs off the bottom of the sheet. */
-  height: auto;
-  max-height: none;
-  object-fit: fill;
+  overflow: hidden;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.06);
+}
+.memorial-card-photo img {
+  display: block;
+  /* The picture is drawn at its own shape and slid so that the cover's
+     part of it lands on the frame. The size and the place are set by the
+     script. */
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 /* A movie or a sound inside the card.

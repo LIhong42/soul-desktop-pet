@@ -80,6 +80,10 @@ import {
   DIARY_GALLERY_LAYOUTS, galleryLayout, defaultLayoutFor, photoCssWidth,
   parseDiaryContent,
 } from '../diary_layout.js';
+import {
+  COVER_RATIOS, DEFAULT_COVER_RATIO, coverFrameStyle, coverRect,
+  coverAspectRatio, defaultCover, normalizeCover,
+} from '../diary_cover.js';
 import { openMemorialMetaDialog } from '../diary_meta_form.js';
 import { openAudioRecorderDialog } from '../diary_audio_recorder.js';
 import { normalizeMemorialKind } from '../diary_kinds.js';
@@ -193,36 +197,305 @@ function themePickerHtml(selectedId) {
   `;
 }
 
-// ---- Lightbox ------------------------------------------------------------
+// ---- The cover editor ----------------------------------------------------
 //
-// Same shared-modal pattern the memorial edit page uses: one element,
-// reopened by swapping the <img src>.
+// Clicking a picture opens the REAL picture — the whole file, uncropped —
+// so the user can pick the part of it the gallery should show.
+//
+// On the picture sits the FRAME: the rectangle the gallery will show. It
+// has one of the three allowed shapes, and it can be dragged anywhere and
+// scaled with the wheel. The three buttons in the corner change its
+// shape; 保存 hands the frame back to the gallery.
+//
+// The frame's numbers are relative — where its centre sits in the
+// picture (0..1) and how much of the picture it covers — so the same
+// frame works at every size the picture is drawn at.
+//
+// One element, reopened by swapping the picture and the frame's numbers.
 
-let lightboxEl = null;
-function openLightbox(url, altName) {
-  if (!lightboxEl) {
-    lightboxEl = document.createElement('div');
-    lightboxEl.id = 'photo-lightbox';
-    lightboxEl.className = 'photo-lightbox';
-    lightboxEl.innerHTML = `
-      <div class="photo-lightbox-card">
-        <button type="button" class="photo-lightbox-x" title="关闭">✕</button>
-        <img id="photo-lightbox-img" alt=""/>
-        <div class="photo-lightbox-caption" id="photo-lightbox-caption"></div>
-      </div>
-    `;
-    document.body.appendChild(lightboxEl);
-    const close = () => { lightboxEl.classList.remove('open'); };
-    lightboxEl.querySelector('.photo-lightbox-x').onclick = close;
-    lightboxEl.addEventListener('click', (e) => { if (e.target === lightboxEl) close(); });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && lightboxEl.classList.contains('open')) close();
-    });
+let coverEl = null;
+
+// Open the cover editor for one photo of a gallery.
+//
+// The picture may not be in the page yet — its bytes are fetched on the
+// spot — so the editor opens once they are here.
+async function openCoverEditor(block, photo) {
+  const url = photo.previewUrl || memorialPhotoUrl(photo.photoId);
+  if (!url) {
+    const fetched = await fetchPhotoDataUrl(photo.photoId);
+    if (!fetched) {
+      toast('图片读不出来');
+      return;
+    }
+    openCoverEditorWith(block, photo, fetched);
+    return;
   }
-  lightboxEl.querySelector('#photo-lightbox-img').src = url;
-  lightboxEl.querySelector('#photo-lightbox-img').alt = altName || '';
-  lightboxEl.querySelector('#photo-lightbox-caption').textContent = altName || '';
-  lightboxEl.classList.add('open');
+  openCoverEditorWith(block, photo, url);
+}
+
+function openCoverEditorWith(block, photo, url) {
+  const el = ensureCoverEl();
+
+  // The frame the editor starts from: the photo's own cover, or the
+  // default mapping for its shape.
+  const start = photo.cover || defaultCoverFor(photo);
+  const state = {
+    block,
+    photo,
+    url,
+    cover: { ratio: start.ratio, x: start.x, y: start.y, zoom: start.zoom },
+    // The picture's own size, learned when it is decoded.
+    picW: photo.naturalW || 0,
+    picH: photo.naturalH || 0,
+  };
+
+  el.querySelector('.cover-editor-img').src = url;
+  el.querySelector('.cover-editor-img').alt = photo.name || '';
+  el.querySelector('.cover-editor-title').textContent = photo.name || '';
+  el.classList.add('open');
+
+  const img = el.querySelector('.cover-editor-img');
+  const onLoad = () => {
+    state.picW = img.naturalWidth || state.picW;
+    state.picH = img.naturalHeight || state.picH;
+    // A photo whose size was unknown when the editor opened gets its
+    // default mapping now that the size is known.
+    if (!photo.cover && state.picW && state.picH) {
+      state.cover = defaultCover(state.picW, state.picH);
+    }
+    renderCoverEditor(el, state);
+  };
+  if (img.complete && img.naturalWidth) onLoad();
+  else {
+    img.addEventListener('load', onLoad, { once: true });
+    // The bytes may already be in the cache, so the image may already be
+    // there without a new load event.
+    setTimeout(onLoad, 0);
+  }
+  // The frame is dragged and the wheel zooms it. The listeners are bound
+  // once — the editor element is built once — and they act on the state
+  // of the picture that is open.
+  if (!coverEl.dataset.dragBound) {
+    coverEl.dataset.dragBound = '1';
+    bindCoverDrag(coverEl);
+  }
+  renderCoverEditor(el, state);
+}
+
+// Build the editor's DOM once.
+function ensureCoverEl() {
+  if (coverEl) return coverEl;
+  coverEl = document.createElement('div');
+  coverEl.id = 'cover-editor';
+  coverEl.className = 'cover-editor';
+  coverEl.innerHTML = `
+    <div class="cover-editor-card">
+      <div class="cover-editor-head">
+        <span class="cover-editor-title"></span>
+        <button type="button" class="cover-editor-x" title="关闭">✕</button>
+      </div>
+      <div class="cover-editor-stage">
+        <img class="cover-editor-img" alt=""/>
+        <div class="cover-editor-frame"></div>
+      </div>
+      <div class="cover-editor-foot">
+        <div class="cover-editor-ratios"></div>
+        <div class="cover-editor-actions">
+          <button type="button" class="btn cover-editor-reset">重置</button>
+          <button type="button" class="btn cover-editor-cancel">取消</button>
+          <button type="button" class="btn primary cover-editor-save">保存封面</button>
+        </div>
+      </div>
+      <div class="cover-editor-hint">拖动取景框移动画面 · 滚轮缩放 · 取景框只在原图有富余的方向上移动</div>
+    </div>
+  `;
+  document.body.appendChild(coverEl);
+
+  // The shape buttons — one per allowed ratio.
+  const ratios = coverEl.querySelector('.cover-editor-ratios');
+  ratios.innerHTML = COVER_RATIOS.map((r) => `
+    <button type="button" class="cover-editor-ratio" data-ratio="${escapeHtml(r.id)}"
+            title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</button>
+  `).join('');
+
+  coverEl.addEventListener('click', (e) => {
+    if (e.target === coverEl) closeCoverEditor();
+  });
+  coverEl.querySelector('.cover-editor-x').onclick = () => closeCoverEditor();
+  coverEl.querySelector('.cover-editor-cancel').onclick = () => closeCoverEditor();
+  coverEl.querySelector('.cover-editor-save').onclick = () => saveCoverEditor();
+  coverEl.querySelector('.cover-editor-reset').onclick = () => resetCoverEditor();
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && coverEl.classList.contains('open')) closeCoverEditor();
+  });
+  return coverEl;
+}
+
+// The editor's state, kept on the element so the listeners below can
+// reach it.
+let coverState = null;
+
+// Draw the editor: the frame on the picture, the shape buttons.
+function renderCoverEditor(el, state) {
+  coverState = state;
+  const img = el.querySelector('.cover-editor-img');
+  const frame = el.querySelector('.cover-editor-frame');
+  const stage = el.querySelector('.cover-editor-stage');
+  // The picture's own size. A picture that has not been decoded yet has
+  // no size — a placeholder shape stands in for it so the frame has
+  // something to lie on.
+  const picW = state.picW || img.naturalWidth || 800;
+  const picH = state.picH || img.naturalHeight || 600;
+
+  // The picture is drawn in the stage, scaled to fit it. The picture is
+  // shown as large as the stage allows — the user is picking a part of
+  // it, and the smaller it is drawn the harder that is to do.
+  const stageRect = stage.getBoundingClientRect();
+  const scale = Math.min(stageRect.width / picW, stageRect.height / picH) || 1;
+  const dispW = picW * scale;
+  const dispH = picH * scale;
+  img.style.width = dispW + 'px';
+  img.style.height = dispH + 'px';
+
+  // The frame on the drawn picture — the very rectangle the frame shows,
+  // so what the user moves is what they get.
+  const rect = coverRect(picW, picH, state.cover);
+  const fw = rect.width * scale;
+  const fh = rect.height * scale;
+
+  frame.style.width = fw + 'px';
+  frame.style.height = fh + 'px';
+  // The stage is the positioning context; the picture is centred in it.
+  frame.style.left = (stage.clientWidth - dispW) / 2 + rect.left * scale + 'px';
+  frame.style.top = (stage.clientHeight - dispH) / 2 + rect.top * scale + 'px';
+
+  // The shape buttons show which shape is in use.
+  for (const btn of el.querySelectorAll('.cover-editor-ratio')) {
+    btn.classList.toggle('selected', btn.dataset.ratio === state.cover.ratio);
+  }
+}
+
+// Move the frame with the pointer. The frame is dragged; the picture
+// stays where it is.
+//
+// The frame's TOP-LEFT corner is what follows the pointer — the user
+// pushes the frame itself, not the middle of it. The stored cover keeps
+// the frame's CENTRE, so the corner is turned back into a centre after
+// every move.
+//
+// The listeners are bound once — the editor element is built once — and
+// they act on the picture that is open, which is `coverState`.
+function bindCoverDrag(el) {
+  const frame = el.querySelector('.cover-editor-frame');
+  const stage = el.querySelector('.cover-editor-stage');
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+
+  const onDown = (e) => {
+    const state = coverState;
+    if (!state) return;
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    const rect = coverRect(state.picW || 800, state.picH || 600, state.cover);
+    startLeft = rect.left;
+    startTop = rect.top;
+    frame.classList.add('dragging');
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  const onMove = (e) => {
+    const state = coverState;
+    if (!dragging || !state) return;
+    const img = el.querySelector('.cover-editor-img');
+    const dispW = img.offsetWidth || 1;
+    const dispH = img.offsetHeight || 1;
+    const picW = state.picW || 800;
+    const picH = state.picH || 600;
+    const rect = coverRect(picW, picH, state.cover);
+    const left = startLeft + (e.clientX - startX) / dispW * picW;
+    const top = startTop + (e.clientY - startY) / dispH * picH;
+    state.cover.x = (left + rect.width / 2) / picW;
+    state.cover.y = (top + rect.height / 2) / picH;
+    renderCoverEditor(el, state);
+  };
+
+  const onUp = () => {
+    dragging = false;
+    frame.classList.remove('dragging');
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+  };
+
+  frame.addEventListener('pointerdown', onDown);
+
+  // The wheel zooms the frame in and out around its centre.
+  const onWheel = (e) => {
+    const state = coverState;
+    if (!state) return;
+    e.preventDefault();
+    const dir = e.deltaY < 0 ? 1 : -1;
+    state.cover.zoom = clampNum(state.cover.zoom * (dir > 0 ? 1.1 : 1 / 1.1),
+      state.cover.zoom, 1, 4);
+    renderCoverEditor(el, state);
+  };
+  stage.addEventListener('wheel', onWheel, { passive: false });
+
+  // The shape buttons.
+  for (const btn of el.querySelectorAll('.cover-editor-ratio')) {
+    btn.onclick = () => {
+      const state = coverState;
+      if (!state) return;
+      state.cover.ratio = btn.dataset.ratio;
+      // Switching the shape keeps the frame's centre: the picture stays
+      // where the user put it.
+      renderCoverEditor(el, state);
+    };
+  }
+}
+
+// Put the frame back to the default mapping for the picture's shape.
+function resetCoverEditor() {
+  const el = coverEl;
+  const state = coverState;
+  if (!el || !state) return;
+  if (state.picW && state.picH) {
+    state.cover = defaultCover(state.picW, state.picH);
+  } else {
+    state.cover = { ratio: DEFAULT_COVER_RATIO, x: 0.5, y: 0.5, zoom: 1 };
+  }
+  renderCoverEditor(el, state);
+}
+
+// Hand the frame back to the gallery and close the editor.
+function saveCoverEditor() {
+  const el = coverEl;
+  const state = coverState;
+  if (!el || !state) return;
+  state.photo.cover = normalizeCover(state.cover);
+  applyPhotoCover(state.photo);
+  closeCoverEditor();
+}
+
+function closeCoverEditor() {
+  if (!coverEl) return;
+  coverEl.classList.remove('open');
+  coverState = null;
+}
+
+function clampNum(v, fallback, min, max) {
+  if (typeof v !== 'number' || !isFinite(v)) return fallback;
+  return Math.min(max, Math.max(min, v));
 }
 
 // ---- Blocks --------------------------------------------------------------
@@ -447,17 +720,28 @@ function autoGrow(ta) {
 // pending-upload temp id; `width` is the share of the gallery's width the
 // photo takes, or null for "whatever the layout says".
 //
+// `cover` is the rectangle of the picture the photo's frame shows — see
+// src/js/diary_cover.js. It is null until the picture's own shape is
+// known; the default mapping is worked out then.
+//
+// `naturalW` / `naturalH` are the picture's own size, learned when its
+// bytes are in the page. They are what the default mapping and the
+// cover editor work from.
+//
 // The preview source is a DATA URL, not a blob: URL. The app's CSP is
 // `img-src 'self' data: file:` — a blob: URL is blocked, so a
 // createObjectURL preview would render as a broken image. Reading the
 // picked file into a data URL costs the same round trip the existing
 // photo cache already makes, and it works under the CSP.
-function makeGalleryPhoto(photoId, name, previewUrl, width) {
+function makeGalleryPhoto(photoId, name, previewUrl, width, cover) {
   return {
     photoId,
     name: name || '',
     previewUrl: previewUrl || null,
     width: (typeof width === 'number' && isFinite(width) && width > 0) ? width : null,
+    cover: normalizeCover(cover),
+    naturalW: 0,
+    naturalH: 0,
     el: null,
   };
 }
@@ -563,12 +847,22 @@ function handleGalleryMenuAction(block, act, value, photo) {
   }
 }
 
-// Build the DOM of one photo in a gallery: the picture, a delete button
-// and the handle the user drags to resize it.
+// Build the DOM of one photo in a gallery: the frame, the picture inside
+// it, a delete button and the handle the user drags to resize it.
+//
+// The FRAME is the picture's shape — one of the three allowed ratios —
+// and the picture inside it is drawn to COVER the frame. The frame is
+// what fills the row: pictures of different shapes sit side by side
+// without leaving a hole between them, because every frame is a
+// rectangle and the picture fills its own.
 function buildGalleryItem(block, photo) {
   const item = document.createElement('div');
   item.className = 'diary-gallery-item';
   item.dataset.photoId = photo.photoId;
+
+  const frame = document.createElement('div');
+  frame.className = 'diary-gallery-frame';
+  item.appendChild(frame);
 
   const img = document.createElement('img');
   img.alt = photo.name || '';
@@ -577,7 +871,10 @@ function buildGalleryItem(block, photo) {
   // take the pointer over, and the page would never hear about the drag —
   // so the picture could not be moved.
   img.draggable = false;
-  item.appendChild(img);
+  // The picture's own size arrives with the bytes. It is what the
+  // default mapping is worked out from.
+  img.addEventListener('load', () => learnPhotoSize(photo, img));
+  frame.appendChild(img);
 
   const del = document.createElement('button');
   del.type = 'button';
@@ -615,8 +912,7 @@ function buildGalleryItem(block, photo) {
   };
   item.ondblclick = () => {
     if (block.dragging) return;
-    const url = photo.previewUrl || memorialPhotoUrl(photo.photoId);
-    if (url) openLightbox(url, photo.name);
+    openCoverEditor(block, photo);
   };
 
   // Pressing a photo starts a drag that reorders the gallery. The drag
@@ -630,6 +926,64 @@ function buildGalleryItem(block, photo) {
   // pointer and the picture could not be moved.
   item.addEventListener('dragstart', (e) => e.preventDefault());
   return item;
+}
+
+// The frame's shape, and the mapping of the picture inside it.
+//
+// The frame's ratio is the photo's own cover — the one the user picked,
+// or the default mapping worked out from the picture's shape.
+function applyPhotoCover(photo) {
+  if (!photo.el) return;
+  const frame = photo.el.querySelector('.diary-gallery-frame');
+  const img = photo.el.querySelector('img');
+  if (!frame || !img) return;
+
+  const cover = photo.cover || defaultCoverFor(photo);
+  frame.style.aspectRatio = coverAspectRatio(cover.ratio);
+  frame.dataset.ratio = cover.ratio;
+
+  // The picture is drawn so that it fills the frame, with the cover's
+  // part of it showing. Without the picture's own size the mapping
+  // cannot be placed, so the picture is drawn plain until it is known.
+  if (photo.naturalW && photo.naturalH) {
+    // The frame's OWN size, in the page's own units.
+    const style = coverFrameStyle(photo.naturalW, photo.naturalH, cover,
+      frame.clientWidth, frame.clientHeight);
+    if (style) {
+      img.style.width = style.imgWidth + 'px';
+      img.style.height = style.imgHeight + 'px';
+      img.style.left = style.imgLeft + 'px';
+      img.style.top = style.imgTop + 'px';
+      return;
+    }
+  }
+  img.style.width = '';
+  img.style.height = '';
+  img.style.left = '';
+  img.style.top = '';
+}
+
+// The cover a photo shows when the user has not chosen one: the closest
+// allowed ratio, centred, at the widest zoom.
+//
+// A picture whose size is not known yet gets the default ratio — the
+// mapping is worked out again as soon as the bytes are in the page.
+function defaultCoverFor(photo) {
+  if (photo.naturalW && photo.naturalH) return defaultCover(photo.naturalW, photo.naturalH);
+  return { ratio: DEFAULT_COVER_RATIO, x: 0.5, y: 0.5, zoom: 1 };
+}
+
+// Learn the picture's own size once its bytes are in the page, and work
+// out its default mapping the first time.
+function learnPhotoSize(photo, img) {
+  if (!img || !img.naturalWidth || !img.naturalHeight) return;
+  if (photo.naturalW === img.naturalWidth && photo.naturalH === img.naturalHeight) return;
+  photo.naturalW = img.naturalWidth;
+  photo.naturalH = img.naturalHeight;
+  // A photo the user has not given a cover of its own gets the default
+  // mapping for its shape.
+  if (!photo.cover) photo.cover = defaultCover(photo.naturalW, photo.naturalH);
+  applyPhotoCover(photo);
 }
 
 // Bring the gallery's DOM in line with the model: drop the photos that
@@ -650,6 +1004,7 @@ function syncGalleryEl(block) {
       items.insertBefore(photo.el, items.children[i] || null);
     }
     applyPhotoWidth(block, photo);
+    applyPhotoCover(photo);
     photo.el.classList.toggle('selected', photo.photoId === block.selectedId);
     const img = photo.el.querySelector('img');
     if (!img) return;
@@ -664,6 +1019,9 @@ function syncGalleryEl(block) {
       }
     }
     if (src && img.getAttribute('src') !== src) img.setAttribute('src', src);
+    // The picture's own size is what the mapping is worked out from. It
+    // is known once the bytes are decoded.
+    if (img.complete && img.naturalWidth) learnPhotoSize(photo, img);
   });
 }
 
@@ -712,6 +1070,11 @@ function makeReorderGhost(photo, e) {
   ghost.className = 'diary-gallery-ghost';
   const img = document.createElement('img');
   img.alt = photo.name || '';
+  // The ghost sits under the pointer. An <img> is draggable by default,
+  // and the browser's own image drag would take the gesture over — it
+  // ends the page's drag with a synthetic pointerup and the picture
+  // would snap back. So the ghost's picture is not draggable either.
+  img.draggable = false;
   const src = photo.el ? photo.el.querySelector('img').getAttribute('src') : '';
   if (src) img.setAttribute('src', src);
   ghost.appendChild(img);
@@ -1864,6 +2227,10 @@ function loadBlocks(ev) {
 }
 
 // Read the photos of a saved gallery, with their names and sizes.
+//
+// The photo's cover comes along too: a photo the user gave a cover of
+// its own keeps it; a photo without one gets the default mapping for
+// its shape, worked out as soon as its bytes are in the page.
 function loadGalleryPhotos(b) {
   const photos = [];
   for (const p of (Array.isArray(b.photos) ? b.photos : [])) {
@@ -1873,7 +2240,8 @@ function loadGalleryPhotos(b) {
       p.photo_id,
       meta ? meta.original_name : '',
       null,
-      typeof p.width === 'number' && isFinite(p.width) && p.width > 0 ? p.width : null
+      typeof p.width === 'number' && isFinite(p.width) && p.width > 0 ? p.width : null,
+      p.cover
     ));
   }
   return photos;
@@ -2241,6 +2609,19 @@ function serializeBlocks() {
         if (typeof p.width === 'number') {
           item.width = Math.round(p.width * 1000) / 1000;
         }
+        // The photo's cover: the rectangle of the picture its frame
+        // shows. A photo whose cover is still the default mapping for
+        // its own shape needs none of its own — the default is worked
+        // out again wherever the picture is drawn.
+        const cover = p.cover;
+        if (cover && !isDefaultCover(cover, p)) {
+          item.cover = {
+            ratio: cover.ratio,
+            x: Math.round(cover.x * 1000) / 1000,
+            y: Math.round(cover.y * 1000) / 1000,
+            zoom: Math.round(cover.zoom * 1000) / 1000,
+          };
+        }
         return item;
       });
       if (photos.length) {
@@ -2259,6 +2640,21 @@ function serializeBlocks() {
     }
   }
   return out;
+}
+
+// Is this cover the default mapping for the picture's own shape?
+//
+// A cover that says nothing more than the default is not stored: it is
+// worked out again wherever the picture is drawn, so the document stays
+// small and the default follows the picture if it ever changes.
+function isDefaultCover(cover, photo) {
+  if (!cover) return true;
+  if (!photo.naturalW || !photo.naturalH) return false;
+  const def = defaultCover(photo.naturalW, photo.naturalH);
+  return cover.ratio === def.ratio
+    && Math.abs(cover.x - def.x) < 0.002
+    && Math.abs(cover.y - def.y) < 0.002
+    && Math.abs(cover.zoom - def.zoom) < 0.002;
 }
 
 // The plain-text body. The search index and the album export both read

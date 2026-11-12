@@ -6,7 +6,9 @@
 //
 //   { type: 'text',   text: '…' }
 //   { type: 'gallery', layout: 'one' | 'two' | 'three' | 'grid',
-//     photos: [{ photo_id: '…', width: 0.5 }] }
+//     photos: [{ photo_id: '…', width: 0.5,
+//                cover: { ratio: '16:9'|'4:3'|'1:1'|'3:4'|'9:16',
+//                         x, y, zoom } }] }
 //   { type: 'video',  media_id: '…', poster_id: '…'|null, width: 1 }
 //   { type: 'audio',  media_id: '…' }
 //
@@ -24,6 +26,12 @@
 // the SAME gallery as a thumbnail inside a card. If the two disagreed
 // about a layout's width, the card would not be a miniature of the page
 // the user wrote — so the table lives here, once, and both read it.
+//
+// A photo's COVER — the rectangle of the picture its frame shows — lives
+// in src/js/diary_cover.js. This module reads it out of the document and
+// hands it on; the editor and the list card both need it.
+
+import { normalizeCover } from './diary_cover.js';
 
 export const DIARY_GALLERY_LAYOUTS = [
   { id: 'one',   name: '单图', width: 1 },
@@ -125,6 +133,11 @@ function normalizeBlocks(parsed) {
         if (typeof p.width === 'number' && isFinite(p.width) && p.width > 0) {
           photo.width = Math.min(1, Math.max(0.06, p.width));
         }
+        // The photo's cover: the rectangle of the picture its frame
+        // shows. A photo without one gets the default mapping, worked
+        // out from the picture's own shape.
+        const cover = normalizeCover(p.cover);
+        if (cover) photo.cover = cover;
         photos.push(photo);
       }
       if (!photos.length) continue;

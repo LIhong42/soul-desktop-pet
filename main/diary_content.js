@@ -5,7 +5,9 @@
 //
 //   { type: 'text',   text: '…' }
 //   { type: 'gallery', layout: 'one'|'two'|'three'|'grid',
-//     photos: [{ photo_id: '…', width: 0.5 }] }
+//     photos: [{ photo_id: '…', width: 0.5,
+//                cover: { ratio: '16:9'|'4:3'|'1:1'|'3:4'|'9:16',
+//                         x, y, zoom } }] }
 //   { type: 'video',  media_id: '…', poster_id: '…'|null, width: 1 }
 //   { type: 'audio',  media_id: '…' }
 //
@@ -47,6 +49,24 @@ const DEFAULT_GALLERY_LAYOUT = 'two';
 // The smallest share of the gallery's width a photo may take.
 const MIN_PHOTO_WIDTH = 0.06;
 
+// The shapes a photo's cover may take. The same five the editor
+// offers — see src/js/diary_cover.js.
+const COVER_RATIOS = new Set(['16:9', '4:3', '1:1', '3:4', '9:16']);
+
+// The shape a photo's cover falls back to when the document names one
+// we don't know.
+const DEFAULT_COVER_RATIO = '16:9';
+
+// The smallest share of a picture a cover's frame may show.
+const MIN_COVER_ZOOM = 1;
+
+// The biggest share. Past this the frame is a few pixels of the picture
+// blown up.
+const MAX_COVER_ZOOM = 4;
+
+// How far a cover's centre may hang out of the picture.
+const COVER_OVERSCAN = 0.5;
+
 // The widest a video may be. A video is its own row, so it may take the
 // whole width — but not more than the page is wide.
 const MAX_VIDEO_WIDTH = 1;
@@ -81,6 +101,11 @@ function normDiaryContent(input) {
         if (typeof p.width === 'number' && isFinite(p.width) && p.width > 0) {
           item.width = round3(Math.min(1, Math.max(MIN_PHOTO_WIDTH, p.width)));
         }
+        // The photo's cover: the rectangle of the picture the frame
+        // shows. A photo without one gets the default mapping, worked
+        // out from the picture's own shape.
+        const cover = normCover(p.cover);
+        if (cover) item.cover = cover;
         photos.push(item);
       }
       if (!photos.length) continue;
@@ -123,6 +148,27 @@ function parseDiaryContent(stored) {
 
 function round3(n) {
   return Math.round(n * 1000) / 1000;
+}
+
+// Validate a photo's cover.
+//
+// Returns null when the document carries no cover — the picture then
+// gets the default mapping, worked out from its own shape. A cover that
+// says only what the default would say is kept as it is: the document
+// is the user's, and dropping fields the user can see would make the
+// editor's picture of the entry differ from the stored one.
+function normCover(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const ratio = COVER_RATIOS.has(raw.ratio) ? raw.ratio : DEFAULT_COVER_RATIO;
+  const x = clampNum(raw.x, 0.5, -COVER_OVERSCAN, 1 + COVER_OVERSCAN);
+  const y = clampNum(raw.y, 0.5, -COVER_OVERSCAN, 1 + COVER_OVERSCAN);
+  const zoom = clampNum(raw.zoom, MIN_COVER_ZOOM, MIN_COVER_ZOOM, MAX_COVER_ZOOM);
+  return { ratio, x: round3(x), y: round3(y), zoom: round3(zoom) };
+}
+
+function clampNum(v, fallback, min, max) {
+  if (typeof v !== 'number' || !isFinite(v)) return fallback;
+  return Math.min(max, Math.max(min, v));
 }
 
 module.exports = {

@@ -43,6 +43,10 @@ import {
   parseDiaryContent, effectivePhotoWidth, photoCssWidth,
   galleryLayout, DEFAULT_GALLERY_LAYOUT,
 } from '../diary_layout.js';
+import {
+  coverFrameStyle, coverAspectRatio, defaultCover, normalizeCover,
+  DEFAULT_COVER_RATIO,
+} from '../diary_cover.js';
 import { memorialKindLabel } from '../diary_kinds.js';
 import {
   TIME_RANGES, kindOptions, contactOptions,
@@ -196,6 +200,10 @@ export async function render(args, params, opts = {}) {
   wireFilters();
   rerenderList();
   applyPhotos();
+  // The pictures that were already in the cache are decoded by now, so
+  // their mapping can be placed at once; the rest are placed as their
+  // bytes arrive.
+  applyCardCovers();
 
   // 静态头部按钮一次性绑定；行级 click handler 由 rerenderList() 在每次
   // 列表重绘时重新绑定，避免初次 mount 后又被覆盖。
@@ -515,11 +523,47 @@ function applyPhotos() {
         const app = document.getElementById('app');
         if (!app) return;
         app.querySelectorAll(`img[data-photo-id="${CSS.escape(id)}"]`).forEach((imgEl) => {
-          if (imgEl.src !== url) imgEl.src = url;
+          if (imgEl.src !== url) {
+            imgEl.src = url;
+            // The picture's own shape is known once the bytes are
+            // decoded — that is what the mapping of the cover is placed
+            // against, so the mapping is placed again then.
+            imgEl.addEventListener('load', () => placeCardCover(imgEl), { once: true });
+          }
+          if (imgEl.complete && imgEl.naturalWidth) placeCardCover(imgEl);
         });
       });
     }
   }
+}
+
+// Place one picture's mapping. The frame the picture sits in carries the
+// cover; the picture is drawn so that the cover's part of it lands on
+// the frame.
+function placeCardCover(img) {
+  const frame = img.closest ? img.closest('.memorial-card-frame') : null;
+  if (!frame) return;
+  let cover = null;
+  const raw = frame.getAttribute('data-cover');
+  if (raw) {
+    try { cover = normalizeCover(JSON.parse(raw)); } catch (e) { cover = null; }
+  }
+  if (!cover) cover = defaultCover(img.naturalWidth, img.naturalHeight);
+  frame.style.aspectRatio = coverAspectRatio(cover.ratio);
+  frame.dataset.ratio = cover.ratio;
+  // The frame's OWN size, in the page's own units — the card's page is
+  // scaled down as a whole, and a scaled-down size would make the
+  // picture smaller than the frame it is supposed to fill.
+  //
+  // Reading the size flushes the layout, so the frame's new shape — it
+  // may have just changed — is the one that is measured.
+  const style = coverFrameStyle(img.naturalWidth, img.naturalHeight, cover,
+    frame.clientWidth, frame.clientHeight);
+  if (!style) return;
+  img.style.width = style.imgWidth + 'px';
+  img.style.height = style.imgHeight + 'px';
+  img.style.left = style.imgLeft + 'px';
+  img.style.top = style.imgTop + 'px';
 }
 
 // Every photo id an entry carries, oldest first.
@@ -858,14 +902,29 @@ function cardMediaHtml(b, kind) {
 // photos inside it — laid out at the editor's own proportions. The whole
 // page is scaled down afterwards, so the pictures keep their shape and
 // their size relative to the paper.
+//
+// Every picture sits in a FRAME of its cover's shape — 16:9, 4:3, 1:1,
+// 3:4 or 9:16 — and the picture is cropped to fill it, exactly as the
+// editor draws it. A picture whose own shape is not known yet is drawn
+// plain; applyCardCovers() places the mapping once the bytes are decoded.
 function cardGalleryHtml(b) {
   const layout = galleryLayout(b.layout) || galleryLayout(DEFAULT_GALLERY_LAYOUT);
   const photos = b.photos.map((p) => {
     const url = memorialPhotoUrl(p.photo_id);
     const frac = effectivePhotoWidth(p, b.layout);
+    const cover = normalizeCover(p.cover);
+    const ratio = cover ? cover.ratio : DEFAULT_COVER_RATIO;
+    // The cover is carried on the frame so the mapping can be placed
+    // once the picture's own shape is known.
+    const coverAttr = cover
+      ? `data-cover="${escapeHtml(JSON.stringify(cover))}"`
+      : '';
     return `
       <div class="memorial-card-photo" style="width:${photoCssWidth(frac)};">
-        <img src="${escapeHtml(url)}" data-photo-id="${escapeHtml(p.photo_id)}" alt="" loading="lazy"/>
+        <span class="memorial-card-frame" data-ratio="${escapeHtml(ratio)}" ${coverAttr}
+              style="aspect-ratio:${coverAspectRatio(ratio)};">
+          <img src="${escapeHtml(url)}" data-photo-id="${escapeHtml(p.photo_id)}" alt="" loading="lazy"/>
+        </span>
       </div>
     `;
   }).join('');
@@ -874,6 +933,20 @@ function cardGalleryHtml(b) {
       <div class="memorial-card-gallery-items">${photos}</div>
     </div>
   `;
+}
+
+// Place the mapping of every picture on the card.
+//
+// The mapping depends on the picture's own shape, which is known only
+// once the bytes are decoded — so the frames are drawn at the default
+// ratio until then, and the mapping is placed here.
+//
+// A picture that carries a cover keeps it; a picture without one gets
+// the default mapping for its own shape.
+function applyCardCovers() {
+  for (const img of document.querySelectorAll('.memorial-card-frame img')) {
+    if (img.complete && img.naturalWidth) placeCardCover(img);
+  }
 }
 
 // Local search predicate for memorial events. We deliberately match across

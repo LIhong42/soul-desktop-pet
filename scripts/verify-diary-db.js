@@ -118,6 +118,61 @@ async function main() {
       { type: 'gallery', layout: 'nope', photos: [{ photo_id: 'a' }] },
     ]))[0].layout, 'two');
 
+  // ---- The cover of a picture ----------------------------------------
+  //
+  // The cover is the rectangle of the picture the frame shows. It is
+  // stored with the photo, and only the allowed shapes are kept.
+  console.log('\n== 封面校验 ==');
+
+  check('a cover is kept as it is',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'two', photos: [
+        { photo_id: 'a', cover: { ratio: '9:16', x: 0.3, y: 0.7, zoom: 2 } },
+      ] },
+    ]))[0].photos[0].cover,
+    { ratio: '9:16', x: 0.3, y: 0.7, zoom: 2 });
+
+  check('a photo without a cover has none',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'two', photos: [{ photo_id: 'a' }] },
+    ]))[0].photos[0].cover, undefined);
+
+  check('an unknown shape falls back to the wide one',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'two', photos: [
+        { photo_id: 'a', cover: { ratio: 'nope', x: 0.5, y: 0.5, zoom: 1 } },
+      ] },
+    ]))[0].photos[0].cover.ratio, '16:9');
+
+  check('a zoom below one is clamped up',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'two', photos: [
+        { photo_id: 'a', cover: { ratio: '1:1', x: 0.5, y: 0.5, zoom: 0.1 } },
+      ] },
+    ]))[0].photos[0].cover.zoom, 1);
+
+  check('a zoom beyond the ceiling is clamped down',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'two', photos: [
+        { photo_id: 'a', cover: { ratio: '1:1', x: 0.5, y: 0.5, zoom: 99 } },
+      ] },
+    ]))[0].photos[0].cover.zoom, 4);
+
+  check('a cover that is not an object is dropped',
+    JSON.parse(normDiaryContent([
+      { type: 'gallery', layout: 'two', photos: [{ photo_id: 'a', cover: 'wide' }] },
+    ]))[0].photos[0].cover, undefined);
+
+  // Every allowed shape must survive the main process's validation.
+  for (const ratio of ['16:9', '4:3', '1:1', '3:4', '9:16']) {
+    check(`the ${ratio} shape is kept`,
+      JSON.parse(normDiaryContent([
+        { type: 'gallery', layout: 'two', photos: [
+          { photo_id: 'a', cover: { ratio, x: 0.5, y: 0.5, zoom: 1 } },
+        ] },
+      ]))[0].photos[0].cover.ratio, ratio);
+  }
+
   check('the retired single-photo shape becomes a one-photo gallery',
     JSON.parse(normDiaryContent([{ type: 'image', photo_id: 'p1' }])),
     [{ type: 'gallery', layout: 'one', photos: [{ photo_id: 'p1' }] }]);

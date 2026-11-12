@@ -1173,9 +1173,6 @@ app.whenReady().then(async () => {
       y1: Math.round(r1.top + r1.height / 2),
     };
   `);
-  // A REAL mouse gesture through the browser's input pipeline — not a
-  // synthetic event. This is what turns into a native image drag when the
-  // picture is draggable, and the native drag swallows the pointer.
   win.webContents.sendInputEvent({
     type: 'mouseDown', x: dragSetup.x0, y: dragSetup.y0, button: 'left', clickCount: 1,
   });
@@ -1239,24 +1236,23 @@ app.whenReady().then(async () => {
     item.click();
     await new Promise(r => setTimeout(r, 20));
     const afterClick = {
-      lightboxOpen: !!document.querySelector('.photo-lightbox.open'),
+      editorOpen: !!document.querySelector('.cover-editor.open'),
       selected: !!document.querySelector('.diary-gallery-item.selected'),
     };
 
     item.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     await new Promise(r => setTimeout(r, 20));
     const afterDblClick = {
-      lightboxOpen: !!document.querySelector('.photo-lightbox.open'),
+      editorOpen: !!document.querySelector('.cover-editor.open'),
     };
 
     return { afterClick, afterDblClick };
   `);
   check('a single click does not open the picture over the page',
-    lightboxResult.afterClick.lightboxOpen, false);
+    lightboxResult.afterClick.editorOpen, false);
   check('a single click selects the photo',
     lightboxResult.afterClick.selected, true);
-  check('a double click opens the picture',
-    lightboxResult.afterDblClick.lightboxOpen, true);
+  check('a double click opens the picture', lightboxResult.afterDblClick.editorOpen, true);
 
   // ---- 8. The body never covers the decorative layer -------------------
   //
@@ -1508,6 +1504,20 @@ app.whenReady().then(async () => {
   // the same decorative strip at the bottom.
   console.log('\n== 回忆卡片 ==');
   const cardResult = await evalIn(win, `
+    // Real picture bytes, so the card shows photographs and the mapping
+    // of each cover can be placed against the picture's own shape.
+    const makePng = (w, h) => {
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      g.fillStyle = '#4a6b8a'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#ffffff'; g.beginPath();
+      g.arc(w / 2, h / 2, Math.min(w, h) / 8, 0, Math.PI * 2); g.fill();
+      return c.toDataURL('image/png');
+    };
+    window.__testPhotos.set('pc1', makePng(320, 200));
+    window.__testPhotos.set('pc2', makePng(320, 420));
+    window.__testPhotos.set('pc3', makePng(240, 240));
+
     window.__testRows.clear();
     window.__testRows.seed('card-1', {
       id: 'card-1',
@@ -1532,7 +1542,13 @@ app.whenReady().then(async () => {
     });
 
     await window.__list.render([], {});
-    await new Promise(r => setTimeout(r, 120));
+    // The pictures are read and decoded — wait for them.
+    for (let i = 0; i < 60; i++) {
+      const imgs = Array.from(document.querySelectorAll('.memorial-card-photo img'));
+      if (imgs.length === 3 && imgs.every(i => i.naturalWidth)) break;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    await new Promise(r => setTimeout(r, 150));
 
     const card = document.querySelector('.memorial-card');
     const sheet = document.querySelector('.memorial-card-sheet');
@@ -1601,10 +1617,29 @@ app.whenReady().then(async () => {
       // card a thumbnail rather than a redrawing.
       pageScale: getComputedStyle(page).getPropertyValue('--card-scale').trim(),
       pageTransform: getComputedStyle(page).transform,
-      // A photo keeps its own aspect ratio: it is never re-cropped into
-      // a uniform frame.
-      photoFit: getComputedStyle(
-        document.querySelector('.memorial-card-photo img')).objectFit,
+      // A photo is drawn into a FRAME of one of the allowed shapes
+      // (16:9, 4:3, 1:1, 3:4, 9:16) and cropped to fill it — the mapping
+      // of the picture the user chose on the editor's page. The picture is
+      // drawn at its own shape and slid, so it must be at least as big
+      // as the frame on both sides.
+      photoFit: (() => {
+        const frame = document.querySelector('.memorial-card-frame');
+        const img = document.querySelector('.memorial-card-photo img');
+        if (!frame || !img) return null;
+        const fr = frame.getBoundingClientRect();
+        const ir = img.getBoundingClientRect();
+        return {
+          wide: ir.width >= fr.width - 0.5,
+          tall: ir.height >= fr.height - 0.5,
+          shape: img.naturalWidth
+            ? Math.abs((ir.width / ir.height) - (img.naturalWidth / img.naturalHeight)) < 0.02
+            : true,
+        };
+      })(),
+      photoFrameRatio: (() => {
+        const frame = document.querySelector('.memorial-card-frame');
+        return frame ? frame.dataset.ratio : null;
+      })(),
       // A movie and a sound inside the card are MARKS, not live players:
       // the card is a thumbnail, and a player at that scale would be a
       // speck of controls pulling the whole file into the list page.
@@ -1686,9 +1721,17 @@ app.whenReady().then(async () => {
   checkTrue('the page is scaled down as one piece',
     cardResult.pageTransform.startsWith('matrix')
     && parseFloat(cardResult.pageScale) > 0 && parseFloat(cardResult.pageScale) < 1);
-  // A photo keeps its own shape — it is never re-cropped into a uniform
-  // frame, which is what made the card look like a pile of pieces.
-  check('a photo keeps its own aspect ratio', cardResult.photoFit, 'fill');
+  // A photo is drawn into a frame of one of the three allowed shapes and
+  // cropped to fill it. The frame is the picture's MAPPING, so a row of
+  // pictures of different shapes has no holes in it.
+  checkTrue('a photo covers its frame',
+    cardResult.photoFit && cardResult.photoFit.wide && cardResult.photoFit.tall,
+    JSON.stringify(cardResult.photoFit));
+  checkTrue('a photo keeps its own shape',
+    cardResult.photoFit && cardResult.photoFit.shape,
+    JSON.stringify(cardResult.photoFit));
+  check('the frame carries one of the allowed shapes',
+    ['16:9', '4:3', '1:1', '3:4', '9:16'].includes(cardResult.photoFrameRatio), true);
   // A movie and a sound inside the card are marks, not live players: the
   // card is a thumbnail, and a player at that scale would be a speck of
   // controls that pulled the whole file into the list page.
