@@ -13,18 +13,9 @@
 //   word/media/imageN.ext    —— 照片字节，原样打包
 //   word/styles.xml          —— 标题 / 正文的样式定义
 //
-// 两个模式：
-//   1. LAYOUT MODE：buildAlbum({ events, layout, outPath, progressCb })
-//      复用相册编辑器（src/js/pages/album_editor.js）产出的 AlbumLayout，
-//      按页面顺序输出：每页一个小节，槽位里的照片内嵌，标题 / 说明
-//      作为段落。
-//   2. LEGACY MODE：buildAlbum({ events, outPath, progressCb }) 不带
-//      layout —— 按事件分章节，字段 + 照片网格，和 PDF 的 legacy 模式
-//      对应，供「导出相册 (Word)」按钮直接使用。
-//
-// 与 PDF 的关键差异：Word 没有「画布」概念，槽位坐标（0..100 归一化）
-// 只能映射成表格来近似还原版式。所以 layout 模式下用一张两列的
-// 无边框表格承载槽位：照片槽放图片，文本槽放段落。
+// buildAlbum({ events, outPath, progressCb }) 按事件分章节输出：每个
+// 事件一个小节，先是一段字段表（地点 / 食物 / 穿搭 / 活动 / 笔记），
+// 再是照片网格（两列无边框表格）。
 
 const path = require('path');
 const fs = require('fs');
@@ -134,61 +125,6 @@ function buildZipBytes(files) {
   return Buffer.concat([...localParts, centralBuf, eocd]);
 }
 
-// ---- 主题（与 src/js/album_layouts.js、main/album_pdf.js 保持一致）------
-
-const THEMES = {
-  classic: { id: 'classic', cssVar: { bg: '#ffffff', text: '#2a2a2a', muted: '#8a8478', accent: '#d97757' } },
-  film:    { id: 'film',    cssVar: { bg: '#f5efe2', text: '#3a2e1f', muted: '#8a7a5e', accent: '#8a6a3a' } },
-  magazine:{ id: 'magazine',cssVar: { bg: '#ffffff', text: '#111111', muted: '#666666', accent: '#000000' } },
-  warm:    { id: 'warm',    cssVar: { bg: '#fff4e6', text: '#5a3a1a', muted: '#b08868', accent: '#a85530' } },
-  dark:    { id: 'dark',    cssVar: { bg: '#1a1a1a', text: '#f0e6dd', muted: '#9a8f80', accent: '#c89070' } },
-};
-
-const LAYOUT_TEMPLATES = {
-  'single-full': {
-    slots: [
-      { type: 'photo',   x: 0,  y: 0,  w: 100, h: 78 },
-      { type: 'caption', x: 0,  y: 78, w: 100, h: 22 },
-    ],
-  },
-  'big-top-text-bottom': {
-    slots: [
-      { type: 'photo',   x: 4,  y: 4,  w: 92, h: 72 },
-      { type: 'title',   x: 4,  y: 76, w: 92, h: 8 },
-      { type: 'caption', x: 4,  y: 84, w: 92, h: 12 },
-    ],
-  },
-  'split-h-text-bottom': {
-    slots: [
-      { type: 'photo',   x: 0,  y: 0,  w: 50, h: 80 },
-      { type: 'photo',   x: 50, y: 0,  w: 50, h: 80 },
-      { type: 'caption', x: 0,  y: 80, w: 100,h: 20 },
-    ],
-  },
-  'three-grid-text': {
-    slots: [
-      { type: 'photo',   x: 0,  y: 0,  w: 50, h: 40 },
-      { type: 'photo',   x: 50, y: 0,  w: 50, h: 40 },
-      { type: 'photo',   x: 0,  y: 40, w: 100,h: 40 },
-      { type: 'caption', x: 0,  y: 80, w: 100,h: 20 },
-    ],
-  },
-  'one-photo-side-cap': {
-    slots: [
-      { type: 'photo',   x: 0,  y: 0,  w: 60, h: 100 },
-      { type: 'title',   x: 62, y: 6,  w: 34, h: 14 },
-      { type: 'caption', x: 62, y: 22, w: 34, h: 72 },
-    ],
-  },
-};
-
-function getTheme(id) {
-  return THEMES[id] || THEMES.classic;
-}
-function getTemplate(id) {
-  return LAYOUT_TEMPLATES[id] || LAYOUT_TEMPLATES['single-full'];
-}
-
 // ---- 照片解析（与 main/album_pdf.js 相同的规则）--------------------------
 
 const photoRoot = () => path.join(app.getPath('appData'), 'SoulDesktopPet', 'photos');
@@ -272,9 +208,8 @@ function sniffImageSize(buf) {
       i += 2 + len;
     }
     if (!sof) return null;
-    // 方向 5..8 表示旋转了 90°，宽高互换（与 src/js/album_layouts.js
-    // 的 applyExifOrientation 一致）。PDF 那条路径靠 pdfkit 自动处理，
-    // 这里必须自己换算，否则竖拍照片在 Word 里会躺着显示。
+    // 方向 5..8 表示旋转了 90°，宽高互换。PDF 那条路径靠 pdfkit 自动
+    // 处理，这里必须自己换算，否则竖拍照片在 Word 里会躺着显示。
     const swapped = orientation >= 5 && orientation <= 8;
     return swapped
       ? { width: sof.height, height: sof.width, orientation }
@@ -343,9 +278,14 @@ function fmtDateOnly(s) {
 
 // ---- 文档构件 ------------------------------------------------------------
 
+// 相册的配色（标题 / 正文 / 弱化文字 / 强调色）。
+const THEME = {
+  cssVar: { bg: '#ffffff', text: '#2a2a2a', muted: '#8a8478', accent: '#d97757' },
+};
+
 class DocxBuilder {
   constructor(theme) {
-    this.theme = theme || getTheme('classic');
+    this.theme = theme || THEME;
     this.body = [];
     this.rels = [];        // { id, type, target, mode? }
     this.media = [];       // { name, ext, buffer }
@@ -489,7 +429,7 @@ class DocxBuilder {
 
   // ---- 表格 ----
   //
-  // 用于还原 layout 的槽位排版。cellWidths 是各列的百分比数组。
+  // 用于排版。cellWidths 是各列的百分比数组。
   // borders: false → 无边框（只用做隐形布局），true → 细灰框。
   tableStart(cellWidths, { borders = false } = {}) {
     // tblW w:type="pct" 的单位是 1/50 百分点（100% = 5000，不是 100）。
@@ -801,7 +741,7 @@ function registerImage(doc, photo, maxW, maxH) {
 
 // A4 纵向正文宽度（pt）：595.28 - 2×56.7pt(2cm) ≈ 482
 const CONTENT_W = 482;
-// legacy 模式照片网格：两列
+// 照片网格：两列
 const GRID_COLS = 2;
 const GRID_GAP_PT = 8;
 const GRID_CELL_W = (CONTENT_W - GRID_GAP_PT * (GRID_COLS - 1)) / GRID_COLS;
@@ -812,14 +752,13 @@ const GRID_CELL_W = (CONTENT_W - GRID_GAP_PT * (GRID_COLS - 1)) / GRID_COLS;
 //
 //   options: {
 //     events:   MemorialEventRowWithPhotos[]
-//     layout?:  AlbumLayout (themeId + pages[])  -- if missing, legacy mode
 //     outPath:  string
 //     progressCb: (phase, percent, note?) => void
 //   }
 //
-// Returns: { pages, events, photos, bytes, heicSkipped, mode }
+// Returns: { pages, events, photos, bytes, heicSkipped }
 async function buildAlbum(options) {
-  const { events, layout, outPath, progressCb = () => {} } = options || {};
+  const { events, outPath, progressCb = () => {} } = options || {};
   if (!Array.isArray(events)) throw new Error('buildAlbum: events required');
   if (!outPath) throw new Error('buildAlbum: outPath required');
 
@@ -843,15 +782,9 @@ async function buildAlbum(options) {
     ev.photos.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
   }
 
-  const photoIndex = new Map();
-  for (const ev of events) {
-    for (const p of (ev.photos || [])) photoIndex.set(p.id, p);
-  }
-
-  const theme = layout ? getTheme(layout.themeId) : getTheme('classic');
+  const theme = THEME;
   const doc = new DocxBuilder(theme);
 
-  const mode = layout ? 'layout' : 'legacy';
   let photosRendered = 0;
   const onPhoto = () => {
     photosRendered += 1;
@@ -859,8 +792,7 @@ async function buildAlbum(options) {
       `已嵌入 ${photosRendered} 张`);
   };
 
-  if (layout) renderLayoutMode(doc, layout, theme, photoIndex, onPhoto, events);
-  else renderLegacyMode(doc, events, theme, onPhoto);
+  renderAlbum(doc, events, theme, onPhoto);
 
   safeProgress('finalizing', 92);
 
@@ -871,12 +803,11 @@ async function buildAlbum(options) {
   const bytes = fs.statSync(outPath).size;
   safeProgress('done', 100);
   return {
-    pages: layout ? (layout.pages || []).length + 1 : events.length + 1,
+    pages: events.length + 1,
     events: events.length,
     photos: photosRendered,
     bytes,
     heicSkipped,
-    mode,
   };
 }
 
@@ -915,7 +846,7 @@ function renderCover(doc, cover, theme, events) {
   doc.pageBreak();
 }
 
-// ---- 照片网格（legacy 模式）---------------------------------------------
+// ---- 照片网格 -------------------------------------------------------------
 //
 // 按 GRID_COLS 列排照片网格。用无边框表格，宽度按单元格均分。
 
@@ -963,9 +894,9 @@ function photoAlt(p) {
   return p.original_name || path.basename(String(p.relative_path || '照片'));
 }
 
-// ---- LEGACY MODE ---------------------------------------------------------
+// ---- 正文渲染 ------------------------------------------------------------
 
-function renderLegacyMode(doc, events, theme, onPhoto) {
+function renderAlbum(doc, events, theme, onPhoto) {
   const c = theme.cssVar;
 
   // 封面
@@ -1010,174 +941,6 @@ function renderLegacyMode(doc, events, theme, onPhoto) {
     }
     doc.spacer(6);
   }
-}
-
-// ---- LAYOUT MODE ---------------------------------------------------------
-//
-// Word 没有绝对定位画布，用「每页一个 2 列表格」来还原槽位结构：
-//   - 模板槽位按 y 排序，同一行的槽位放同一行的单元格
-//   - photo 槽 → 单元格内嵌图（按槽位宽高比算显示尺寸）
-//   - title / caption 槽 → 单元格内放段落
-//   - freeTexts 浮动文本框 → 该页表格下方依次追加段落
-
-function renderLayoutMode(doc, layout, theme, photoIndex, onPhoto, events) {
-  const c = theme.cssVar;
-  const cover = layout.cover || { title: '回忆相册', subtitle: '', showStats: true };
-  renderCover(doc, cover, theme, events || []);
-
-  const pages = Array.isArray(layout.pages) ? layout.pages : [];
-  const totalPages = pages.length;
-
-  for (let i = 0; i < totalPages; i += 1) {
-    const page = pages[i];
-    const template = getTemplate(page.templateId);
-
-    doc.para(`第 ${i + 1} / ${totalPages} 页`, { style: 'Heading2', color: c.muted });
-    // 细分隔
-    doc.para('', { color: c.muted, size: 6 });
-
-    // 槽位按 type 分组：照片槽先排（图片），文本槽在后。
-    // 复刻版式的核心：把 photo 槽按 template 顺序取出，逐行放进 2 列表格。
-    // claimed 记录本页已被占用的 content 槽，避免同一个槽被两个
-    // template 槽重复引用（照片就会在文档里出现两次）。
-    const claimed = new Set();
-    const photoSlots = template.slots
-      .map((tSlot, idx) => ({ tSlot, idx, content: findContent(page, tSlot, idx, claimed) }))
-      .filter((x) => x.tSlot.type === 'photo');
-
-    if (photoSlots.length === 0) {
-      // 没有照片槽（理论上不会发生），只输出文本。
-    } else if (photoSlots.length === 1) {
-      const { tSlot, content } = photoSlots[0];
-      // 满版单图：整宽渲染
-      const cellXml = doc.captureCell(() => renderSlotCell(doc, tSlot, content, theme, photoIndex, onPhoto, CONTENT_W));
-      doc.tableStart([100]);
-      doc.tableCell(cellXml);
-      doc.tableEnd();
-    } else {
-      // 多图：按 template 里的行分组（y 相同 = 同一行）。
-      const rows = groupSlotsByRow(photoSlots);
-      for (const row of rows) {
-        const cols = row.length;
-        doc.tableStart(new Array(cols).fill(100 / cols));
-        for (const { tSlot, content } of row) {
-          const cellXml = doc.captureCell(() => renderSlotCell(doc, tSlot, content, theme, photoIndex, onPhoto, CONTENT_W / cols));
-          doc.tableCell(cellXml);
-        }
-        doc.tableEnd();
-      }
-    }
-
-    // 文本槽（title / caption）
-    for (let tIdx = 0; tIdx < template.slots.length; tIdx += 1) {
-      const tSlot = template.slots[tIdx];
-      if (tSlot.type === 'photo') continue;
-      const content = findContent(page, tSlot, tIdx, claimed);
-      const text = (content && content.text) || '';
-      if (text) renderTextSlot(doc, text, tSlot, content, theme);
-    }
-
-    // 浮动文本框
-    const fts = Array.isArray(page.freeTexts) ? page.freeTexts : [];
-    for (const ft of fts) {
-      if (!ft || !ft.text) continue;
-      doc.para(shortText(String(ft.text), 400), {
-        color: ft.color || c.text,
-        size: clamp(Number(ft.fontSize) || 12, 6, 48),
-        bold: ft.fontWeight === 'bold',
-        italic: ft.fontStyle === 'italic',
-        align: ft.textAlign || 'left',
-      });
-    }
-
-    if (i < totalPages - 1) doc.pageBreak();
-  }
-}
-
-// 把 template 的 photo 槽按 y 坐标聚成行（同一 y = 同一表格行）。
-function groupSlotsByRow(slotList) {
-  const sorted = slotList.slice().sort((a, b) => (a.tSlot.y - b.tSlot.y) || (a.tSlot.x - b.tSlot.x));
-  const rows = [];
-  let cur = null;
-  let curY = null;
-  for (const s of sorted) {
-    if (curY == null || Math.abs(s.tSlot.y - curY) > 0.01) {
-      cur = [];
-      rows.push(cur);
-      curY = s.tSlot.y;
-    }
-    cur.push(s);
-  }
-  return rows;
-}
-
-function renderSlotCell(doc, tSlot, content, theme, photoIndex, onPhoto, cellW) {
-  const c = theme.cssVar;
-  if (!content || !content.photoId || !photoIndex.has(content.photoId)) {
-    // 空槽或缺图 → 虚线感的提示文字。
-    doc.para('（空位）', { align: 'center', color: c.muted, size: 9, italic: true });
-    return;
-  }
-  const photo = photoIndex.get(content.photoId);
-  if (!isEmbeddablePhoto(photo)) {
-    doc.para(heicNote(photo), { align: 'center', color: c.muted, size: 9, italic: true });
-    return;
-  }
-  // 槽位宽高比决定图片显示框。
-  const slotAspect = (tSlot.w / tSlot.h) || 1;
-  const boxH = cellW / slotAspect;
-  const img = registerImage(doc, photo, cellW, boxH);
-  if (!img) {
-    doc.para('（图片加载失败）', { align: 'center', color: c.muted, size: 9 });
-    return;
-  }
-  doc.image(img.relId, img.drawW, img.drawH, img.srcW, img.srcH, photoAlt(photo));
-  onPhoto();
-}
-
-function renderTextSlot(doc, text, tSlot, content, theme) {
-  const c = theme.cssVar;
-  const isTitle = tSlot.type === 'title';
-  let color = c.text;
-  if (content && typeof content.color === 'string' && content.color) color = content.color;
-  const scale = (content && typeof content.fontScale === 'number' && content.fontScale > 0)
-    ? content.fontScale : 1;
-  const baseSize = isTitle ? 18 : 11;
-  doc.para(shortText(text, 400), {
-    align: (content && content.textAlign) || (isTitle ? 'center' : 'left'),
-    color,
-    size: clamp(baseSize * scale, 6, 48),
-    bold: content ? content.bold === true : isTitle,
-    italic: content ? content.italic === true : false,
-    spacingBefore: 4,
-    spacingAfter: 6,
-  });
-}
-
-// 匹配 layout 的槽位内容和 template 槽位。
-//
-// 首选按 _slotTemplate 坐标精确匹配（编辑器正常产出的布局都有）。对
-// 坐标缺失的老布局，退化成「按类型取第 n 个」——这里的 n 是该类型槽位
-// 在 template 中的出现序号，且只在该类型槽位总数不超过实际内容数量时
-// 才回退。否则同一个 photoId 会被多个槽位重复引用，同一张照片在文档
-// 里出现好几次。
-function findContent(page, tSlot, idx, claimed) {
-  if (!page || !page.slots) return null;
-  for (const s of page.slots) {
-    if (s._slotTemplate
-      && s._slotTemplate.x === tSlot.x
-      && s._slotTemplate.y === tSlot.y
-      && s._slotTemplate.w === tSlot.w
-      && s._slotTemplate.h === tSlot.h) {
-      if (claimed) claimed.add(s);
-      return s;
-    }
-  }
-  // 回退：同类型里第一个还没被占用的。
-  const used = claimed || new Set();
-  const candidate = page.slots.find((s) => s.type === tSlot.type && !used.has(s)) || null;
-  if (candidate) used.add(candidate);
-  return candidate;
 }
 
 module.exports = { buildAlbum };

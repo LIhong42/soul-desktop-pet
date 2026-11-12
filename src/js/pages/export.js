@@ -1,22 +1,18 @@
 // src/js/pages/export.js — /export page
 //
 // Filter memorial events by contact + time range, preview the matching set,
-// then export as PDF (album) or MP4 (video). Material comes strictly from
-// `memorial_events` + `memorial_event_photos`; the UI never reaches into
-// the reminder `events` table, contact avatars, or important dates.
+// then export as PDF (album), Word (album) or MP4 (video). Material comes
+// strictly from `memorial_events` + `memorial_event_photos`; the UI never
+// reaches into the reminder `events` table, contact avatars, or important
+// dates.
 //
 // State is module-level (single-page app, no concurrent renders). The
 // page subscribes to `api.on('export:progress', ...)` on mount and
 // unsubscribes when navigated away (window hashchange or before
 // re-rendering on filter change).
-//
-// Two views inside the page: 'filter' (default) and 'editor' (the
-// WYSIWYG album layout editor). The editor is mounted into a single
-// `<div id="album-editor-root">` shell and torn down on back/leave.
 import { api, escapeHtml, toast, fetchPhotoDataUrl, memorialPhotoUrl } from '../api.js';
 import { register } from '../router.js';
-import { ALL, CUSTOM, buildPresetList, applyFilter, fmtForChip, ymd } from '../export_filter.js';
-import { mountEditor, destroyEditor } from './album_editor.js';
+import { ALL, CUSTOM, buildPresetList, applyFilter, fmtForChip } from '../export_filter.js';
 
 const state = {
   contacts: [],
@@ -29,8 +25,6 @@ const state = {
   unsubscribeProgress: null,
   lastFilterKey: null,        // for de-dup
   loading: false,
-  view: 'filter',             // 'filter' | 'editor'
-  lastEditorLayout: null,     // for passing through to doExport
 };
 
 function unsubscribeIfAny() {
@@ -147,10 +141,6 @@ function renderExportProgress() {
 
 function render() {
   const app = document.getElementById('app');
-  if (state.view === 'editor') {
-    renderEditorView(app);
-    return;
-  }
   const nowGroups = buildPresetList(new Date(), 5);
   const totalEvents = state.events.length;
   const totalPhotos = state.events.reduce((acc, e) => acc + (e.photo_count || 0), 0);
@@ -220,9 +210,8 @@ function render() {
         <button class="btn" id="export-pdf-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (PDF)</button>
         <button class="btn" id="export-docx-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (Word)</button>
         <button class="btn" id="export-mp4-btn" ${exportDisabled ? 'disabled' : ''}>导出回忆视频 (MP4)</button>
-        <button class="btn" id="export-edit-btn" ${exportDisabled ? 'disabled' : ''}>编辑并导出相册</button>
       </div>
-      <p class="meta" style="margin-top:8px;">直接导出使用简单排版；Word 导出生成可编辑的图文文档（章节 + 内嵌照片）。「编辑并导出相册」可选择主题与版式、调整每页图文布局。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
+      <p class="meta" style="margin-top:8px;">直接导出使用简单排版；Word 导出生成可编辑的图文文档（章节 + 内嵌照片）。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
       ${renderExportProgress()}
     </div>
     </div>
@@ -248,71 +237,6 @@ function render() {
   wireUi();
   // Kick off async thumbnail hydration for visible rows.
   hydrateThumbnails();
-}
-
-// ---- editor view ----------------------------------------------------------
-//
-// The editor is mounted into a single container element. We tear it down
-// when the user backs out. The layout produced by the editor is stashed
-// on `state.lastEditorLayout` and passed to doExport() as the `layout`
-// argument.
-
-function renderEditorView(app) {
-  app.innerHTML = `
-    <div id="album-editor-root" class="album-editor-root"></div>
-  `;
-  const root = app.querySelector('#album-editor-root');
-  // Build the events-with-photos array expected by the editor.
-  // state.events only has summary rows; we need the full event + photos.
-  // Issue a single batched getMemorialEvent IPC.
-  Promise.all(state.events.map(async (e) => {
-    try {
-      const full = await api.memorialEvents.get(e.id);
-      return full || null;
-    } catch (err) {
-      console.error('[export] failed to load event for editor', e.id, err);
-      return null;
-    }
-  })).then((fullEvents) => {
-    const usable = fullEvents.filter(Boolean);
-    if (usable.length === 0) {
-      toast('没有可编辑的事件');
-      setView('filter');
-      return;
-    }
-    mountEditor({
-      container: root,
-      events: usable,
-      onBack: () => {
-        destroyEditor();
-        setView('filter');
-      },
-      onExport: (layout) => {
-        state.lastEditorLayout = layout;
-        doExport('pdf', { layout });
-      },
-    });
-  }).catch((err) => {
-    console.error('[export] editor mount failed', err);
-    toast('打开编辑器失败：' + (err && err.message ? err.message : err));
-    setView('filter');
-  });
-}
-
-function setView(v) {
-  state.view = v;
-  if (v !== 'editor') {
-    destroyEditor();
-  }
-  render();
-}
-
-function enterEditor() {
-  if (state.selectedEventIds.size === 0) {
-    toast('请至少选择一个事件');
-    return;
-  }
-  setView('editor');
 }
 
 function wireUi() {
@@ -398,12 +322,10 @@ function wireUi() {
       const pdfBtn = document.getElementById('export-pdf-btn');
       const docxBtn = document.getElementById('export-docx-btn');
       const mp4Btn = document.getElementById('export-mp4-btn');
-      const editBtn = document.getElementById('export-edit-btn');
       const disable = state.selectedEventIds.size === 0 || state.exporting;
       if (pdfBtn) pdfBtn.disabled = disable;
       if (docxBtn) docxBtn.disabled = disable;
       if (mp4Btn) mp4Btn.disabled = disable;
-      if (editBtn) editBtn.disabled = disable;
     };
   });
 
@@ -411,11 +333,9 @@ function wireUi() {
   const pdfBtn = document.getElementById('export-pdf-btn');
   const docxBtn = document.getElementById('export-docx-btn');
   const mp4Btn = document.getElementById('export-mp4-btn');
-  const editBtn = document.getElementById('export-edit-btn');
   if (pdfBtn) pdfBtn.onclick = () => doExport('pdf');
   if (docxBtn) docxBtn.onclick = () => doExport('docx');
   if (mp4Btn) mp4Btn.onclick = () => doExport('mp4');
-  if (editBtn) editBtn.onclick = enterEditor;
 
   // Cancel
   const cancelBtn = document.getElementById('export-cancel-btn');
@@ -471,7 +391,7 @@ async function runPreview() {
   }
 }
 
-async function doExport(kind, options = {}) {
+async function doExport(kind) {
   if (state.exporting) return;
   const ids = Array.from(state.selectedEventIds);
   if (ids.length === 0) {
@@ -481,17 +401,12 @@ async function doExport(kind, options = {}) {
   // Set up the progress card immediately so the user gets feedback
   // before the save dialog appears.
   state.exporting = { jobId: '', kind, phase: 'preparing', percent: 0, note: '准备中' };
-  // The editor view should stay visible during export so the user can see
-  // the progress card overlay. Don't re-render until the export finishes.
-  const isEditor = state.view === 'editor';
-  if (!isEditor) render();
+  render();
   try {
     const fn = kind === 'docx' ? api.export_.docx
       : kind === 'pdf' ? api.export_.pdf
         : api.export_.mp4;
-    const payload = { eventIds: ids };
-    if (options.layout) payload.layout = options.layout;
-    const r = await fn(payload);
+    const r = await fn({ eventIds: ids });
     if (!r || r.canceled) {
       state.exporting = null;
       render();

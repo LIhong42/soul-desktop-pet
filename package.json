@@ -33,7 +33,7 @@
     "shot:bg-pages": "node scripts/run-electron.js scripts/shot-bg-pages.js",
     "shot:card-life": "node scripts/run-electron.js scripts/shot-card-life.js",
     "shot:card-stats": "node scripts/run-electron.js scripts/shot-card-stats.js",
-    "test:pet-drag": "node scripts/test-pet-drag.js && node scripts/test-pet-drag-order.js && node scripts/test-pet-drag-main.js && node scripts/test-pet-resume.js && node scripts/test-pet-input-probe.js && node scripts/test-gesture-guard.js && node scripts/run-electron.js scripts/test-pet-drag-e2e.js && node scripts/run-electron.js scripts/test-pet-drag-live.js && node scripts/run-electron.js scripts/test-pet-resume-live.js && node scripts/run-electron.js scripts/test-app-relaunch.js && node scripts/run-electron.js scripts/test-album-gesture.js",
+    "test:pet-drag": "node scripts/test-pet-drag.js && node scripts/test-pet-drag-order.js && node scripts/test-pet-drag-main.js && node scripts/test-pet-resume.js && node scripts/test-pet-input-probe.js && node scripts/test-gesture-guard.js && node scripts/run-electron.js scripts/test-pet-drag-e2e.js && node scripts/run-electron.js scripts/test-pet-drag-live.js && node scripts/run-electron.js scripts/test-pet-resume-live.js && node scripts/run-electron.js scripts/test-app-relaunch.js",
     "measure:text-boxes": "node scripts/measure-text-boxes.js",
     "install:bin": "node scripts/install-electron-bin.js",
     "postinstall": "node scripts/install.js",

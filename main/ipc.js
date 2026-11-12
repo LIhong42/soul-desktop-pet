@@ -16,7 +16,6 @@ const { petRenderSize } = require('./pet_controller');
 const { buildPetState } = require('./pet_state');
 const albumPdf = require('./album_pdf');
 const albumDocx = require('./album_docx');
-const PDFDocument = require('pdfkit');
 const albumVideo = require('./album_video');
 const { verifyPin, hashPin, isValidPinShape } = require('./auth');
 const petInteractions = require('./pet_interactions');
@@ -1320,36 +1319,6 @@ function normFreeText(s) {
       return { data_url: `data:${mime};base64,${buf.toString('base64')}`, mime };
     } catch (e) {
       console.error('photo_read failed:', e);
-      return null;
-    }
-  });
-
-  // ---- Photo EXIF metadata (post-orientation size) ------------------------
-  // Used by the album editor to keep visual coordinates consistent with
-  // the PDF renderer. pdfkit's openImage() transparently applies EXIF
-  // orientation and returns the post-orientation width/height. The editor
-  // uses the same numbers via this IPC so cover-fit math matches PDF
-  // output for portrait phone shots.
-  ipcMain.handle('memorial_events:photo_meta', (_e, photoId) => {
-    const row = db.one('SELECT * FROM memorial_event_photos WHERE id = ?', [photoId]);
-    if (!row) return null;
-    const full = path.join(getPhotosDir(), row.memorial_event_id, path.basename(row.relative_path));
-    if (!fs.existsSync(full)) return null;
-    try {
-      // Use a fresh PDFDocument just to call openImage() and read its
-      // metadata. We never write any pages; the document is collected
-      // into a buffer that we immediately discard. Calling openImage
-      // mutates the document state but does not require a page to exist.
-      const probe = new PDFDocument({ autoFirstPage: false });
-      const img = probe.openImage(full);
-      const w = img.width || 0;
-      const h = img.height || 0;
-      // No direct orientation tag from pdfkit, but width/height are
-      // already post-orientation so the renderer can use them as-is.
-      // The editor marks these dims as the "true" ones for cover-fit.
-      return { width: w, height: h };
-    } catch (e) {
-      console.error('photo_meta failed:', e);
       return null;
     }
   });
@@ -3840,14 +3809,9 @@ function normFreeText(s) {
       pushExportProgress(jobId, phase, percent, note);
     };
 
-    // Forward the optional AlbumLayout from the WYSIWYG editor. When
-    // missing, buildAlbum falls back to the original 1-photo-per-page mode.
-    const layout = (payload && payload.layout) || null;
-
     try {
       const stats = await albumPdf.buildAlbum({
         events,
-        layout,
         outPath: result.filePath,
         progressCb,
       });
@@ -3863,7 +3827,6 @@ function normFreeText(s) {
           bytes: stats.bytes,
           font: stats.font,
           heicSkipped: stats.heicSkipped,
-          mode: stats.mode,
         },
       };
     } catch (err) {
@@ -3901,12 +3864,9 @@ function normFreeText(s) {
       pushExportProgress(jobId, phase, percent, note);
     };
 
-    const layout = (payload && payload.layout) || null;
-
     try {
       const stats = await albumDocx.buildAlbum({
         events,
-        layout,
         outPath: result.filePath,
         progressCb,
       });
@@ -3921,7 +3881,6 @@ function normFreeText(s) {
           pages: stats.pages,
           bytes: stats.bytes,
           heicSkipped: stats.heicSkipped,
-          mode: stats.mode,
         },
       };
     } catch (err) {

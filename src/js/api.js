@@ -550,35 +550,6 @@ export async function fetchPhotoDataUrl(photoId) {
   return p;
 }
 
-// Caches for photo post-orientation dimensions, returned by the
-// `memorial_events:photo_meta` IPC. The editor uses these so that the
-// cover-fit math matches what pdfkit draws into the PDF (pdfkit applies
-// EXIF orientation transparently via openImage()).
-const photoMetaCache = new Map(); // photoId → { width, height }
-const photoMetaInflight = new Map(); // photoId → Promise<{width,height}|null>
-export async function fetchPhotoMeta(photoId) {
-  if (!photoId) return null;
-  if (photoMetaCache.has(photoId)) return photoMetaCache.get(photoId);
-  if (photoMetaInflight.has(photoId)) return photoMetaInflight.get(photoId);
-  const p = (async () => {
-    try {
-      const r = await api.memorialEvents.photos.meta(photoId);
-      if (r && (r.width || r.height)) {
-        photoMetaCache.set(photoId, { width: r.width, height: r.height });
-        return photoMetaCache.get(photoId);
-      }
-      return null;
-    } catch (e) {
-      console.error('fetchPhotoMeta failed for', photoId, e);
-      return null;
-    } finally {
-      photoMetaInflight.delete(photoId);
-    }
-  })();
-  photoMetaInflight.set(photoId, p);
-  return p;
-}
-
 // Drop the cached entry for a photo — call after a delete so the renderer
 // doesn't keep showing the now-stale bytes.
 export function invalidatePhotoDataUrl(photoId) {

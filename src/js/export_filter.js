@@ -152,4 +152,4 @@ function fmtForChip(c) {
   return (c.name || c.display_name || c.id || '').toString();
 }
 
-export { ALL, CUSTOM, buildPresetList, applyFilter, fmtForChip, ymd };
+export { ALL, CUSTOM, buildPresetList, applyFilter, fmtForChip };

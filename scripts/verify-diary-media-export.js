@@ -23,7 +23,7 @@
 //
 // Run: node scripts/run-electron.js scripts/verify-diary-media-export.js
 
-const { app, BrowserWindow } = require('electron');
+const { app } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -186,47 +186,6 @@ app.whenReady().then(async () => {
     checkTrue('the mp4 export produced a file', fs.existsSync(mp4Out));
     check('the mp4 export embedded the picture only', mp4Stats.photos, 1);
   }
-
-  console.log('\n== 相册排版 ==');
-  // The renderer-side builder: a video row must not occupy a slot. It is
-  // an ES module and it touches the DOM, so it runs in a renderer.
-  const SRC = path.join(__dirname, '..', 'src');
-  const probePath = path.join(SRC, '.diary-media-export-probe.html');
-  fs.writeFileSync(probePath, `<!doctype html><html><head><meta charset="utf-8"></head><body>
-<script type="module">
-window.__builder = await import('./js/album_builder.js');
-</script></body></html>`);
-
-  const win = new BrowserWindow({
-    width: 400, height: 300, show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
-  });
-  await win.loadFile(probePath);
-  // The probe page imports the module in a module script, so it may not
-  // have landed yet when the page reports it is loaded.
-  await win.webContents.executeJavaScript(
-    `(async () => { for (let i = 0; i < 100 && !window.__builder; i += 1) {
-       await new Promise((r) => setTimeout(r, 50));
-     } return !!window.__builder; })()`, true);
-  const layoutResult = await win.webContents.executeJavaScript(
-    `(async () => {
-       const b = window.__builder;
-       const event = ${JSON.stringify(event)};
-       const layout = b.buildAlbumLayout([event], { themeId: 'classic' });
-       const slotIds = [];
-       for (const p of layout.pages) {
-         for (const s of (p.slots || [])) if (s.photoId) slotIds.push(s.photoId);
-       }
-       return { slotIds, stats: layout.stats };
-     })()`,
-    true);
-  check('the layout puts the picture in a slot', layoutResult.slotIds, ['p_pic']);
-  check('the layout counts the picture only', layoutResult.stats.photos, 1);
-  // A video is not a HEIC, so it must not be counted as a skipped photo.
-  check('the layout skips nothing', layoutResult.stats.heicSkipped, 0);
-
-  // The probe page is a scratch file — take it away again.
-  try { fs.unlinkSync(probePath); } catch (e) {}
 
   db.close();
   console.log(`\n== ${pass} passed, ${fail} failed ==\n`);
