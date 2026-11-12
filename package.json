@@ -16,6 +16,7 @@
     "verify:card-draws": "node scripts/verify-card-draws.js && node scripts/run-electron.js scripts/test-card-life-design.js",
     "verify:card-progress": "node scripts/verify-card-progress.js && node scripts/run-electron.js scripts/test-card-stats-design.js",
     "verify:work-bulk": "node scripts/run-electron.js scripts/verify-work-bulk.js",
+    "verify:work-type": "node scripts/run-electron.js scripts/verify-work-type.js",
     "verify:page-background": "node scripts/run-electron.js scripts/test-page-background.js",
     "verify:page-column": "node scripts/run-electron.js scripts/test-page-column.js",
     "verify:settings-sections": "node scripts/run-electron.js scripts/test-settings-sections.js",

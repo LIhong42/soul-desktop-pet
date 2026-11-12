@@ -25,6 +25,7 @@ import { register, navigate, getReferrerPath } from '../router.js';
 import { applyBackground } from '../page_background.js';
 import {
   MAIN_THEME,
+  WORK_KIND,
   buildEventForm,
   wireEventForm,
   validateEventForm,
@@ -154,18 +155,26 @@ async function renderEdit(args, params) {
     // Tag kind comes from the 类型 dropdown. The dropdown includes an
     // "(无)" option that maps to null.
     //
+    // The dropdown ALSO carries the 工作 option, which is a category
+    // rather than a tag kind: picking it moves the row into the 工作事件
+    // list (category='work') with a null tag_kind. The form hides the
+    // 关联联系人 field for it, because a work event has no contact.
+    //
     // For 工作事件 the dropdown is not rendered, so we keep the existing
     // tag_kind untouched on the server (typically null).
     let tagKind = ev.tag_kind || null;
     if (showTagKind) {
       tagKind = state.tagKind || null;
     }
+    // The category follows the dropdown: 工作 selects the work category,
+    // every other option keeps the page's own category.
+    const nextCategory = (showTagKind && state.work) ? WORK_KIND : category;
     const err = validateEventForm(state);
     if (err) { toast(err); return; }
-    // Title is no longer on the form — the server auto-fills it from the
-    // contact name (or a generic placeholder) on create, and falls back to
-    // the existing title on update if the form somehow sends an empty value.
-    // 工作事件没有关联联系人字段,提交时显式置 null,避免残留旧值。
+    // Title is no longer on the form — the server derives it from the
+    // contact and the 类型, so the client sends an empty title unless it
+    // has a reason to send a specific one. 工作事件没有关联联系人字段,
+    // 提交时显式置 null,避免残留旧值。
     //
     // A festival row is the one case where the title IS the festival code:
     // eventPayload puts the picked festival's code there, and the server
@@ -173,16 +182,19 @@ async function renderEdit(args, params) {
     //
     // Switching 类型 AWAY from 节日 must clear that code, otherwise the row
     // would keep a festival code as its title while no longer being a
-    // festival — the server would then auto-fill it with the contact's name
-    // on create, but on UPDATE it falls back to the existing title, which
-    // is still the stale code. So the title is emptied here and the server
-    // re-derives it.
+    // festival. So the title is emptied here and the server re-derives it.
+    //
+    // The same applies when the row moves between the work and reminder
+    // categories: the label changes (a work row has no contact to derive
+    // a name from), so the title is emptied and the server rebuilds it.
     const wasFestival = ev.tag_kind === 'festival';
     const isFestival = tagKind === 'festival';
+    const wasWork = ev.category === WORK_KIND;
     let title = ev.title || '';
     if (wasFestival && !isFestival) title = '';
+    if (wasWork !== (nextCategory === WORK_KIND)) title = '';
     const input = eventPayload(state, {
-      category,
+      category: nextCategory,
       title,
     });
     input.tag_kind = tagKind;

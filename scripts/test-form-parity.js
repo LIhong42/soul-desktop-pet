@@ -342,7 +342,135 @@ app.whenReady().then(async () => {
     tagOptions.includes('festival=节日'), true);
   check('the 类型 dropdown still offers the other kinds',
     tagOptions,
-    ['=(无)', 'birthday=生日', 'anniversary=纪念日', 'festival=节日']);
+    ['=(无)', 'birthday=生日', 'anniversary=纪念日', 'festival=节日', 'work=工作']);
+
+  // ---- 工作类型 --------------------------------------------------------
+  console.log('\n== 工作类型 ==');
+
+  // 工作 is a CATEGORY, not a tag kind: picking it moves the row into the
+  // 工作事件 list and hides the 关联联系人 field (a work event has no
+  // contact). The picker itself must be offered in BOTH windows.
+  const workForms = await evalIn(win, `
+    const m = window.__m;
+    const out = {};
+    for (const [name, t, p] of [['main', m.MAIN_THEME, 'e'], ['quick', m.QUICK_THEME, 'qr']]) {
+      const f = m.buildEventForm({
+        theme: t, id: p, showTagKind: true, showContact: true,
+        ev: { remind: true, remind_kind: 'one_time', remind_time: '09:00' },
+        contacts: [{ id: 1, name: '小李' }],
+      });
+      const root = document.createElement('div');
+      root.innerHTML = f.html;
+      document.getElementById('probe').innerHTML = '';
+      document.getElementById('probe').appendChild(root);
+      m.wireEventForm(root, f.ids, t);
+      const contact = root.querySelector('#' + p + '-contact-field');
+      const tag = root.querySelector('#' + p + '-tag-kind');
+      out[name] = { contactHiddenBefore: contact.classList.contains('hidden') };
+      // Choosing 工作 hides the contact field.
+      tag.value = 'work';
+      tag.dispatchEvent(new Event('change'));
+      out[name].contactHiddenAfter = contact.classList.contains('hidden');
+      // Switching back restores it.
+      tag.value = '';
+      tag.dispatchEvent(new Event('change'));
+      out[name].contactBack = contact.classList.contains('hidden');
+      out[name].read = m.wireEventForm(root, f.ids, t).read();
+    }
+    return out;
+  `);
+  check('the contact field is visible before 工作 is chosen (both windows)',
+    [workForms.main.contactHiddenBefore, workForms.quick.contactHiddenBefore],
+    [false, false]);
+  check('choosing 工作 hides the contact field (both windows)',
+    [workForms.main.contactHiddenAfter, workForms.quick.contactHiddenAfter],
+    [true, true]);
+  check('leaving 工作 restores the contact field (both windows)',
+    [workForms.main.contactBack, workForms.quick.contactBack], [false, false]);
+
+  // The work option reports itself as a category, not a tag kind.
+  const workRead = await evalIn(win, `
+    const m = window.__m;
+    const f = m.buildEventForm({
+      theme: m.MAIN_THEME, id: 'e', showTagKind: true, showContact: true,
+      ev: { remind: true, remind_kind: 'one_time', remind_time: '09:00' },
+      contacts: [{ id: 1, name: '小李' }],
+    });
+    const root = document.createElement('div');
+    root.innerHTML = f.html;
+    document.getElementById('probe').innerHTML = '';
+    document.getElementById('probe').appendChild(root);
+    const w = m.wireEventForm(root, f.ids, m.MAIN_THEME);
+    const tag = root.querySelector('#e-tag-kind');
+    tag.value = 'work';
+    tag.dispatchEvent(new Event('change'));
+    root.querySelector('#e-desc').value = '写周报';
+    const workState = w.read();
+    const payload = m.eventPayload(workState, { category: 'work', title: '' });
+    // A work row built from scratch opens with 工作 already selected.
+    const f2 = m.buildEventForm({
+      theme: m.MAIN_THEME, id: 'e', showTagKind: true, showContact: true,
+      ev: { category: 'work', remind: true, remind_kind: 'one_time' },
+      contacts: [{ id: 1, name: '小李' }],
+    });
+    const root2 = document.createElement('div');
+    root2.innerHTML = f2.html;
+    document.getElementById('probe').innerHTML = '';
+    document.getElementById('probe').appendChild(root2);
+    const w2 = m.wireEventForm(root2, f2.ids, m.MAIN_THEME);
+    return {
+      work: workState.work,
+      tagKind: workState.tagKind,
+      payloadCategory: payload.category,
+      payloadTagKind: payload.tag_kind,
+      payloadContact: payload.contact_id,
+      payloadTitle: payload.title,
+      existing: w2.read().work,
+    };
+  `);
+  check('the 工作 option is reported as work', workRead.work, true);
+  check('a work row carries no tag kind', workRead.tagKind, null);
+  check('a work payload lands in the work category', workRead.payloadCategory, 'work');
+  check('a work payload carries no tag kind', workRead.payloadTagKind, null);
+  check('a work payload carries no contact', workRead.payloadContact, null);
+  check('a work payload titles itself with the description',
+    workRead.payloadTitle, '写周报');
+  check('an existing work row opens on the 工作 option',
+    workRead.existing, true);
+
+  // Switching the 类型 away from 节日 must clear the festival code that
+  // was stored as the title. The client sends an EMPTY title in that
+  // case, and the server re-derives it from the contact (see
+  // deriveEventTitle in main/ipc.js) — the stored code must not survive.
+  //
+  // The picker's own selection may linger (it is simply hidden), but
+  // the PAYLOAD must not carry the code: that is what would end up in
+  // the row's title.
+  const festivalSwitch = await evalIn(win, `
+    const m = window.__m;
+    const f = m.buildEventForm({
+      theme: m.MAIN_THEME, id: 'e', showTagKind: true, showContact: true,
+      ev: { tag_kind: 'festival', title: 'fathers_day', remind: true,
+            remind_kind: 'one_time', remind_time: '09:00' },
+      contacts: [{ id: 1, name: '小李' }],
+      festivals: [{ code: 'fathers_day', label: '父亲节' }],
+    });
+    const root = document.createElement('div');
+    root.innerHTML = f.html;
+    document.getElementById('probe').innerHTML = '';
+    document.getElementById('probe').appendChild(root);
+    const w = m.wireEventForm(root, f.ids, m.MAIN_THEME);
+    const tag = root.querySelector('#e-tag-kind');
+    // Switch away from 节日: the code must no longer reach the payload.
+    tag.value = '';
+    tag.dispatchEvent(new Event('change'));
+    const state = w.read();
+    const payload = m.eventPayload(state, { category: 'general', title: '' });
+    return { tagKind: state.tagKind, title: payload.title };
+  `);
+  check('leaving 节日 clears the tag kind', festivalSwitch.tagKind, null);
+  check('leaving 节日 keeps the festival code out of the title',
+    festivalSwitch.title, '');
 
   // A festival without a pick is refused; the payload carries the code.
   const festivalPayload = await evalIn(win, `

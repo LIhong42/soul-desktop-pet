@@ -252,6 +252,31 @@ app.whenReady().then(async () => {
   check('the festival picker goes away when 节日 is deselected',
     await evalIn(win, `getComputedStyle(document.getElementById('qr-festival-field')).display`), 'none');
 
+  // The 类型 dropdown also offers 工作, which is a CATEGORY rather than
+  // a tag kind: the row goes to the 工作事件 list and has no contact, so
+  // the 关联联系人 field hides itself.
+  check('the 类型 dropdown offers 工作',
+    await evalIn(win, `
+      Array.from(document.getElementById('qr-tag-kind').options)
+        .some(o => o.value === 'work' && o.textContent.trim() === '工作')
+    `), true);
+  await evalIn(win, `
+    const tagSel3 = document.getElementById('qr-tag-kind');
+    tagSel3.value = 'work';
+    tagSel3.dispatchEvent(new Event('change'));
+  `);
+  await new Promise((r) => setTimeout(r, 100));
+  check('the contact field is out of sight for 工作',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-contact-field')).display`), 'none');
+  await evalIn(win, `
+    const tagSel4 = document.getElementById('qr-tag-kind');
+    tagSel4.value = '';
+    tagSel4.dispatchEvent(new Event('change'));
+  `);
+  await new Promise((r) => setTimeout(r, 100));
+  check('the contact field comes back when 工作 is deselected',
+    await evalIn(win, `getComputedStyle(document.getElementById('qr-contact-field')).display`), 'flex');
+
   // Switching to 农历 reveals the lunar selects and hides the solar date.
   await evalIn(win, `
     document.querySelector('input[name="qr-cal-mode"][value="lunar"]').click();

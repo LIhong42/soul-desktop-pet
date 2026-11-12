@@ -101,11 +101,25 @@ export const REPEAT_OPTIONS = [
 // The festival LIST itself is not hard-coded here: it comes from the
 // server (`api.events.listFestivals()`), because the catalog lives in
 // main/festivals.js and the two must not drift.
+//
+// 工作 is the odd one out: it is NOT a tag kind. It is a CATEGORY
+// (category='work' — the row lives in the 工作事件 list instead of the
+// 提醒 list), so it carries no tag_kind at all. The dropdown therefore
+// mixes two axes, exactly like the 提醒 page's 类型 filter does (see
+// src/js/pages/events.js): every other option names a tag kind, and this
+// one names the work category.
+//
+// The consequence is that picking 工作 hides the 关联联系人 field (a
+// work event has no contact) and the festival picker, and the payload
+// sends category='work' with a null tag_kind.
+export const WORK_KIND = 'work';
+
 export const TAG_KIND_OPTIONS = [
   { value: '', label: '(无)' },
   { value: 'birthday', label: '生日' },
   { value: 'anniversary', label: '纪念日' },
   { value: 'festival', label: '节日' },
+  { value: WORK_KIND, label: '工作' },
 ];
 
 // ---- Style adapters -----------------------------------------------------
@@ -206,9 +220,17 @@ export function buildEventForm(opts = {}) {
   // A festival row stores the festival CODE as its title, so the picker
   // starts on that code.
   const isFestival = ev.tag_kind === 'festival';
+  // A work event is a CATEGORY, not a tag kind: the row lives in the
+  // 工作事件 list and carries no tag_kind. The 类型 dropdown still shows
+  // it (that is how the user reaches the work list from the form), so
+  // the option is selected when the row is a work one.
+  const isWork = ev.category === WORK_KIND;
+  // The selected value of the 类型 dropdown: a tag kind, or the work
+  // sentinel for a work event.
+  const initialTagKind = isWork ? WORK_KIND : (ev.tag_kind || '');
 
   const tagKindOptions = TAG_KIND_OPTIONS.map((o) => {
-    const sel = (ev.tag_kind || '') === o.value ? ' selected' : '';
+    const sel = initialTagKind === o.value ? ' selected' : '';
     return `<option value="${o.value}"${sel}>${escapeHtml(o.label)}</option>`;
   }).join('');
 
@@ -246,12 +268,15 @@ export function buildEventForm(opts = {}) {
       </div>
     ` : ''}
     ${field(t, '描述', `<textarea id="${p}-desc">${escapeHtml(ev.description || '')}</textarea>`)}
-    ${showContact ? field(t, '关联联系人（可选）', `
-      <select id="${p}-contact">
-        <option value="">(独立事件)</option>
-        ${contactOptions}
-      </select>
-    `) : ''}
+    ${showContact ? `
+      <div class="${t.field}${isWork ? ' ' + t.hidden : ''}" id="${p}-contact-field">
+        <label>关联联系人（可选）</label>
+        <select id="${p}-contact">
+          <option value="">(独立事件)</option>
+          ${contactOptions}
+        </select>
+      </div>
+    ` : ''}
     ${inlineCheckbox(t, `${p}-remind`, '启用提醒', ev.remind !== false)}
     <div id="${p}-remind-fields"${ev.remind === false ? ' class="hidden"' : ''}>
       ${showTagKind ? `
@@ -306,6 +331,7 @@ export function buildEventForm(opts = {}) {
       festival: `${p}-festival`,
       desc: `${p}-desc`,
       contact: `${p}-contact`,
+      contactField: `${p}-contact-field`,
       remind: `${p}-remind`,
       remindFields: `${p}-remind-fields`,
       repeatFields: `${p}-repeat-fields`,
@@ -348,6 +374,7 @@ export function wireEventForm(root, ids, theme = MAIN_THEME) {
   const repeatFields = $(ids.repeatFields);
   const solarFields = $(ids.solarFields);
   const lunarFields = $(ids.lunarFields);
+  const contactField = $(ids.contactField);
 
   function toggleRemind() {
     if (remindFields) remindFields.classList.toggle('hidden', !remindEl.checked);
@@ -364,11 +391,21 @@ export function wireEventForm(root, ids, theme = MAIN_THEME) {
     return !!(tagKindEl && tagKindEl.value === 'festival');
   }
 
+  // The 类型 dropdown's 工作 option. It is a CATEGORY, not a tag kind:
+  // the row goes to the 工作事件 list and carries no tag_kind. A work
+  // event has no 关联联系人, so the contact field is hidden while it is
+  // selected.
+  function isWorkKind() {
+    return !!(tagKindEl && tagKindEl.value === WORK_KIND);
+  }
+
   function toggleTagKind() {
     const isFestival = isFestivalKind();
     if (festivalField) festivalField.classList.toggle('hidden', !isFestival);
     if (festivalNote) festivalNote.classList.toggle('hidden', !isFestival);
     if (repeatFields) repeatFields.classList.toggle('hidden', isFestival);
+    // A work event has no contact, so the field is hidden for it.
+    if (contactField) contactField.classList.toggle('hidden', isWorkKind());
     // The date fields follow the repeat / calendar-mode rules normally,
     // but a festival hides both outright.
     if (isFestival) {
@@ -434,13 +471,20 @@ export function wireEventForm(root, ids, theme = MAIN_THEME) {
     read() {
       const mode = root.querySelector(`input[name="${ids.calMode}"]:checked`)?.value || 'solar';
       const kind = kindEl ? kindEl.value : 'one_time';
+      // The 类型 dropdown's value. The 工作 option is a category, not a
+      // tag kind, so it is reported separately and `tagKind` stays null
+      // for it — the payload then carries category='work'.
+      const kindValue = $(ids.tagKind)?.value || null;
+      const work = kindValue === WORK_KIND;
       return {
         mode,
         kind,
         remind: remindEl ? remindEl.checked : true,
         desc: ($(ids.desc)?.value || '').trim(),
         contactId: $(ids.contact)?.value || null,
-        tagKind: $(ids.tagKind)?.value || null,
+        // True when the 类型 dropdown is on 工作.
+        work,
+        tagKind: work ? null : kindValue,
         // The chosen festival's CODE (e.g. 'fathers_day'). Empty when the
         // 类型 is not 节日.
         festival: $(ids.festival)?.value || null,
@@ -480,10 +524,19 @@ export function validateEventForm(state) {
 // state. `category` decides which list the row lands in.
 export function eventPayload(state, opts = {}) {
   const { category = 'general', title = '' } = opts;
+  // A work event (category='work') has no contact, so the server cannot
+  // derive its title from a contact name. Its title IS the description the
+  // user typed — that is what the 提醒 list shows for a work row anyway
+  // (it renders the description, not the title).
+  //
+  // Every other row sends an empty title when the label must be
+  // re-derived, and the server builds it from the contact and the tag
+  // kind (see deriveEventTitle in main/ipc.js).
+  const isWork = category === WORK_KIND;
   const payload = {
-    title,
+    title: isWork ? (title || state.desc) : title,
     description: state.desc,
-    contact_id: state.contactId || null,
+    contact_id: isWork ? null : (state.contactId || null),
     remind: state.remind,
     remind_kind: state.kind,
     remind_time: state.time || '09:00',

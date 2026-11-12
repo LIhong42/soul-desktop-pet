@@ -494,11 +494,16 @@ async function saveEvent(kindId) {
   // The main window leaves the title empty and lets the server derive it
   // from the contact name (e.g. "小李的生日"). Only 工作事件 — which has
   // no contact field at all — sends the description as the title.
+  //
+  // The 提醒 form also offers 工作 in its 类型 dropdown, so a row saved
+  // from here can land in the work list too: the category follows the
+  // dropdown, exactly as it does in the main window.
+  const category = isWork ? 'work' : (state.work ? 'work' : 'general');
   const payload = eventPayload(state, {
-    category: isWork ? 'work' : 'general',
+    category,
     title: isWork ? state.desc : '',
   });
-  if (isWork) {
+  if (category === 'work') {
     payload.contact_id = null;
     payload.tag_kind = null;
   }

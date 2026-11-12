@@ -150,9 +150,10 @@ app.whenReady().then(async () => {
 
   // ---- the 新建提醒 form ----------------------------------------------
   //
-  // Two shots: the form as it opens (类型 = (无)), and the form with
+  // Three shots: the form as it opens (类型 = (无)), the form with
   // 类型 = 节日 chosen, so the festival picker and the hidden repeat /
-  // date controls can both be seen.
+  // date controls can both be seen, and the form with 类型 = 工作, so
+  // the hidden 关联联系人 field can be seen.
   await winMain.webContents.executeJavaScript(`location.hash = '#${FORM_ROUTE}'; true`);
   await winMain.webContents.executeJavaScript(`(async () => {
     for (let i = 0; i < 60; i++) {
@@ -186,6 +187,21 @@ app.whenReady().then(async () => {
   const festShot = await winMain.webContents.capturePage();
   fs.writeFileSync(path.join(OUT_DIR, 'events-new-festival.png'), festShot.toPNG());
   console.log(`wrote ${path.join(OUT_DIR, 'events-new-festival.png')}`);
+
+  // Pick 工作 — the 关联联系人 field hides itself, because a work event
+  // has no contact.
+  await winMain.webContents.executeJavaScript(`(async () => {
+    const sel = document.querySelector('#e-tag-kind');
+    if (!sel) return 'no dropdown';
+    sel.value = 'work';
+    sel.dispatchEvent(new Event('change'));
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return 'ok';
+  })()`);
+  await new Promise((r) => setTimeout(r, 500));
+  const workShot = await winMain.webContents.capturePage();
+  fs.writeFileSync(path.join(OUT_DIR, 'events-new-work.png'), workShot.toPNG());
+  console.log(`wrote ${path.join(OUT_DIR, 'events-new-work.png')}`);
 
   try { db.close(); } catch {}
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}

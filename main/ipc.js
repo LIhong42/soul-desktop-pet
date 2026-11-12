@@ -761,6 +761,35 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
 
   ipcMain.handle('events:list_festivals', () => listFestivals());
 
+  // Derive an event's display title from its contact and tag kind.
+  //
+  // The title is no longer something the user types: the form sends the
+  // contact id and the tag kind, and the server builds the label
+  // ("刘杰的生日"). The client sends an EMPTY title whenever the label
+  // must change — e.g. the user switched the 类型 away from 节日, which
+  // would otherwise leave the row carrying a stale festival code as its
+  // title.
+  //
+  // This is used on BOTH create and update: on update an empty title
+  // must NOT fall back to the row's stored title, or the stale value
+  // would survive the switch.
+  //
+  // A work event has no contact, so it gets the generic placeholder —
+  // the 提醒 list shows a work row's DESCRIPTION, not its title.
+  const deriveEventTitle = (contactId, tagKind) => {
+    if (contactId) {
+      const c = db.one('SELECT name FROM contacts WHERE id = ?', [contactId]);
+      if (c && c.name) {
+        const suffix = tagKind === 'birthday'    ? '生日'
+                     : tagKind === 'anniversary' ? '纪念日'
+                     : tagKind === 'festival'    ? '节日'
+                     : '提醒';
+        return `${c.name}的${suffix}`;
+      }
+    }
+    return '新建提醒';
+  };
+
   ipcMain.handle('events:create', (_e, input) => {
     const id = db.newId();
     const now = db.nowStr();
@@ -788,19 +817,7 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
     // (with the tag_kind label, e.g. "刘杰的生日") or a generic placeholder
     // so the row always has a non-empty display label.
     let title = (typeof input.title === 'string' ? input.title.trim() : '');
-    if (!title) {
-      if (input.contact_id) {
-        const c = db.one('SELECT name FROM contacts WHERE id = ?', [input.contact_id]);
-        if (c && c.name) {
-          const suffix = tagKind === 'birthday'    ? '生日'
-                       : tagKind === 'anniversary' ? '纪念日'
-                       : tagKind === 'festival'    ? '节日'
-                       : '提醒';
-          title = `${c.name}的${suffix}`;
-        }
-      }
-      if (!title) title = '新建提醒';
-    }
+    if (!title) title = deriveEventTitle(input.contact_id, tagKind);
     // Lunar fields are accepted only when both are present; reject invalid
     // (month, day) pairs up front so the user gets immediate feedback.
     let lunarMonth = null, lunarDay = null;
@@ -854,12 +871,16 @@ function register({ queue, winMain, winPet: initialPetWindow, getWinPet, recreat
       }
     }
     // Title may not be cleared by the user. If the form sends an empty
-    // string, fall back to the existing row's title.
+    // string, the title is re-derived from the contact and the tag kind
+    // — the same way create derives it.
+    //
+    // It deliberately does NOT fall back to the row's stored title: the
+    // client sends an empty title exactly when the label must change
+    // (the 类型 was switched away from 节日, or the row moved between
+    // the work and reminder categories), and keeping the stored value
+    // would leave the stale one in place.
     let title = (typeof input.title === 'string' ? input.title.trim() : '');
-    if (!title) {
-      const existing = db.one('SELECT title FROM events WHERE id = ?', [id]);
-      title = (existing && existing.title) || '新建提醒';
-    }
+    if (!title) title = deriveEventTitle(input.contact_id, tagKind);
     let lunarMonth = null, lunarDay = null;
     if (input.lunar_month != null && input.lunar_day != null) {
       const v = validateLunar(input.lunar_month, input.lunar_day);
