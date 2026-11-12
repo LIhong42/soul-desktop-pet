@@ -311,11 +311,12 @@ function ensureCoverEl() {
   `;
   document.body.appendChild(coverEl);
 
-  // The shape buttons — one per allowed ratio.
+  // The shape buttons — one per allowed ratio. The button says the ratio
+  // itself (16:9, 4:3 …); the name is only a hover tip.
   const ratios = coverEl.querySelector('.cover-editor-ratios');
   ratios.innerHTML = COVER_RATIOS.map((r) => `
     <button type="button" class="cover-editor-ratio" data-ratio="${escapeHtml(r.id)}"
-            title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</button>
+            title="${escapeHtml(r.name)}">${escapeHtml(r.id)}</button>
   `).join('');
 
   coverEl.addEventListener('click', (e) => {
