@@ -211,7 +211,7 @@ function render() {
         <button class="btn" id="export-docx-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (Word)</button>
         <button class="btn" id="export-mp4-btn" ${exportDisabled ? 'disabled' : ''}>导出回忆视频 (MP4)</button>
       </div>
-      <p class="meta" style="margin-top:8px;">PDF 每页一篇回忆，保留回忆编辑页里的文字与图片排版，整篇等比缩放到一页；Word 导出生成可编辑的图文文档（章节 + 内嵌照片）。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
+      <p class="meta" style="margin-top:8px;">PDF 每页一篇回忆，保留回忆编辑页里的文字与图片排版，整篇等比缩放到一页；Word 导出同样一篇一页（标题行 + 内容 + 日期行），照片保持等比并且每张都能点开原图。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
       ${renderExportProgress()}
     </div>
     </div>
@@ -430,9 +430,10 @@ async function doExport(kind) {
         ? ` · ${Math.round(r.stats.durationSec)}s`
         : '';
       const pageTxt = (r.stats.pages != null) ? ` · ${r.stats.pages} 页` : '';
-      // The PDF counts the notes it drew, so a note that could not be
-      // laid out is visible in the summary instead of silently missing.
-      const noteTxt = (kind === 'pdf' && r.stats.notes != null)
+      // 两种相册都是一篇回忆一页，所以摘要里报的是「篇」而不是「个」。
+      // PDF 还会报没能排进去的篇数 —— 少了的那几篇看得见，而不是悄悄
+      // 少掉。
+      const noteTxt = (r.stats.notes != null && kind !== 'mp4')
         ? ` · ${fmt(r.stats.notes)} 篇回忆`
         : '';
       const failedTxt = (kind === 'pdf' && r.stats.failed)

@@ -13,14 +13,19 @@
 //   word/media/imageN.ext    —— 照片字节，原样打包
 //   word/styles.xml          —— 标题 / 正文的样式定义
 //
-// buildAlbum({ events, outPath, progressCb }) 按事件分章节输出：每个
-// 事件一个小节，先是一段字段表（地点 / 食物 / 穿搭 / 活动 / 笔记），
-// 再是照片网格（两列无边框表格）。
+// buildAlbum({ events, outPath, progressCb }) 先输出一页封面，然后每篇
+// 回忆一页：顶端是标题行，中间是这篇回忆的文字板块和图片板块，底端是
+// 日期行。图片板块照着回忆编辑页的图组排布摆开，每张照片都单独链回它
+// 在磁盘上的原图。
 
 const path = require('path');
 const fs = require('fs');
 const zlib = require('zlib');
+const { pathToFileURL } = require('url');
 const { app } = require('electron');
+const {
+  parseDiaryContent, photoWidthPx, galleryRows, photoFrame, coverRatioValue,
+} = require('./diary_content');
 
 // 注意：这里刻意不用 adm-zip 来「写」docx。
 //
@@ -309,7 +314,27 @@ class DocxBuilder {
       target: `media/${name}`,
     });
     this.media.push({ name, ext });
-    return { relId: id, mediaName: name };
+    // 图片自己的编号也跟着走 —— Word 里的图片用 docPr id 互相区分，
+    // 那个编号跟包里的文件名是两回事，但同一个数字用两处最省心。
+    return { relId: id, mediaName: name, docPrId: this._imgSeq };
+  }
+
+  // ---- 外部链接 ----
+
+  // 一条指向包外文件的链接。TargetMode="External" 让 Word 把它当成
+  // 外部目标，而不是包里的一个部件。
+  //
+  // 照片用它：导出的相册里每一张照片都指向它在磁盘上的原图，读者点
+  // 一下就能打开原图，而不是只能看着导出件里的那一份压缩图。
+  addExternalRel(url) {
+    const id = `rId${this._nextRelId++}`;
+    this.rels.push({
+      id,
+      type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink',
+      target: url,
+      mode: 'External',
+    });
+    return id;
   }
 
   // ---- 段落 ----
@@ -376,6 +401,58 @@ class DocxBuilder {
     this.body.push(`<w:p><w:pPr><w:spacing w:after="${Math.round(pts * PT_TO_TWIP)}"/></w:pPr></w:p>`);
   }
 
+  // 一条色带 —— 回忆卡片那两条横条（标题行 / 日期行）。
+  //
+  // 色带是一张只有一格的表格：单元格的底色铺满整行的宽度，文字在格
+  // 子里缩进一点。用段落底纹（w:shd）也能上色，但那段底纹跟着文字的
+  // 高度走，文字一多色带就长高，跟编辑页那条固定高度的横条不像。
+  //
+  // 单元格的上下边距给 0，横向给一点 —— 横条的高度由文字的行高定，
+  // 横向留白让文字不贴着色带的边。
+  bandRow(text, { fill, color, size = 12, bold = true, align = 'left', padPt = 5 } = {}) {
+    const fillHex = fill ? String(fill).replace('#', '').toUpperCase() : 'FFFFFF';
+    const colorHex = color ? String(color).replace('#', '').toUpperCase() : '000000';
+    const rPr = [];
+    if (bold) rPr.push('<w:b/>');
+    rPr.push(`<w:color w:val="${esc(colorHex)}"/>`);
+    if (size) rPr.push(`<w:sz w:val="${Math.round(size * 2)}"/><w:szCs w:val="${Math.round(size * 2)}"/>`);
+    const runs = String(text == null ? '' : text)
+      .split(/\r?\n/)
+      .map((line, i) => (i > 0 ? '<w:br/>' : '') + (line ? `<w:t xml:space="preserve">${esc(line)}</w:t>` : ''))
+      .join('');
+    const pad = Math.round(padPt * PT_TO_TWIP);
+    this.body.push(
+      '<w:tbl><w:tblPr>'
+      + '<w:tblW w:w="5000" w:type="pct"/>'
+      + '<w:tblLayout w:type="fixed"/>'
+      + '<w:tblBorders>'
+      + '<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+      + '</w:tblBorders>'
+      + '<w:tblCellMar>'
+      + `<w:top w:w="0" w:type="dxa"/><w:left w:w="${pad}" w:type="dxa"/>`
+      + `<w:bottom w:w="0" w:type="dxa"/><w:right w:w="${pad}" w:type="dxa"/>`
+      + '</w:tblCellMar>'
+      + '</w:tblPr><w:tblGrid><w:gridCol w:w="9638"/></w:tblGrid>'
+      + '<w:tr><w:tc><w:tcPr>'
+      + `<w:shd w:val="clear" w:color="auto" w:fill="${esc(fillHex)}"/>`
+      + '<w:vAlign w:val="center"/>'
+      + '</w:tcPr>'
+      + `<w:p><w:pPr><w:jc w:val="${align}"/>`
+      + '<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>'
+      + '<w:ind w:left="0" w:right="0"/>'
+      + '</w:pPr>'
+      + `<w:r><w:rPr>${rPr.join('')}</w:rPr>${runs}</w:r></w:p>`
+      + '</w:tc></w:tr></w:tbl>'
+    );
+    // 表格后紧跟一个空段落，否则相邻表格在 Word 里会粘在一起。
+    this.body.push('<w:p><w:pPr><w:spacing w:after="0" w:line="120" w:lineRule="exact"/></w:pPr></w:p>');
+  }
+
   // 分页符
   pageBreak() {
     this.body.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>');
@@ -388,18 +465,58 @@ class DocxBuilder {
   // 形态，兼容 Word / WPS / LibreOffice / Google Docs。
   //
   // 返回 true 表示已写入；false 表示图片字节不可用。
-  image(relId, drawW, drawH, srcW, srcH, alt = '') {
-    const cx = Math.max(1, Math.round(drawW * PT_TO_EMU));
-    const cy = Math.max(1, Math.round(drawH * PT_TO_EMU));
-    const docPrId = ++this._imgSeq + 1000; // 与 media 序号错开，避免撞号
-    const descr = esc(alt || '照片');
+  image(relId, drawW, drawH, srcW, srcH, alt = '', docPrId = 0, crop = null) {
     this.body.push(
       '<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="60" w:after="60"/></w:pPr>'
-      + '<w:r><w:drawing>'
+      + '<w:r>' + this._drawingXml(relId, drawW, drawH, alt, docPrId, crop) + '</w:r></w:p>'
+    );
+    return true;
+  }
+
+  // 一张「点得开」的图片：图片本身是包里的字节，外面套一个指向原图
+  // 的链接。读者点一下这张图，Word 打开的是它在磁盘上的原图。
+  //
+  // 链接不能套在 drawing 外面一层 paragraph 上 —— 那样点在图片中间的
+  // 空白处不会触发。链接要包住整个 run，图片落在链接里面，点击才算
+  // 落在链接上。
+  linkedImage(relId, linkRelId, drawW, drawH, alt = '', docPrId = 0, crop = null) {
+    this.body.push(
+      '<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="60" w:after="60"/></w:pPr>'
+      + `<w:hyperlink r:id="${linkRelId}" w:history="1">`
+      + '<w:r>' + this._drawingXml(relId, drawW, drawH, alt, docPrId, crop) + '</w:r>'
+      + '</w:hyperlink>'
+      + '</w:p>'
+    );
+    return true;
+  }
+
+  // drawing 本身的 XML。图片和链接图片共用这一段，所以两张图在 Word
+  // 里是同一种东西，只是一个带链接一个不带。
+  //
+  // crop 是照片被裁掉的比例（0-1，四条边各一个）。编辑页里照片是裁进
+  // 一个固定形状的画框的，Word 里没有「画框」，但有 a:srcRect —— 裁
+  // 出照片的一块矩形，摆在同样形状的格子里，出来的就是编辑页那个样子。
+  _drawingXml(relId, drawW, drawH, alt = '', docPrId = 0, crop = null) {
+    const cx = Math.max(1, Math.round(drawW * PT_TO_EMU));
+    const cy = Math.max(1, Math.round(drawH * PT_TO_EMU));
+    // Word 用 docPr id 区分包里的图片。这个 id 必须全篇唯一，所以它
+    // 取的是图片自己的编号，而不是另起一个计数器。
+    const id = docPrId || (++this._imgSeq);
+    const descr = esc(alt || '照片');
+    // srcRect 的四个数是「切掉的比例」，单位是千分之一。切不掉的一边
+    // 写 0 —— 四个 0 表示不裁。
+    const srcRect = crop
+      ? '<a:srcRect'
+        + ` l="${Math.round(crop.l * 100000)}"`
+        + ` t="${Math.round(crop.t * 100000)}"`
+        + ` r="${Math.round(crop.r * 100000)}"`
+        + ` b="${Math.round(crop.b * 100000)}"/>`
+      : '';
+    return '<w:drawing>'
       + '<wp:inline distT="0" distB="0" distL="0" distR="0">'
       + `<wp:extent cx="${cx}" cy="${cy}"/>`
       + '<wp:effectExtent l="0" t="0" r="0" b="0"/>'
-      + `<wp:docPr id="${docPrId}" name="Picture ${docPrId}" descr="${descr}"/>`
+      + `<wp:docPr id="${id}" name="Picture ${id}" descr="${descr}"/>`
       + '<wp:cNvGraphicFramePr>'
       + '<a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>'
       + '</wp:cNvGraphicFramePr>'
@@ -407,11 +524,12 @@ class DocxBuilder {
       + '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
       + '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
       + '<pic:nvPicPr>'
-      + `<pic:cNvPr id="${docPrId}" name="Picture ${docPrId}" descr="${descr}"/>`
+      + `<pic:cNvPr id="${id}" name="Picture ${id}" descr="${descr}"/>`
       + '<pic:cNvPicPr/>'
       + '</pic:nvPicPr>'
       + '<pic:blipFill>'
       + `<a:blip r:embed="${relId}"/>`
+      + srcRect
       + '<a:stretch><a:fillRect/></a:stretch>'
       + '</pic:blipFill>'
       + '<pic:spPr>'
@@ -422,9 +540,7 @@ class DocxBuilder {
       + '</a:graphicData>'
       + '</a:graphic>'
       + '</wp:inline>'
-      + '</w:drawing></w:r></w:p>'
-    );
-    return true;
+      + '</w:drawing>';
   }
 
   // ---- 表格 ----
@@ -555,7 +671,11 @@ class DocxBuilder {
       ...this.rels.map((r) => (
         `<Relationship Id="${r.id}" `
         + `Type="${r.type}" `
-        + `Target="${r.target}"/>`
+        + `Target="${esc(r.target)}"`
+        // 外链必须带 TargetMode="External"，否则 Word 会把它当成包内
+        // 的一个部件去找，结果是打不开。
+        + (r.mode ? ` TargetMode="${r.mode}"` : '')
+        + '/>'
       )),
     ];
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -716,8 +836,11 @@ class DocxBuilder {
 // 读取字节 + 嗅探尺寸，返回 { relId, buf, srcW, srcH } 或 null。
 // registerImage 必须是同步的（段落 XML 立刻需要 relId），所以这里同步
 // 读文件 —— 单张照片通常几百 KB，本地读足够快。
-
-function registerImage(doc, photo, maxW, maxH) {
+//
+// cover 是这张照片在编辑页里的画框（形状 + 位置）。有画框时，照片被
+// 裁进那个形状 —— 和编辑页一样，格子里不会出现空洞。没有画框时，照片
+// 按自己的形状摆着。
+function registerImage(doc, photo, maxW, maxH, cover = null) {
   const ext = imageExtFor(photo);
   if (!ext) return null;
   const fp = resolvePhoto(photo);
@@ -727,24 +850,39 @@ function registerImage(doc, photo, maxW, maxH) {
   const size = sniffImageSize(buf);
   const srcW = size && size.width ? size.width : 4;
   const srcH = size && size.height ? size.height : 3;
-  // 等比缩到目标框内
-  const scale = Math.min(maxW / srcW, maxH / srcH, 1);
-  const drawW = srcW * scale;
-  const drawH = srcH * scale;
-  const { relId, mediaName } = doc.addImageRel(ext);
+
+  // 画框的形状，以及照片被裁掉的比例。
+  const frame = photoFrame(srcW, srcH, cover);
+  const frameAr = frame.ratio;
+
+  // 画框的宽度就是格子宽度，高度按画框自己的形状算 —— 照片最后被裁成
+  // 画框那个形状，所以画框和照片的关系始终是等比的。
+  //
+  // maxH 是这一行的高度，用来兜住「比同行别的照片高」的画框：那一张
+  // 按比例缩到装得下为止。
+  let drawW = maxW;
+  let drawH = drawW / frameAr;
+  if (maxH > 0 && drawH > maxH) {
+    drawH = maxH;
+    drawW = drawH * frameAr;
+  }
+
+  const { relId, mediaName, docPrId } = doc.addImageRel(ext);
   // 字节直接挂在 media 记录上，打包时按顺序读，避免两张数组失步。
   doc.media[doc.media.length - 1].buf = buf;
-  return { relId, mediaName, buf, srcW, srcH, drawW, drawH };
+  return {
+    relId, mediaName, docPrId, buf, srcW, srcH,
+    drawW, drawH, crop: frame.crop,
+  };
 }
 
 // ---- 排版常量 ------------------------------------------------------------
 
 // A4 纵向正文宽度（pt）：595.28 - 2×56.7pt(2cm) ≈ 482
 const CONTENT_W = 482;
-// 照片网格：两列
-const GRID_COLS = 2;
-const GRID_GAP_PT = 8;
-const GRID_CELL_W = (CONTENT_W - GRID_GAP_PT * (GRID_COLS - 1)) / GRID_COLS;
+// 表格单元格左右各留的边距（twip）。照片要摆在格子里面，就得先减掉它。
+const CELL_MARGIN_TWIP = 60;
+const CELL_PADDING_PT = (CELL_MARGIN_TWIP * 2) / PT_TO_TWIP;
 
 // ---- main entry -----------------------------------------------------------
 
@@ -803,8 +941,10 @@ async function buildAlbum(options) {
   const bytes = fs.statSync(outPath).size;
   safeProgress('done', 100);
   return {
+    // 封面一页，每篇回忆一页。
     pages: events.length + 1,
     events: events.length,
+    notes: events.length,
     photos: photosRendered,
     bytes,
     heicSkipped,
@@ -848,40 +988,8 @@ function renderCover(doc, cover, theme, events) {
 
 // ---- 照片网格 -------------------------------------------------------------
 //
-// 按 GRID_COLS 列排照片网格。用无边框表格，宽度按单元格均分。
-
-function renderPhotoGrid(doc, photos, theme, onPhoto, captionFor) {
-  const c = theme.cssVar;
-  const cellW = GRID_CELL_W;
-  const rows = Math.ceil(photos.length / GRID_COLS);
-  for (let r = 0; r < rows; r += 1) {
-    doc.tableStart(new Array(GRID_COLS).fill(100 / GRID_COLS));
-    for (let col = 0; col < GRID_COLS; col += 1) {
-      const p = photos[r * GRID_COLS + col];
-      const xml = doc.captureCell(() => {
-        if (!p) { doc.para('', {}); return; }
-        if (!isEmbeddablePhoto(p)) {
-          doc.para(heicNote(p), { align: 'center', color: c.muted, size: 9, italic: true });
-          return;
-        }
-        const img = registerImage(doc, p, cellW, cellW);
-        if (!img) {
-          doc.para('（图片加载失败）', { align: 'center', color: c.muted, size: 9 });
-          return;
-        }
-        doc.image(img.relId, img.drawW, img.drawH, img.srcW, img.srcH, photoAlt(p));
-        onPhoto();
-      });
-      doc.tableCell(xml);
-    }
-    doc.tableEnd();
-    // 网格下方的说明
-    const first = photos[r * GRID_COLS];
-    if (first && captionFor) {
-      doc.para(captionFor(first, r), { style: 'Caption' });
-    }
-  }
-}
+// 照片网格的排布已经并进 renderGallery —— 图组按编辑页的份额排，网格
+// 只是图组的一种排版，不再单独画一遍。
 
 function heicNote(p) {
   if (p && (p._is_heic || (p.mime && /heic|heif/i.test(p.mime)))) {
@@ -895,51 +1003,191 @@ function photoAlt(p) {
 }
 
 // ---- 正文渲染 ------------------------------------------------------------
+//
+// 一篇回忆一篇Word 页，版式照着回忆编辑页重排：
+//
+//   ┌─────────────────────────┐
+//   │ 标题（标题行）            │  ← 顶端的色带
+//   ├─────────────────────────┤
+//   │ 文字板块 / 图片板块        │  ← 中间的内容
+//   ├─────────────────────────┤
+//   │ 2026-03-14（日期行）       │  ← 底端的色带
+//   └─────────────────────────┘
+//
+// 版式不是照抄编辑页的像素，而是把编辑页的排版「翻译」成 Word 原生元素
+// —— 段落、表格、图片。翻译用的对应表在 main/diary_content.js 里：一张
+// 照片在图组里占多宽、一行放几张，跟编辑页用的是同一套数。
 
 function renderAlbum(doc, events, theme, onPhoto) {
-  const c = theme.cssVar;
-
   // 封面
   renderCover(doc, { title: '回忆相册', subtitle: '', showStats: true }, theme, events);
 
   for (let i = 0; i < events.length; i += 1) {
-    const ev = events[i];
-    const evTitle = ev.title || '(无标题)';
-    const evDate = fmtDateOnly(ev.occurred_at);
-    const contacts = Array.isArray(ev.contact_names) && ev.contact_names.length
-      ? ev.contact_names.join('、') : '独立事件';
+    renderNotePage(doc, events[i], theme, onPhoto);
+    // 一篇一篇分开，翻页时不会两篇挤在一起。
+    if (i < events.length - 1) doc.pageBreak();
+  }
+}
 
-    doc.para(evTitle, { style: 'Heading1' });
-    const subParts = [evDate, contacts].filter(Boolean).join('  ·  ');
-    if (subParts) doc.para(subParts, { color: c.muted, size: 10 });
+// 一篇回忆。
+//
+// 每一篇从标题行开始，到日期行结束。中间是这篇回忆的板块：文字板块
+// 是一段段正文，图片板块是照着编辑页的图组排布摆开的一组照片 —— 每张
+// 照片都单独链回它在磁盘上的原图，点得开。
+function renderNotePage(doc, ev, theme, onPhoto) {
+  const c = theme.cssVar;
+  const blocks = noteBlocks(ev);
 
-    // 字段表（地点 / 食物 / 穿搭 / 活动 / 笔记）
-    const details = [
-      ['地点', ev.place], ['食物', ev.food], ['穿搭', ev.outfit],
-      ['活动', ev.activities], ['笔记', ev.notes],
-    ].filter(([, v]) => v && String(v).trim());
-    if (details.length) {
-      doc.tableStart([16, 84], { borders: true });
-      for (const [k, v] of details) {
-        const kXml = doc.captureCell(() => doc.para(k, { bold: true, color: c.accent, size: 10 }));
-        doc.tableCell(kXml, { vAlign: 'top' });
-        const vXml = doc.captureCell(() => doc.para(shortText(v, 400), { size: 10 }));
-        doc.tableCell(vXml, { vAlign: 'top' });
-      }
-      doc.tableEnd();
+  // 标题行
+  doc.bandRow(ev.title || '(无标题)', {
+    fill: c.accent, color: '#ffffff', size: 15, bold: true, align: 'left',
+  });
+
+  // 中间的内容
+  let photos = 0;
+  if (!blocks.length) {
+    doc.para('（这篇回忆还没有内容）', { color: c.muted, size: 10, italic: true });
+  }
+  for (const b of blocks) {
+    if (b.type === 'text') {
+      const text = (b.text || '').trim();
+      if (!text) continue;
+      doc.para(text, { size: 11, spacingAfter: 8, spacingBefore: 0 });
+      continue;
     }
-
-    const embeddable = (ev.photos || []).filter((p) => isEmbeddablePhoto(p));
-    if (embeddable.length === 0) {
-      const skipped = (ev.photos || []).length;
-      doc.para(skipped > 0
-        ? `（本事件 ${skipped} 张照片暂不支持嵌入）`
-        : '（本事件暂无照片）', { color: c.muted, size: 10, italic: true });
-    } else {
-      renderPhotoGrid(doc, embeddable, theme, onPhoto,
-        (p) => shortText(p.original_name || path.basename(String(p.relative_path || '')), 120));
+    if (b.type === 'gallery') {
+      photos += renderGallery(doc, b, theme, onPhoto, ev);
     }
-    doc.spacer(6);
+    // 视频和音频在纸面上没有位置 —— 和 PDF 那边的处理一样，跳过。
+  }
+  if (!photos) {
+    // 这篇回忆的照片一张都没进文档 —— 说清楚是哪一种：照片在，只是
+    // Word 吃不了（HEIC），还是这篇回忆压根没有照片。
+    const total = (ev.photos || []).length;
+    const unembeddable = (ev.photos || []).filter((p) => !isEmbeddablePhoto(p)).length;
+    if (unembeddable > 0) {
+      doc.para(`（这篇回忆有 ${unembeddable} 张照片暂不支持嵌入）`, {
+        color: c.muted, size: 10, italic: true,
+      });
+    } else if (total === 0) {
+      doc.para('（这篇回忆还没有照片）', { color: c.muted, size: 10, italic: true });
+    }
+  }
+
+  // 日期行
+  doc.bandRow(fmtDateOnly(ev.occurred_at), {
+    fill: c.muted, color: '#ffffff', size: 10, bold: true, align: 'right',
+  });
+}
+
+// 一篇回忆的板块。
+//
+// 写在混合编辑器之前的回忆没有板块，只有 `notes` 那一段文字 —— 它按一
+// 个文字板块读进来，和编辑页的读法一样。
+function noteBlocks(ev) {
+  const blocks = parseDiaryContent(ev.content);
+  if (blocks.length) return blocks;
+  const legacy = (ev.notes || '').trim();
+  return legacy ? [{ type: 'text', text: legacy }] : [];
+}
+
+// 一行照片的高度。
+//
+// 编辑页里一行照片是齐顶的：每个画框按自己的形状长出来 —— 宽的那张矮
+// 一点，窄的那张高一点 —— 一行的高度由最高的那张定，矮的那些从顶上排
+// 下来，底下不齐。
+//
+// 所以这一行的高度取「最高」：谁都不该为了迁就同行而被压扁。
+function rowHeightFor(row, widths) {
+  let h = 0;
+  for (let i = 0; i < row.length; i += 1) {
+    const cover = row[i].cover || null;
+    // 画框的形状：有自己的画框就是画框的形状。
+    const ar = cover && cover.ratio ? coverRatioValue(cover.ratio) : 1;
+    const cellH = widths[i] / (ar || 1);
+    if (cellH > h) h = cellH;
+  }
+  return h || (widths[0] || 0);
+}
+
+// 一个图组。
+//
+// 图组在编辑页里是一行 flex：每张照片占自己那一份宽度，行放不下就换行。
+// 这里用同样的数算出同样的行，再用一张无边框表格把每一行摆出来 ——
+// 每张照片在自己的格子里，格子宽度就是它在图组里占的那一份。
+//
+// 返回放进文档的照片数。
+function renderGallery(doc, block, theme, onPhoto, ev) {
+  const c = theme.cssVar;
+  const photoById = new Map();
+  for (const p of (ev.photos || [])) photoById.set(String(p.id), p);
+
+  const items = (block.photos || []).map((p) => ({
+    spec: p,
+    photo: photoById.get(String(p.photo_id)) || null,
+  }));
+  if (!items.length) return 0;
+
+  // 图组的可用宽度就是正文宽度；换行按编辑页的算法算。
+  const rows = galleryRows(items.map((it) => it.spec), block.layout, CONTENT_W);
+  let placed = 0;
+
+  for (const row of rows) {
+    // 每一行的格子宽度：这一行里每张照片自己的份额。
+    const widths = row.map((spec) => photoWidthPx(spec, block.layout, CONTENT_W));
+    const rowTotal = widths.reduce((a, b) => a + b, 0);
+    // 表格的列宽是百分比的，所以要把这一行的宽度换成百分比。
+    const pct = widths.map((w) => (w / rowTotal) * 100);
+
+    // 同一行里的照片一样高 —— 编辑页里它们共用一个高度（flex 行按最
+    // 高的那个算），所以这一行的格子也是那个高度。
+    const rowH = rowHeightFor(row, widths);
+
+    doc.tableStart(pct);
+    for (let i = 0; i < row.length; i += 1) {
+      const it = items.find((x) => x.spec === row[i]);
+      // 照片摆在格子里面，所以宽度要减掉格子的左右边距。
+      const cellW = Math.max(1, widths[i] - CELL_PADDING_PT);
+      let embedded = false;
+      const xml = doc.captureCell(() => {
+        const photo = it && it.photo;
+        if (!photo || !isEmbeddablePhoto(photo)) {
+          doc.para(heicNote(photo), { align: 'center', color: c.muted, size: 9, italic: true });
+          return;
+        }
+        // 画框的形状来自这篇回忆里的画框设置 —— 编辑页就是照它裁的，
+        // Word 这边也照它裁，两边才是同一个样子。
+        const img = registerImage(doc, photo, cellW, rowH, it.spec.cover || null);
+        if (!img) {
+          doc.para('（图片加载失败）', { align: 'center', color: c.muted, size: 9 });
+          return;
+        }
+        // 每张照片都单独链回原图：读者点一下这张照片，Word 打开的是它
+        // 在磁盘上的那一张，而不是只能看着导出件里的这一份。
+        const linkRelId = doc.addExternalRel(photoLinkTarget(photo));
+        doc.linkedImage(img.relId, linkRelId, img.drawW, img.drawH,
+          photoAlt(photo), img.docPrId, img.crop);
+        embedded = true;
+        onPhoto();
+      });
+      doc.tableCell(xml, { vAlign: 'top' });
+      if (embedded) placed += 1;
+    }
+    doc.tableEnd();
+  }
+  return placed;
+}
+
+// 一张照片的链接目标：它在磁盘上的原图。
+//
+// Word 的外部链接要写成文件 URI。路径里的反斜杠要换成正斜杠，其余
+// 的字符按 URI 的规矩转义。
+function photoLinkTarget(photo) {
+  const fp = resolvePhoto(photo);
+  try {
+    return require('url').pathToFileURL(fp).href;
+  } catch (e) {
+    return fp;
   }
 }
 

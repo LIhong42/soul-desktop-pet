@@ -32,6 +32,35 @@
     #pdf-sheet {
       display: block;
     }
+
+    /* The note is drawn as a memory card — title bar on top, the writing
+       in the middle, the date on the foot — because that is how the
+       entry is shown in the list. The card keeps a FIXED height and
+       clips what runs past it, which is right for a thumbnail and wrong
+       for a page that has to hold the whole entry. So the height and the
+       clip are lifted here, and the fade is taken away with it: the
+       PDF's note is not a thumbnail of itself, it IS the page. */
+    .pdf-note-sheet {
+      height: auto;
+      overflow: visible;
+    }
+    .pdf-note-body {
+      flex: 0 0 auto;
+      overflow: visible;
+      -webkit-mask-image: none;
+      mask-image: none;
+    }
+    /* The card's body is a thumbnail of the editor's page: it scales the
+       whole page down to fit the card's width. Here the page IS the
+       thing being drawn, so it is laid out at its own size. */
+    .pdf-note-body .diary-blocks {
+      margin-top: 0;
+    }
+    /* The card's header cuts a long title on one line. A page of paper
+       has room for two. */
+    .pdf-note-header {
+      white-space: normal;
+    }
   </style>
 </head>
 <body>

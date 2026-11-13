@@ -43,7 +43,9 @@
 - **Right-clicking the media** is as handy as right-clicking a picture: insert a picture / movie / sound, insert a text block above or below, play / pause, copy the link, remove it;
 - The metadata — the time, the linked contacts and the "was this the first time?" flag — is asked for when you save;
 - **The list is a wall of cards**: every memory shrinks to one card, which *is* that diary page in miniature, with search and **time / contact / kind** filters;
-- One-click export to a **PDF album**, a **Word album** (an editable picture-and-text document, one chapter per memory) or an **MP4 video album**. The PDF album is a book of **pages**, one page per memory: the page keeps the layout the diary editor drew — the paragraphs and the pictures, in the order they were written — and the whole page is scaled onto one A4 sheet, so every page keeps the shape the editor gave it. The Word album is a book of **pictures** — the movies and sounds stay in the entry.
+- One-click export to a **PDF album**, a **Word album** or an **MP4 video album**. Both albums are **one memory per page**, and the page keeps the layout the diary editor drew — the paragraphs and the pictures, in the order they were written: the title on top, the memory in the middle, the date on the foot.
+  - **PDF** — the note is rendered together with its title and date and scaled as one piece onto an A4 sheet, so every page keeps the shape the editor gave it.
+  - **Word** — the same one memory per page, re-laid-out with native Word elements: the paragraphs are paragraphs, the pictures are a table, and every picture in a gallery takes the share and the frame shape the editor gave it, scaled proportionally and never stretched. **Every picture links back to the original file on disk — click one and Word opens the original.** A cover page comes first. The movies and sounds stay in the entry.
 
 ### 🃏 Card Draw Life & Streak Wall
 - **Draw one card a week** from the built-in card library — and you can add your own cards too; both live in the same pool;

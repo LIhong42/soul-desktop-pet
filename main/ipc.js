@@ -3870,6 +3870,7 @@ function normFreeText(s) {
         jobId,
         stats: {
           events: stats.events,
+          notes: stats.notes,
           photos: stats.photos,
           pages: stats.pages,
           bytes: stats.bytes,

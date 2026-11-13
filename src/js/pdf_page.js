@@ -56,6 +56,13 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+// The date, as the memory card writes it: the day, without the time.
+function fmtDateOnly(s) {
+  if (!s) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s));
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : String(s);
+}
+
 function blocksHtml(blocks) {
   return blocks.map((b) => blockHtml(b)).join('');
 }
@@ -188,14 +195,24 @@ function noteBlocks(ev) {
 
 // Draw one note into the page.
 //
-// The note is wrapped in the editor's own `.diary-page` sheet — but only
-// its BODY is filled. The title bar and the decorative strip are the
-// page's furniture, not part of the writing, and the export is a paper
-// album of what the user wrote: the text blocks and the image blocks.
+// The note is drawn as a PAGE OF ITS OWN, with the same three layers the
+// memory card has and the same look the editor's sheet has:
 //
-// The body's own padding is kept, because it is the margin the editor
-// gives the writing — the words start at the same distance from the edge
-// as they do on screen.
+//   ┌─────────────────────────┐
+//   │ 标题（标题行）            │  ← the header bar
+//   ├─────────────────────────┤
+//   │ 文字板块 / 图片板块        │  ← the body
+//   ├─────────────────────────┤
+//   │ 2026-03-14（日期行）       │  ← the foot strip
+//   └─────────────────────────┘
+//
+// The title and the date are therefore part of the SAME screenshot as
+// the writing: they carry the theme's own colors, because they are the
+// theme's own header and foot.
+//
+// The card's own classes are used, so this page and the card in the
+// list are the same page — one scaled up for the PDF, one scaled down
+// for the list.
 async function renderNote(ev) {
   const theme = getDiaryTheme(ev.background);
   const themeVars = diaryThemeVars(theme);
@@ -203,11 +220,17 @@ async function renderNote(ev) {
 
   const sheet = document.getElementById('pdf-sheet');
   sheet.innerHTML = `
-    <div class="diary-page pdf-note-page" style="${vars}">
-      <div class="diary-page-body pdf-note-body">
+    <div class="memorial-card-sheet pdf-note-sheet" style="${vars}">
+      <div class="memorial-card-header pdf-note-header">
+        <span class="memorial-card-title">${escapeHtml(ev.title || '(无标题)')}</span>
+      </div>
+      <div class="memorial-card-body pdf-note-body">
         <div class="diary-blocks" id="pdf-blocks">
           ${blocksHtml(noteBlocks(ev))}
         </div>
+      </div>
+      <div class="memorial-card-foot pdf-note-foot">
+        <span class="memorial-card-date">${escapeHtml(fmtDateOnly(ev.occurred_at))}</span>
       </div>
     </div>
   `;
