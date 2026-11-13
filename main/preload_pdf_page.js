@@ -35,4 +35,15 @@ contextBridge.exposeInMainWorld('soulPdfPage', {
   },
   reply: (result) => ipcRenderer.send('export:pdf_page_reply', result),
   ready: () => ipcRenderer.send('export:pdf_page_ready'),
+
+  // The main process asks the page to paint once more before it takes the
+  // screenshot. `capturePage()` hands back the frame the compositor last
+  // committed, so a picture that was swapped in after that frame would be
+  // missing from the screenshot. The page answers when it has painted.
+  onPaint: (handler) => {
+    ipcRenderer.on('export:pdf_page_paint', () => {
+      handler();
+    });
+  },
+  painted: () => ipcRenderer.send('export:pdf_page_painted'),
 });

@@ -37,7 +37,18 @@ const bridge = window.soulPdfPage;
 const state = {
   token: 0,
   photoCache: new Map(),
-  pending: new Map(),
+  // The read of every photo asked for, keyed by the photo's id. The
+  // promise stays in the map after it has settled: the wait before the
+  // measurement needs it, and a settled promise resolves at once.
+  photoFetches: new Map(),
+  // The photos whose read is still ON ITS WAY. A read that is still in
+  // flight must not be started a second time.
+  inFlight: new Set(),
+  // The photos of the note being drawn RIGHT NOW. The wait before the
+  // measurement is scoped to this set, not to every photo ever fetched —
+  // a promise that settled on an earlier note cannot re-arm this note's
+  // freshly built <img>.
+  currentPhotos: new Set(),
 };
 
 // ---- The block rendering --------------------------------------------------
@@ -100,11 +111,15 @@ function galleryHtml(b) {
     const coverAttr = cover
       ? `data-cover="${escapeHtml(JSON.stringify(cover))}"`
       : '';
+    // A picture that is still on its way is marked as a placeholder, so the
+    // wait before the measurement can tell "the picture is there" from
+    // "the placeholder is there" — the two look identical to the browser.
+    const placeholderAttr = src === BLANK ? ` ${PLACEHOLDER_ATTR}="1"` : '';
     return `
       <div class="diary-gallery-item" style="width:${photoCssWidth(frac)};">
         <div class="diary-gallery-frame" data-ratio="${escapeHtml(ratio)}" ${coverAttr}
              style="aspect-ratio:${coverAspectRatio(ratio)};">
-          <img src="${escapeHtml(src)}" data-photo-id="${escapeHtml(p.photo_id)}" alt=""/>
+          <img src="${escapeHtml(src)}" data-photo-id="${escapeHtml(p.photo_id)}"${placeholderAttr} alt=""/>
         </div>
       </div>
     `;
@@ -123,30 +138,89 @@ function galleryHtml(b) {
 // would still take its frame's size, so the layout does not shift when
 // the real bytes land.
 //
+// The placeholder is ALSO a trap, and the trap is what made photos come
+// out empty in the album. The placeholder is `complete` and has a
+// naturalWidth of 1, so anything that asks "is this picture there yet?"
+// by looking at those two properties says YES — while the picture is in
+// fact still on its way. The wait before the measurement used to ask
+// exactly that, so the page measured the note and told the main process
+// it was ready while the frames were still empty, and the screenshot
+// caught the empty frames.
+//
+// So the placeholder is marked as a placeholder, and the wait looks for
+// that mark instead of guessing from the picture's own size.
+//
 // The bytes are fetched once per photo and kept. The page waits for
 // them before it measures the note — a note measured while its photos
 // are still placeholders comes out too short, and the bottom of it is
 // cut off.
 const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
+// The marker that says "this <img> is still holding the placeholder".
+// It is set on the element itself, so it survives the src being swapped
+// and is visible to whoever asks whether the picture is really there.
+const PLACEHOLDER_ATTR = 'data-placeholder';
+
 function photoSrc(photoId) {
+  // Every photo of the note being drawn is remembered, so the wait before
+  // the measurement knows which fetches belong to THIS note.
+  state.currentPhotos.add(photoId);
   const cached = state.photoCache.get(photoId);
   if (cached) return cached;
-  if (!state.photoCache.has(photoId)) {
-    state.photoCache.set(photoId, '');
-    // The promise is kept so the render can wait for the bytes.
+  // A fetch that is already on its way is NOT started a second time.
+  //
+  // The same picture can be asked for twice — the same photo in two
+  // galleries of one note, or a note drawn again while the first read is
+  // still in flight. Starting a second read would leave the first read's
+  // promise orphaned, and the wait would then be on the SECOND promise
+  // while the swap below belongs to the first: the picture would be
+  // swapped in late, or not at all.
+  if (!state.inFlight.has(photoId)) {
+    // The fetch is registered as PENDING, not as a finished empty string.
+    // Caching an empty result would mean "this photo has no bytes, ever"
+    // — the placeholder would then be drawn for this note AND for every
+    // later note that shows the same photo, with no second attempt.
+    state.inFlight.add(photoId);
     const pending = bridge.readPhoto(photoId).then((r) => {
       const url = (r && r.data_url) || '';
-      state.photoCache.set(photoId, url);
-      // The picture that is already on the page is swapped in place —
-      // re-rendering the whole note would flash.
-      for (const img of document.querySelectorAll(`img[data-photo-id="${CSS.escape(photoId)}"]`)) {
-        if (url) img.src = url;
+      if (url) {
+        state.photoCache.set(photoId, url);
+        // The picture that is already on the page is swapped in place —
+        // re-rendering the whole note would flash.
+        for (const img of document.querySelectorAll(`img[data-photo-id="${CSS.escape(photoId)}"]`)) {
+          if (img.getAttribute(PLACEHOLDER_ATTR) !== '1') continue;
+          img.removeAttribute(PLACEHOLDER_ATTR);
+          img.src = url;
+          // The bytes are in, but the picture is not drawn until the
+          // browser has DECODED it. The wait ends when the new load
+          // finishes — not when the src is set — so the note is never
+          // measured with a picture that is still being decoded.
+          releaseWhenLoaded(img);
+        }
+        applyCoverMappings();
+      } else {
+        // The read failed. The photo is dropped from the cache so a later
+        // note may try again — a failed read is a moment, not a verdict —
+        // and the placeholder stays where it is.
+        state.photoCache.delete(photoId);
+        releasePhotoWaiters(photoId);
       }
-      applyCoverMappings();
       return url;
-    }).catch(() => { /* the placeholder stays */ });
-    state.pending.set(photoId, pending);
+    }).catch(() => {
+      // Same: a failed read must not poison the cache.
+      state.photoCache.delete(photoId);
+      releasePhotoWaiters(photoId);
+      return '';
+    });
+    // The promise is remembered even after it has settled, so the wait
+    // before the measurement can always find it — a settled promise
+    // resolves at once. The photo is free to be read again by a later
+    // note only when the read FAILED, and a failed read is dropped from
+    // the cache above.
+    state.photoFetches.set(photoId, pending);
+    pending.finally(() => {
+      state.inFlight.delete(photoId);
+    });
   }
   return state.photoCache.get(photoId) || BLANK;
 }
@@ -158,6 +232,44 @@ function photoSrc(photoId) {
 // numbers are measured against the frame's OWN size, so the mapping is
 // the same at any size — which is what lets the export scale the note
 // down onto the PDF page without the pictures changing shape.
+
+// End the wait of every <img> that is holding the placeholder of one
+// photo. Called when the photo's bytes turn out to be unavailable, so the
+// note is drawn without that picture instead of waiting for the ceiling.
+function releasePhotoWaiters(photoId) {
+  for (const img of document.querySelectorAll(`img[data-photo-id="${CSS.escape(photoId)}"]`)) {
+    if (typeof img._pdfPlaceholderWaiter !== 'function') continue;
+    const waiter = img._pdfPlaceholderWaiter;
+    img._pdfPlaceholderWaiter = null;
+    waiter();
+  }
+}
+
+// End an <img>'s wait when the picture it has just been given has been
+// loaded.
+//
+// The bytes arriving is not the same as the picture being there: the src
+// is set, and the browser decodes the picture after that. The wait ends on
+// the load, so the note is only measured once the picture can really be
+// painted.
+//
+// A picture that fails to load ends the wait too — a note drawn without
+// that picture is better than a note that is never drawn.
+function releaseWhenLoaded(img) {
+  const waiter = img._pdfPlaceholderWaiter;
+  if (typeof waiter !== 'function') return;
+  const finish = () => {
+    img.removeEventListener('load', finish);
+    img.removeEventListener('error', finish);
+    img._pdfPlaceholderWaiter = null;
+    waiter();
+  };
+  img.addEventListener('load', finish);
+  img.addEventListener('error', finish);
+  // A picture that is already decoded (the browser had it cached) never
+  // fires another load event — the wait has to end right away.
+  if (img.complete && (img.naturalWidth || img.dataset.failed)) finish();
+}
 function applyCoverMappings() {
   for (const frame of document.querySelectorAll('.diary-gallery-frame')) {
     const img = frame.querySelector('img');
@@ -218,6 +330,11 @@ async function renderNote(ev) {
   const themeVars = diaryThemeVars(theme);
   const vars = Object.entries(themeVars).map(([k, v]) => `${k}:${v}`).join(';');
 
+  // The photos of THIS note. The wait below is scoped to them: a promise
+  // that settled while an earlier note was on the page cannot re-arm the
+  // <img> elements this note has just built.
+  state.currentPhotos = new Set();
+
   const sheet = document.getElementById('pdf-sheet');
   sheet.innerHTML = `
     <div class="memorial-card-sheet pdf-note-sheet" style="${vars}">
@@ -242,7 +359,7 @@ async function renderNote(ev) {
   // are still placeholders comes out too short — the bottom of it would
   // be cut off. A picture that never arrives is left as it is — the note
   // is still drawn, just without that picture.
-  await Promise.all(Array.from(state.pending.values()));
+  await Promise.all(currentPhotoFetches());
   await whenImagesSettled();
   applyCoverMappings();
   await nextFrame();
@@ -250,15 +367,59 @@ async function renderNote(ev) {
   await nextFrame();
 }
 
+// The fetches of the photos this note is showing.
+//
+// Only the photos of the note being drawn are waited for.
+// `state.photoFetches` holds every photo ever asked for, and waiting for
+// all of them would make each note wait for the whole album's downloads —
+// and, worse, a promise that settled on an earlier note carries no
+// information about the <img> elements this note has just built.
+function currentPhotoFetches() {
+  const out = [];
+  for (const photoId of state.currentPhotos) {
+    const p = state.photoFetches.get(photoId);
+    if (p) out.push(p);
+  }
+  return out;
+}
+
 // Wait until every <img> on the page has either loaded or failed.
 //
 // `decode()` is not enough on its own — a picture whose bytes have not
 // arrived yet decodes to nothing. The load/error events are what say
 // the picture is really there.
+//
+// The PLACEHOLDER is not a picture. It is complete and it has a
+// naturalWidth of 1, so a check that only looks at those two properties
+// says "the picture is there" while the real bytes are still on their way
+// — and the album ends up with empty frames. The wait therefore looks
+// for the placeholder's own mark, and only calls a picture settled when
+// it is neither a placeholder nor still loading.
 function whenImagesSettled() {
   const imgs = Array.from(document.querySelectorAll('#pdf-blocks img'));
   if (!imgs.length) return Promise.resolve();
   return Promise.all(imgs.map((img) => new Promise((resolve) => {
+    if (img.getAttribute(PLACEHOLDER_ATTR) === '1') {
+      // Still the placeholder.
+      //
+      // The placeholder's OWN load event has already fired by now, so
+      // waiting for another one would wait for ever — the next load only
+      // comes when the real bytes are swapped in, and that happens
+      // through the swap, not through a DOM event the page can observe
+      // here. So the wait is on the SWAP: the fetch's `.then()` clears
+      // the mark and resolves this promise.
+      //
+      // If the bytes never arrive the wait has to end anyway, so there is
+      // a ceiling on it — a note is better drawn without a picture than
+      // not drawn at all.
+      const done = () => {
+        clearTimeout(ceiling);
+        resolve();
+      };
+      const ceiling = setTimeout(done, PHOTO_WAIT_CEILING_MS);
+      img._pdfPlaceholderWaiter = done;
+      return;
+    }
     if (img.complete && (img.naturalWidth || img.dataset.failed)) {
       resolve();
       return;
@@ -271,6 +432,11 @@ function whenImagesSettled() {
     }, { once: true });
   })));
 }
+
+// How long the wait for a picture's bytes may last before the note is
+// drawn without it. A picture that takes longer than this is treated as
+// lost: the album is better off with a frame than with no page at all.
+const PHOTO_WAIT_CEILING_MS = 15000;
 
 function nextFrame() {
   return new Promise((resolve) => {
@@ -339,6 +505,30 @@ if (bridge) {
       console.error('pdf_page: could not reply', e);
     }
   });
+
+  // The main process asks the page to paint once more before it takes the
+  // screenshot.
+  //
+  // `capturePage()` does not render the page — it hands back the frame the
+  // COMPOSITOR last committed. A page that has just swapped a photograph
+  // in may not be in that frame yet, and the screenshot then shows an
+  // empty picture frame. Asking the page to paint and to say when it has
+  // makes the capture land on a frame that holds what the page drew.
+  bridge.onPaint(async () => {
+    try {
+      await nextFrame();
+      await nextFrame();
+    } catch (e) {
+      // A paint that cannot be waited for is still worth answering: the
+      // main process falls back to a plain capture.
+    }
+    try {
+      bridge.painted();
+    } catch (e) {
+      console.error('pdf_page: could not signal the paint', e);
+    }
+  });
+
   // Tell the main process the page is up and listening.
   try { bridge.ready(); } catch (e) { /* ignore */ }
 }

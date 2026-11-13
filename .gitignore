@@ -59,6 +59,9 @@ temp/
 coverage/
 .nyc_output/
 *.lcov
+# The PDF export's end-to-end test writes its log and report here.
+scripts/_pdf_e2e.log
+scripts/_pdf_e2e_report.json
 
 # Misc
 *.tgz

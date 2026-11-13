@@ -22,6 +22,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { BrowserWindow, ipcMain } = require('electron');
 const PDFDocument = require('pdfkit');
 
@@ -40,6 +41,21 @@ const NOTE_WIDTH = 560;
 
 // 离屏窗口的尺寸上限。窗口本身不显示，只是排版台；它只要比笔记宽就行。
 const RENDER_WINDOW = { width: NOTE_WIDTH + 120, height: 900 };
+
+// How long the compositor is given to commit the frame the page has just
+// painted, before the bitmap is taken. Long enough to be safe, short
+// enough not to slow the album down: it is a handful of frames.
+const PAINT_SETTLE_MS = 60;
+
+// How long the page may take to answer "I have painted" before the
+// screenshot is taken anyway. A page that never answers costs one note
+// its freshness, not the whole album.
+const PAINT_WAIT_MS = 5000;
+
+// How long the render window is given to settle before it is destroyed.
+// Destroying it while the renderer is still busy leaves the main process
+// unable to turn its event loop, and the export hangs at the end.
+const WINDOW_SETTLE_MS = 300;
 
 // ---- 中文字体 -------------------------------------------------------------
 
@@ -89,6 +105,17 @@ async function ensureRenderWindow() {
   renderWin = new BrowserWindow({
     width: RENDER_WINDOW.width,
     height: RENDER_WINDOW.height,
+    // The window is never on screen, but it does have to PAINT: the
+    // screenshot is taken from the compositor, and a compositor that has
+    // not been asked for a frame hands back the LAST frame it committed —
+    // which, right after a note is drawn, is the previous note's frame
+    // with the photos still missing.
+    //
+    // The paint is asked for from the page side (the page says when it
+    // has painted, and the capture follows), NOT with
+    // `paintWhenInitiallyHidden`: that option stops the window from
+    // loading its page at all on Windows — the load fails with
+    // ERR_FAILED, the page never runs, and every note comes out empty.
     show: false,
     // The window paints nothing the user ever sees, so it needs no
     // chrome, no menu and no paint on screen.
@@ -101,7 +128,6 @@ async function ensureRenderWindow() {
       backgroundThrottling: false,
     },
   });
-  renderWin.removeMenu();
   // The page's own console is forwarded to the main process log: a page
   // that fails to load would otherwise fail silently, and the export
   // would just time out with nothing to show for it.
@@ -121,17 +147,105 @@ async function ensureRenderWindow() {
   // itself the moment its module runs, which can be before loadURL()
   // resolves — a listener registered afterwards would miss it.
   const ready = waitForPageReady(renderWin);
-  const pageUrl = path.join(__dirname, '..', 'src', 'pdf_page.html');
-  await renderWin.loadURL('file://' + pageUrl.replace(/\\/g, '/'));
+  // The page's URL is built by Node's own converter, and the page is
+  // loaded from that URL.
+  //
+  // Neither of the obvious ways works on Windows:
+  //
+  //   'file://' + path  →  'file://c:/Users/…', where the drive letter
+  //                        lands in the URL's HOST slot; Chromium refuses
+  //                        the load with ERR_FAILED.
+  //   loadFile(path)    →  for a NORMALISED absolute path it builds
+  //                        'file:///c:\Users\…' — backslashes and all —
+  //                        and the load fails the same way.
+  //
+  // `pathToFileURL` writes the third slash and escapes the path, and
+  // `loadURL` takes the URL as it is. The page loads, the notes are
+  // drawn, and the album is no longer a stack of empty pages.
+  const pageUrl = pathToFileURL(path.join(__dirname, '..', 'src', 'pdf_page.html')).href;
+  await renderWin.loadURL(pageUrl);
   await ready;
+  // The menu is removed AFTER the page has loaded.
+  //
+  // `removeMenu()` before the load aborts the pending navigation: Chromium
+  // cancels the request and the load fails with ERR_FAILED, so the page
+  // never runs, every note fails, and the album comes out with nothing
+  // but empty pages. Taking the menu away once the page is up costs
+  // nothing — the window is hidden anyway.
+  try { renderWin.removeMenu(); } catch {}
   return renderWin;
 }
 
-function closeRenderWindow() {
+// Close the render window.
+//
+// The window is given a moment to settle first. Destroying it right after
+// a screenshot leaves the renderer still busy, and the main process then
+// cannot turn its event loop — the PDF's file stream never gets its
+// 'finish' event, and the export hangs at "收尾中" with the file already
+// written to disk.
+async function closeRenderWindow() {
   if (renderWin && !renderWin.isDestroyed()) {
+    await new Promise((resolve) => setTimeout(resolve, WINDOW_SETTLE_MS));
     try { renderWin.destroy(); } catch {}
   }
   renderWin = null;
+}
+
+// Take a screenshot of a FRESH frame.
+//
+// `capturePage()` hands back the last frame the COMPOSITOR committed — it
+// is not a synchronous render of the page. Right after the page has drawn
+// a note, that frame can still be the previous note's, or the new note
+// with its photographs not yet in it. The screenshot then goes into the
+// PDF with empty picture frames, which is exactly what the album used to
+// show now and then.
+//
+// Two things make the frame fresh:
+//
+//   1. The page is asked to paint again and to say when it has. The page
+//      answers only after a `requestAnimationFrame` has run, so the
+//      browser has been asked for a new frame.
+//   2. `capturePage` is given a moment to pick that frame up. The
+//      compositor hands the frame over asynchronously, so a capture
+//      issued in the same tick as the paint can still be one frame
+//      behind.
+//
+// A window that cannot be painted at all (destroyed mid-export) falls
+// back to a plain capture, so a broken window costs a blank page rather
+// than a failed export.
+function captureFresh(win, rect) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      // The page never answered: capture whatever there is rather than
+      // failing the whole album over one note.
+      try {
+        win.webContents.capturePage(rect).then(resolve, reject);
+      } catch (e) {
+        reject(e);
+      }
+    }, PAINT_WAIT_MS);
+
+    const onIpc = (event) => {
+      if (event.sender !== win.webContents) return;
+      cleanup();
+      // The page has painted. Give the compositor a moment to commit the
+      // frame before the bitmap is asked for.
+      setTimeout(() => {
+        try {
+          win.webContents.capturePage(rect).then(resolve, reject);
+        } catch (e) {
+          reject(e);
+        }
+      }, PAINT_SETTLE_MS);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      ipcMain.removeListener('export:pdf_page_painted', onIpc);
+    };
+    ipcMain.on('export:pdf_page_painted', onIpc);
+    win.webContents.send('export:pdf_page_paint');
+  });
 }
 
 // The page announces itself when its module has loaded and the listener
@@ -304,7 +418,14 @@ async function buildAlbum(options) {
       // a measuring bench and is wider and taller than the note; the
       // parts around the note are not part of the page, and including
       // them would shrink the note and change its proportions.
-      const shot = await win.webContents.capturePage({
+      //
+      // The frame is asked for FRESH, not for whatever is on screen: the
+      // page has just drawn a note, and the compositor may still be
+      // holding the PREVIOUS note's frame. A capture taken then shows
+      // the previous note — or the same note with its photos still
+      // missing, because the pictures were swapped in after the last
+      // committed frame.
+      const shot = await captureFresh(win, {
         x: note.x, y: note.y, width: note.width, height: note.height,
       });
       const png = shot.toPNG();
@@ -332,16 +453,23 @@ async function buildAlbum(options) {
         `第 ${i + 1} / ${events.length} 篇`);
     }
   } finally {
-    closeRenderWindow();
+    await closeRenderWindow();
   }
 
   safeProgress('finalizing', 92);
-  doc.end();
 
-  await new Promise((resolve, reject) => {
+  // The stream's end is waited for with the listener ALREADY attached.
+  //
+  // `doc.end()` flushes what is left; a small album can be written out
+  // entirely in that flush, and the 'finish' event then fires BEFORE a
+  // listener added afterwards would exist — the wait would never end and
+  // the export would hang with the progress bar stuck at "收尾中".
+  const finished = new Promise((resolve, reject) => {
     fileStream.on('finish', resolve);
     fileStream.on('error', reject);
   });
+  doc.end();
+  await finished;
 
   const bytes = fs.statSync(outPath).size;
   safeProgress('done', 100);
