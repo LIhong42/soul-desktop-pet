@@ -213,41 +213,64 @@ module.exports = (async () => {
 
     // The wall draws itself once the photos are in.
     const ready = await waitFor(async () => {
-      const n = await win.webContents.executeJavaScript(
-        'document.querySelectorAll(".wall-cell").length');
+      const n = await win.webContents.executeJavaScript(`(() => {
+        const cv = document.getElementById('wall-canvas');
+        if (!cv || !cv.style.width) return 0;
+        const note = document.getElementById('wall-template-note');
+        if (note && note.textContent.includes('正在读取')) return 0;
+        return cv.width;
+      })()`);
       return n > 0 ? n : null;
     }, 20000);
-    report.cells = ready;
+    report.canvasWidth = ready;
 
-    // What the cells look like: how many of them carry a picture, and how
-    // much red is in each of them.
+    // What the wall looks like: the canvas is one piece, so the questions
+    // are about the pixels — how much red is on it, and is the corner
+    // (outside the shape) still white?
     report.preview = await win.webContents.executeJavaScript(`(() => {
-      const cells = [...document.querySelectorAll('.wall-cell')];
-      const out = { total: cells.length, filled: 0, redRatios: [], empty: 0 };
-      for (const el of cells) {
-        const cv = el.querySelector('canvas');
-        if (!cv) continue;
-        const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
-        let red = 0, total = 0;
-        for (let i = 0; i < d.length; i += 4) {
-          total += 1;
-          if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
-        }
-        const ratio = total ? red / total : 0;
-        if (ratio > 0.5) { out.filled += 1; out.redRatios.push(Number(ratio.toFixed(3))); }
-        else out.empty += 1;
+      const cv = document.getElementById('wall-canvas');
+      if (!cv) return null;
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      let red = 0, total = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        total += 1;
+        if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
       }
-      const grid = document.querySelector('.wall-grid');
-      out.gridWidth = grid ? parseFloat(grid.style.width) : 0;
-      out.gridHeight = grid ? parseFloat(grid.style.height) : 0;
-      out.scrollWidth = grid ? grid.parentElement.clientWidth : 0;
-      out.windowWidth = window.innerWidth;
-      out.columnWidth = document.querySelector('.page-column')
-        ? document.querySelector('.page-column').clientWidth : 0;
-      const cell = document.querySelector('.wall-cell');
-      out.cellWidth = cell ? cell.offsetWidth : 0;
-      return out;
+      const corner = [d[0], d[1], d[2]];
+      const bottomRight = (() => {
+        const i = ((cv.height - 1) * cv.width + (cv.width - 1)) * 4;
+        return [d[i], d[i + 1], d[i + 2]];
+      })();
+      return {
+        width: cv.width,
+        height: cv.height,
+        redRatio: Number((total ? red / total : 0).toFixed(4)),
+        corner: corner,
+        bottomRight: bottomRight,
+        cssWidth: parseFloat(cv.style.width) || 0,
+        cssHeight: parseFloat(cv.style.height) || 0,
+        stageWidth: cv.parentElement ? cv.parentElement.clientWidth : 0,
+        windowWidth: window.innerWidth,
+        note: document.getElementById('wall-template-note')
+          ? document.getElementById('wall-template-note').textContent : '',
+      };
     })()`);
+
+    // Clicking a cell picks it — the side panel then offers that cell's
+    // photo (the top-left cell always carries the first picture).
+    await win.webContents.executeJavaScript(`(() => {
+      const cv = document.getElementById('wall-canvas');
+      const r = cv.getBoundingClientRect();
+      cv.dispatchEvent(new MouseEvent('click', {
+        clientX: r.left + r.width * 0.2,
+        clientY: r.top + r.height * 0.15,
+        bubbles: true,
+      }));
+    })()`);
+    report.selection = await win.webContents.executeJavaScript(`(() => ({
+      hasCoverBtn: !!document.getElementById('wall-cover-btn'),
+      hasRemoveBtn: !!document.getElementById('wall-remove-btn'),
+    }))()`);
 
     // Export it.
     await win.webContents.executeJavaScript(
@@ -257,12 +280,11 @@ module.exports = (async () => {
     // The layout after the export — the export re-renders the page, so the
     // wall must not come out a different size than it went in.
     report.after = await win.webContents.executeJavaScript(`(() => {
-      const grid = document.querySelector('.wall-grid');
-      const cell = document.querySelector('.wall-cell');
+      const cv = document.getElementById('wall-canvas');
       return {
-        gridWidth: grid ? parseFloat(grid.style.width) : 0,
-        cellWidth: cell ? cell.offsetWidth : 0,
-        scrollWidth: grid ? grid.parentElement.clientWidth : 0,
+        width: cv ? cv.width : 0,
+        height: cv ? cv.height : 0,
+        cssWidth: cv ? parseFloat(cv.style.width) : 0,
       };
     })()`);
 
@@ -305,9 +327,14 @@ module.exports = (async () => {
     }
 
     report.errors = errors;
+    // The wall is one canvas now: the pictures are on it, the shape clips
+    // them (so the corner of the canvas stays white), and the export comes
+    // out as a PNG of the same shape.
     report.ok = !!report.exported
-      && report.preview && report.preview.filled === report.photos
-      && report.preview.empty === report.preview.total - report.photos
+      && report.selection && report.selection.hasCoverBtn
+      && report.preview && report.preview.redRatio > 0.05
+      && report.preview.corner[0] > 200
+      && report.preview.bottomRight[0] > 200
       && report.png && report.png.redRatio > 0.05
       && report.png.width > 200 && report.png.height > 200
       && errors.length === 0;

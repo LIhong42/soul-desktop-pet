@@ -1,18 +1,25 @@
-// src/js/photo_wall_layout.js — 照片墙的形状模板。
+// src/js/photo_wall_layout.js — 照片墙的形状模板与网格计算。
 //
 // 一张照片墙由三样东西决定：
 //
-//   形状（心形……）  —— 轮廓长什么样
-//   尺寸（5 个）    —— 格子有多少，能装多少张照片
-//   画幅（5 种）    —— 每个格子（照片）自己的宽高比
+//   形状（心形……）—— 轮廓长什么样
+//   网格（n×n）    —— 画布被切成多少份
+//   画幅（5 种）    —— 照片自己的宽高比
 //
-// 每个格子的宽高比一样，所以整个墙是「一块块同样大小的照片拼成的形状」。
-// 一个形状 × 5 个尺寸 × 5 种画幅 = 25 种预制的填充方式，每一种能装的
-// 照片数都不一样（格子越扁，能塞进同一块形状里的格子越多）。
+// 画法（编辑器和导出用的是同一套）：
 //
-// 这个文件是纯计算，不碰 DOM —— 导出时算格子、编辑时画格子，用的是同一套
-// 规则。加一个新形状只要往 SHAPES 里加一条：名字、宽高比，和一个判断
-// 「这个点在不在形状里」的函数。
+//   1. 画布的长宽比 = 画幅 = 照片的长宽比；
+//   2. 形状用函数画在画布正中，占满画布能占的最大面积（一点不裁掉）；
+//   3. 画布按 n×n 的网格线切开，只有「有一块落进形状里」的格子摆照片；
+//   4. 照片再被形状裁一刀 —— 于是整面墙的轮廓就是形状本身。
+//
+// 因为网格是正方的（n 列 n 行），每格的长宽比 = 画布的长宽比 = 照片的
+// 长宽比，照片铺进格子时既不拉伸也不多裁。
+//
+// 照片数决定网格密度：小数量用稀网格（6×6），大数量用密网格。
+//
+// 这个文件是纯计算，不碰 DOM —— 导出时算格子、编辑时画格子，用的是同一
+// 套规则。加一个新形状只要往 SHAPES 里加一条：一圈轮廓点。
 
 'use strict';
 
@@ -20,76 +27,89 @@ import { COVER_RATIOS, ratioValue, closestRatioId, normalizeCover } from './diar
 
 // ---- 形状 ------------------------------------------------------------------
 //
-// 一个形状是「归一化坐标里的轮廓」：u 和 v 都在 0..1 之间，u 从左往右，
-// v 从上往下。形状自己的宽高比（aspect）是轮廓的宽除以高 —— 墙的格子按
-// 画幅摊开以后，整块墙还是这个比例，所以形状不会被拉变形。
-
-// 心形：经典的心形曲线 (x²+y²−1)³ = x²y³。
+// 一个形状就是一圈轮廓点，加上它自己的宽高比（aspect）。
 //
-// 这条曲线的取值范围是 x ∈ [−1.1387, 1.1387]、y ∈ [−1.0, 1.2347]：
-// 下尖在 y = −1，两个圆弧的顶在 y = 1.2347，中间 y = 1 处有个凹口。
-// 曲线围起来的区域就是心形（函数值 ≤ 0 的那一侧）。
-const HEART_X0 = -1.1387;
-const HEART_X1 = 1.1387;
-const HEART_Y0 = -1.0;
-const HEART_Y1 = 1.2347;
-
-function heartInside(u, v) {
-  const x = u * (HEART_X1 - HEART_X0) + HEART_X0;
-  const y = HEART_Y1 - v * (HEART_Y1 - HEART_Y0);
-  const t = x * x + y * y - 1;
-  return t * t * t - x * x * y * y * y <= 0;
-}
-
-// 可用的形状模板。
+// 轮廓点统一摆进一个宽 1、高 1/aspect 的方框里 —— 方框的长宽比就是形状
+// 的长宽比，所以形状放进画布时不会被拉变形。
 //
-// 加一个新形状 = 加一条记录。比如一个圆：
+// 加一个新形状只要给一圈点。比如一个圆：
 //
 //   { id: 'circle', name: '圆形', aspect: 1,
-//     inside: (u, v) => (u - 0.5) ** 2 + (v - 0.5) ** 2 <= 0.25 }
+//     points: Array.from({ length: 120 }, (_, i) => {
+//       const a = (i / 120) * Math.PI * 2;
+//       return { x: 0.5 + 0.5 * Math.cos(a), y: 0.5 + 0.5 * Math.sin(a) };
+//     }) }
 //
-// 剩下的（尺寸、画幅、填充、选模板）都是现成的。
+// 剩下的（网格、画幅、填充、选模板）都是现成的。
+
+// 心形：经典参数方程
+//
+//   x = 16 sin³t
+//   y = 13 cos t − 5 cos 2t − 2 cos 3t − cos 4t
+//
+// y 取了负 —— 画布的 y 往下长。
+function heartOutline() {
+  const pts = [];
+  const N = 240;
+  for (let i = 0; i < N; i += 1) {
+    const t = (i / N) * Math.PI * 2;
+    const s = Math.sin(t);
+    pts.push({
+      x: 16 * s * s * s,
+      y: -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)),
+    });
+  }
+  return pts;
+}
+
+// 把一圈点摆进宽 1 的方框（高度按点自己的高宽比），返回归一化后的点。
+function normalizeOutline(raw) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of raw) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const w = maxX - minX;
+  const h = maxY - minY;
+  return {
+    points: raw.map((p) => ({ x: (p.x - minX) / w, y: (p.y - minY) / h })),
+    aspect: w / h,
+  };
+}
+
+const HEART = normalizeOutline(heartOutline());
+
+// 可用的形状模板。
 export const SHAPES = [
   {
     id: 'heart',
     name: '心形',
-    aspect: (HEART_X1 - HEART_X0) / (HEART_Y1 - HEART_Y0),
-    inside: heartInside,
+    aspect: HEART.aspect,
+    points: HEART.points,
   },
 ];
 
-// ---- 尺寸 ------------------------------------------------------------------
+// ---- 网格 ------------------------------------------------------------------
 //
-// 每个形状有 5 个尺寸。尺寸用「行数」表示 —— 格子排成多少行，列数由
-// 形状的宽高比和格子的画幅决定（见 buildTemplate）。
+// 画布被切成 n×n 的网格线。照片越多网格越密 —— 格子小，照片多。
 //
-// 行数越多格子越密，能装的照片也越多：最小的一档十来张，最大的一档
-// 一百多张。
-export const WALL_SIZES = [
-  { id: 's1', name: '小型', rows: 5 },
-  { id: 's2', name: '中小型', rows: 7 },
-  { id: 's3', name: '中型', rows: 9 },
-  { id: 's4', name: '大型', rows: 12 },
-  { id: 's5', name: '超大', rows: 15 },
-];
+// 每一格的长宽比 = 画布的长宽比 = 照片的长宽比，所以照片铺进格子不用裁。
+export const WALL_SIZES = [];
+for (let n = 3; n <= 32; n += 1) {
+  WALL_SIZES.push({ id: `g${n}`, name: `${n}×${n}`, n });
+}
 
 // ---- 画幅 ------------------------------------------------------------------
 //
-// 格子的宽高比 —— 和笔记里封面的五种画幅是同一套（src/js/diary_cover.js），
-// 这样照片墙里的格子比例和回忆笔记里的画框比例是同一批数字。
+// 格子（也就是照片）的宽高比 —— 和笔记里封面的五种画幅是同一套
+// （src/js/diary_cover.js），这样照片墙里的格子和回忆笔记里的画框是同一批
+// 数字。画布的长宽比也跟它走。
 export const WALL_RATIOS = COVER_RATIOS;
-
-// 一个形状的全部 25 种填充方式。
-export function listTemplates(shapeId) {
-  const shape = getShape(shapeId);
-  const out = [];
-  for (const size of WALL_SIZES) {
-    for (const ratio of WALL_RATIOS) {
-      out.push(buildTemplate(shape.id, size.id, ratio.id));
-    }
-  }
-  return out;
-}
 
 export function getShape(shapeId) {
   return SHAPES.find((s) => s.id === shapeId) || SHAPES[0];
@@ -99,33 +119,117 @@ export function getSize(sizeId) {
   return WALL_SIZES.find((s) => s.id === sizeId) || WALL_SIZES[0];
 }
 
+// ---- 形状的几何 ------------------------------------------------------------
+
+// 形状在画布里占的位置：整个轮廓按比例缩放后放进去（一点不裁掉），居中。
+//
+// 画布太宽或太高时，形状就由窄的那一边决定大小 —— 形状永远是「能放进
+// 画布的最大那一个」。
+function placeShape(shape, canvasW, canvasH) {
+  const w = Math.min(canvasW, canvasH * shape.aspect);
+  const h = w / shape.aspect;
+  return { x: (canvasW - w) / 2, y: (canvasH - h) / 2, w, h };
+}
+
+// 把轮廓切成一条条水平带，每条带记住它在 x 上的几段区间。
+//
+// 一条带里的截面是不变的（只有碰到顶点的 y 才会变），所以「格子有没有
+// 落进形状里」只要看这条带和格子在 x 上有没有交叠。
+function buildBands(points) {
+  const ys = Array.from(new Set(points.map((p) => p.y))).sort((a, b) => a - b);
+  const bands = [];
+  for (let i = 0; i + 1 < ys.length; i += 1) {
+    const y0 = ys[i];
+    const y1 = ys[i + 1];
+    const spans = crossSpans(points, (y0 + y1) / 2);
+    if (!spans.length) continue;
+    bands.push({ y0, y1, spans });
+  }
+  return bands;
+}
+
+// 水平线 y 和轮廓的交点，成对成段。
+function crossSpans(points, y) {
+  const xs = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    // 半开区间：顶点算在它上面那条边上，水平线才不会被数两次。
+    if ((a.y <= y && b.y > y) || (b.y <= y && a.y > y)) {
+      xs.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
+    }
+  }
+  xs.sort((a, b) => a - b);
+  const spans = [];
+  for (let i = 0; i + 1 < xs.length; i += 2) spans.push([xs[i], xs[i + 1]]);
+  return spans;
+}
+
+// 形状和画幅定下来以后，带子和轮廓就不再变了 —— 缓存起来省得每次重算。
+const bandCache = new Map();
+
+function shapeGeometry(shape, ratio) {
+  const key = `${shape.id}@${ratio.toFixed(4)}`;
+  const hit = bandCache.get(key);
+  if (hit) return hit;
+  // 模板里的坐标：画布宽 ratio、高 1。画的时候乘一个缩放就是像素。
+  const place = placeShape(shape, ratio, 1);
+  const outline = shape.points.map((p) => ({
+    x: place.x + p.x * place.w,
+    y: place.y + p.y * place.h,
+  }));
+  const geo = { bands: buildBands(outline), outline };
+  bandCache.set(key, geo);
+  return geo;
+}
+
+// 第一条还压在 y 下方的带子。
+function firstBandBelow(bands, y) {
+  let lo = 0;
+  let hi = bands.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (bands[mid].y1 <= y) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+// 一个格子有没有落进形状里 —— 只要有一小块落进去就算。
+function cellHitsShape(bands, x0, y0, x1, y1) {
+  for (let i = firstBandBelow(bands, y0); i < bands.length; i += 1) {
+    const band = bands[i];
+    if (band.y0 >= y1) break;
+    for (const span of band.spans) {
+      if (span[1] <= x0) continue;
+      if (span[0] >= x1) break;
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---- 填充方式 --------------------------------------------------------------
 //
-// 一张填充方式 = 形状 × 尺寸 × 画幅。
-//
-// 格子排成 rows 行 × cols 列。列数是这么来的：整块墙的宽高比要等于
-// 形状自己的宽高比（不然心形会被拉扁），而墙的宽高比 = 列数×格子宽 /
-// (行数×格子高) = (列数/行数) × 格子画幅。于是列数 = 行数 × 形状宽高比
-// / 格子画幅。
-//
-// 格子画幅越扁，列数越多 —— 同样一块形状里能塞下的格子也越多。这就是
-// 25 种填充方式「能装的照片数各不相同」的来源。
+// 一张填充方式 = 形状 × 网格 × 画幅。
 //
 // 格子按从上到下、从左到右的顺序编号，照片按这个顺序填进去。
 export function buildTemplate(shapeId, sizeId, ratioId) {
   const shape = getShape(shapeId);
   const size = getSize(sizeId);
   const ratio = ratioValue(ratioId);
-  const rows = size.rows;
-  const cols = Math.max(2, Math.round(rows * shape.aspect / ratio));
+  const n = size.n;
+  const { bands, outline } = shapeGeometry(shape, ratio);
 
+  const cw = ratio / n;
+  const ch = 1 / n;
   const cells = [];
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const u = (col + 0.5) / cols;
-      const v = (row + 0.5) / rows;
-      if (!shape.inside(u, v)) continue;
-      cells.push({ col, row, index: cells.length });
+  for (let row = 0; row < n; row += 1) {
+    for (let col = 0; col < n; col += 1) {
+      const x = col * cw;
+      const y = row * ch;
+      if (!cellHitsShape(bands, x, y, x + cw, y + ch)) continue;
+      cells.push({ col, row, index: cells.length, x, y, w: cw, h: ch });
     }
   }
 
@@ -135,58 +239,31 @@ export function buildTemplate(shapeId, sizeId, ratioId) {
     sizeId: size.id,
     sizeName: size.name,
     ratioId,
-    rows,
-    cols,
+    ratio,
+    n,
+    cols: n,
+    rows: n,
     cells,
     capacity: cells.length,
+    outline,
   };
 }
 
 // ---- 选模板 ----------------------------------------------------------------
 //
-// 挑一个「综合最接近」的填充方式：照片数要装得下（装不下的模板先出局），
-// 装得下的里面挑格子数最接近照片数的，再看画幅跟用户设的封面画幅差多少。
-//
-// 画幅的差距按对数算：宽高比是个倍数，1.78 和 1.33 的差跟 1.33 和 1.0
-// 的差不是一回事（和笔记里挑封面用的是同一个想法）。
-//
-// 照片数差一张格子 vs 画幅差一档，谁更急？格子差得多意味着墙上空一块或
-// 少放几张，画幅差一档只是裁得狠一点。所以画幅的差距换算成「几张照片」
-// 的价钱再比。
-const RATIO_PRICE = 8;
-
+// 挑一个「装得下照片」的网格：格子数刚好够放照片的那一档（格子最少、
+// 空位最少）。一个都装不下时（照片比最密的网格还多），拿格子最多的那个
+// —— 剩下的照片由页面提示放不下。
 export function pickTemplate(shapeId, photoCount, ratioId) {
-  const templates = listTemplates(shapeId);
   const count = Math.max(0, photoCount | 0);
-  const wantRatio = ratioValue(ratioId);
-
-  // 装得下照片的模板先挑：墙上空几格还能补，少放几张照片就是丢照片了。
-  // 一个都装不下（照片比最大的模板还多）时，只能拿格子最多的那个。
-  const fitting = templates.filter((t) => t.capacity >= count);
-  const candidates = fitting.length ? fitting : templates;
-  const overflow = fitting.length ? 0 : 1;
-
-  let best = null;
-  let bestScore = Infinity;
-  for (const t of candidates) {
-    // 格子数的差：空出来的格子算钱，装不下的算得更贵。
-    const gap = t.capacity - count;
-    const countPrice = gap >= 0 ? gap : -gap * 3;
-    const ratioGap = Math.abs(Math.log(ratioValue(t.ratioId) / wantRatio));
-    const score = countPrice + ratioGap * RATIO_PRICE;
-    if (score < bestScore - 1e-9) {
-      bestScore = score;
-      best = t;
-    }
+  let fit = null;
+  let biggest = null;
+  for (const size of WALL_SIZES) {
+    const t = buildTemplate(shapeId, size.id, ratioId);
+    if (!biggest || t.capacity > biggest.capacity) biggest = t;
+    if (t.capacity >= count && (!fit || t.capacity < fit.capacity)) fit = t;
   }
-  // 一个都装不下时，格子最多的那个优先 —— 剩下的照片由页面提示放不下。
-  if (overflow) {
-    let maxCap = -1;
-    for (const t of templates) {
-      if (t.capacity > maxCap) { maxCap = t.capacity; best = t; }
-    }
-  }
-  return best || templates[0];
+  return fit || biggest || buildTemplate(shapeId, WALL_SIZES[0].id, ratioId);
 }
 
 // 一批照片里最常见的画幅 —— 用户给照片设的封面的主流形状。
@@ -228,32 +305,39 @@ export function photoDefaultRatio(picW, picH) {
 
 // ---- 墙的几何 --------------------------------------------------------------
 //
-// 墙的格子之间留一条缝 —— 拼在一起是一块形状，中间有缝才看得出是一张一
-// 张摆的。缝是格子的百分之一点五，所以格子越大缝越宽。
-//
-// 编辑器里的墙和导出的墙用的是同一个算法（只是格子的大小不同），所以
-// 看到的和导出的长得一样。
-export function wallGeometry(template, cellW) {
-  const ratio = ratioValue(template.ratioId);
-  const w = Math.max(8, Math.round(cellW));
-  const h = Math.max(8, Math.round(w / ratio));
-  const gap = Math.max(0, Math.round(w * 0.015));
+// 模板里的坐标是「画布宽 ratio、高 1」，画的时候乘一个缩放就变成像素。
+// 编辑器里的墙和导出的墙用的是同一个算法（只是画布大小不同），所以看到
+// 的和导出的长得一样。
+export function wallGeometry(template, canvasH) {
+  const s = canvasH;
+  const cellW = (template.ratio * s) / template.n;
+  const cellH = s / template.n;
   return {
-    cellW: w,
-    cellH: h,
-    gap,
-    width: template.cols * w + (template.cols - 1) * gap,
-    height: template.rows * h + (template.rows - 1) * gap,
-    x: (col) => col * (w + gap),
-    y: (row) => row * (h + gap),
+    scale: s,
+    cellW,
+    cellH,
+    canvasW: template.ratio * s,
+    canvasH: s,
+    x: (col) => col * cellW,
+    y: (row) => row * cellH,
+    shape: template.outline.map((p) => ({ x: p.x * s, y: p.y * s })),
   };
 }
 
-// 导出时一个格子多少像素。
+// 一个格子在画布上的位置（像素）。
+export function cellRect(geo, cell) {
+  return {
+    x: geo.x(cell.col),
+    y: geo.y(cell.row),
+    w: geo.cellW,
+    h: geo.cellH,
+  };
+}
+
+// 导出时画布多宽。
 //
-// 墙的宽度大致定在三千多像素：再宽没必要，再窄发出去看不清。
-// 格子多了就小一点，格子少了就大一点，但都有个上下限。
-export function exportCellWidth(cols) {
-  const target = 3200;
-  return Math.max(120, Math.min(480, Math.round(target / Math.max(1, cols))));
+// 格子大约三百多像素：格子太密就看不清了，太宽发出去太大。总的宽度
+// 落在 1600 ~ 4800 之间。
+export function exportCanvasWidth(n) {
+  return Math.max(1600, Math.min(4800, Math.round(n * 320)));
 }

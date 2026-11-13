@@ -3920,10 +3920,13 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 /* ---------------------------------------------------------------------------
    照片墙 (/photo-wall)
    ---------------------------------------------------------------------------
-   The wall is a grid of same-sized cells laid out in the shape's outline.
-   The cells are absolutely positioned — the shape decides where each one
-   goes, and the gap between them is what makes it read as a wall of
-   separate pictures rather than one big mosaic. */
+   The wall is ONE canvas: the shape is drawn in the middle of it, the grid
+   lines cut it up, and the photos are clipped by the shape — so the wall's
+   outline IS the shape.
+
+   A second, transparent canvas lies on top of the first one. It only ever
+   carries the selected cell's frame, so picking a cell does not mean
+   repainting the whole wall. */
 
 .wall-head { margin-bottom: 4px; }
 .wall-back {
@@ -3953,33 +3956,20 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   border-radius: var(--radius);
   border: 1px solid var(--border);
 }
-.wall-grid {
+.wall-stage {
   position: relative;
   margin: 0 auto;
+  line-height: 0;
 }
-.wall-cell {
-  position: absolute;
-  overflow: hidden;
-  border-radius: 3px;
-  background: repeating-linear-gradient(
-    45deg, #f2f0ea, #f2f0ea 6px, #eae7df 6px, #eae7df 12px);
-  cursor: pointer;
-  transition: box-shadow 120ms ease;
-}
-.wall-cell canvas {
+.wall-stage canvas {
   display: block;
-  width: 100%;
-  height: 100%;
+  cursor: pointer;
 }
-.wall-cell.filled { cursor: grab; }
-.wall-cell.filled:active { cursor: grabbing; }
-.wall-cell.selected {
-  box-shadow: 0 0 0 3px var(--accent);
-  z-index: 2;
-}
-.wall-cell.drop-target {
-  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 5px var(--accent);
-  z-index: 3;
+.wall-stage #wall-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
 }
 
 .wall-side h3 {
