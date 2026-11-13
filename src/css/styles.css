@@ -3916,3 +3916,187 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   padding-left: 32px;
 }
 
+
+/* ---------------------------------------------------------------------------
+   照片墙 (/photo-wall)
+   ---------------------------------------------------------------------------
+   The wall is a grid of same-sized cells laid out in the shape's outline.
+   The cells are absolutely positioned — the shape decides where each one
+   goes, and the gap between them is what makes it read as a wall of
+   separate pictures rather than one big mosaic. */
+
+.wall-head { margin-bottom: 4px; }
+.wall-back {
+  display: inline-block;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.wall-back:hover { color: var(--accent); }
+
+.wall-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 10px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .wall-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.wall-stage-card { overflow: hidden; }
+.wall-scroll {
+  overflow: auto;
+  padding: 10px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.wall-grid {
+  position: relative;
+  margin: 0 auto;
+}
+.wall-cell {
+  position: absolute;
+  overflow: hidden;
+  border-radius: 3px;
+  background: repeating-linear-gradient(
+    45deg, #f2f0ea, #f2f0ea 6px, #eae7df 6px, #eae7df 12px);
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+}
+.wall-cell canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.wall-cell.filled { cursor: grab; }
+.wall-cell.filled:active { cursor: grabbing; }
+.wall-cell.selected {
+  box-shadow: 0 0 0 3px var(--accent);
+  z-index: 2;
+}
+.wall-cell.drop-target {
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 5px var(--accent);
+  z-index: 3;
+}
+
+.wall-side h3 {
+  font-size: 13px;
+  margin: 14px 0 6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.wall-side-photo {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.wall-side-photo img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--bg);
+}
+.wall-side-name {
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+}
+.wall-side-meta { min-width: 0; }
+
+.wall-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+.wall-tray.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.wall-tray-item {
+  width: 72px;
+  cursor: grab;
+  user-select: none;
+}
+.wall-tray-item img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--bg);
+  display: block;
+}
+.wall-tray-item span {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The photo picker — "换一张照片". A sheet over the page with every photo
+   of the selection in it. */
+.wall-picker {
+  position: fixed;
+  inset: 0;
+  background: rgba(30, 25, 20, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.wall-picker-card {
+  background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  width: min(720px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px;
+}
+.wall-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.wall-picker-x {
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.wall-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  overflow: auto;
+}
+.wall-picker-item { cursor: pointer; }
+.wall-picker-item img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--bg);
+  display: block;
+}
+.wall-picker-item span {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -11,7 +11,7 @@
 // unsubscribes when navigated away (window hashchange or before
 // re-rendering on filter change).
 import { api, escapeHtml, toast, fetchPhotoDataUrl, memorialPhotoUrl } from '../api.js';
-import { register } from '../router.js';
+import { register, navigate } from '../router.js';
 import { ALL, CUSTOM, buildPresetList, applyFilter, fmtForChip } from '../export_filter.js';
 
 const state = {
@@ -210,8 +210,9 @@ function render() {
         <button class="btn" id="export-pdf-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (PDF)</button>
         <button class="btn" id="export-docx-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (Word)</button>
         <button class="btn" id="export-mp4-btn" ${exportDisabled ? 'disabled' : ''}>导出回忆视频 (MP4)</button>
+        <button class="btn secondary" id="export-wall-btn" ${exportDisabled ? 'disabled' : ''}>导出照片墙 (PNG)</button>
       </div>
-      <p class="meta" style="margin-top:8px;">PDF 每页一篇回忆，保留回忆编辑页里的文字与图片排版，整篇等比缩放到一页；Word 导出同样一篇一页（标题行 + 内容 + 日期行），照片保持等比并且每张都能点开原图。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
+      <p class="meta" style="margin-top:8px;">PDF 每页一篇回忆，保留回忆编辑页里的文字与图片排版，整篇等比缩放到一页；Word 导出同样一篇一页（标题行 + 内容 + 日期行），照片保持等比并且每张都能点开原图。视频每张照片 4 秒（含 Ken Burns 推拉）。照片墙把选中的几篇回忆里的照片拼成一块心形的墙：进了编辑页还能换位置、改封面，最后导出成一张 PNG。</p>
       ${renderExportProgress()}
     </div>
     </div>
@@ -322,10 +323,12 @@ function wireUi() {
       const pdfBtn = document.getElementById('export-pdf-btn');
       const docxBtn = document.getElementById('export-docx-btn');
       const mp4Btn = document.getElementById('export-mp4-btn');
+      const wallBtn = document.getElementById('export-wall-btn');
       const disable = state.selectedEventIds.size === 0 || state.exporting;
       if (pdfBtn) pdfBtn.disabled = disable;
       if (docxBtn) docxBtn.disabled = disable;
       if (mp4Btn) mp4Btn.disabled = disable;
+      if (wallBtn) wallBtn.disabled = disable;
     };
   });
 
@@ -336,6 +339,8 @@ function wireUi() {
   if (pdfBtn) pdfBtn.onclick = () => doExport('pdf');
   if (docxBtn) docxBtn.onclick = () => doExport('docx');
   if (mp4Btn) mp4Btn.onclick = () => doExport('mp4');
+  const wallBtn = document.getElementById('export-wall-btn');
+  if (wallBtn) wallBtn.onclick = openPhotoWall;
 
   // Cancel
   const cancelBtn = document.getElementById('export-cancel-btn');
@@ -452,6 +457,16 @@ async function doExport(kind) {
     render();
     toast('导出失败：' + ((e && e.message) || e));
   }
+}
+
+// 照片墙：带着选中的回忆进编辑页，编辑完再导出成 PNG。
+function openPhotoWall() {
+  const ids = Array.from(state.selectedEventIds);
+  if (ids.length === 0) {
+    toast('请至少选择一个事件');
+    return;
+  }
+  navigate('/photo-wall?ids=' + encodeURIComponent(ids.join(',')));
 }
 
 async function doCancel() {

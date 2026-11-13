@@ -21,6 +21,7 @@ import './pages/tool_transparent_png.js';
 import './pages/tool_batch_resize.js';
 import './pages/settings.js';
 import './pages/export.js';
+import './pages/photo_wall.js';
 
 async function updateActiveLink(path) {
   document.querySelectorAll('.nav a').forEach((a) => {

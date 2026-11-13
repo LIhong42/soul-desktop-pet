@@ -12,6 +12,8 @@
     "measure:text-boxes": "node scripts/measure-text-boxes.js",
     "test:pdf-page": "node scripts/test_pdf_photo_render.js",
     "test:pdf-e2e": "node scripts/run-electron.js scripts/run-pdf-e2e.js",
+    "test:cover-editor": "node scripts/test_cover_editor.js",
+    "test:wall-e2e": "node scripts/run-electron.js scripts/run-photo-wall-e2e.js",
     "install:bin": "node scripts/install-electron-bin.js",
     "postinstall": "node scripts/install.js",
     "prebuild": "node scripts/hoist-call-bind-helpers.js && node scripts/prebuild-extract-winCodeSign.js",

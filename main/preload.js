@@ -63,6 +63,13 @@ contextBridge.exposeInMainWorld('mp', {
       // bypass the CSP `default-src 'self'` rule that prevents custom protocol
       // schemes from being loaded into <img>.
       read:   (photoId)         => ipcRenderer.invoke('memorial_events:photo_read', photoId),
+      // A small version of the same picture: { data_url, width, height }.
+      // The photo wall shows a hundred pictures at once and works on
+      // thumbnails so the page does not choke on the originals.
+      thumb:  (photoId)         => ipcRenderer.invoke('memorial_events:photo_thumb', photoId),
+      // The original bytes, as a Uint8Array. The wall export draws at full
+      // resolution, so it needs the real picture.
+      bytes:  (photoId)         => ipcRenderer.invoke('memorial_events:photo_bytes', photoId),
       // A video or an audio attachment. Returns { url, mime, size_bytes,
       // original_name } — the `url` is a file: URL the <video>/<audio>
       // element can load directly (the CSP allows file: for media).
@@ -243,6 +250,9 @@ contextBridge.exposeInMainWorld('mp', {
     pdf: (payload) => ipcRenderer.invoke('export:pdf', payload || {}),
     docx: (payload) => ipcRenderer.invoke('export:docx', payload || {}),
     mp4: (payload) => ipcRenderer.invoke('export:mp4', payload || {}),
+    // The photo wall (PNG). The renderer draws the wall and hands the
+    // finished PNG over as `bytes` (a Uint8Array).
+    photoWall: (payload) => ipcRenderer.invoke('export:photo_wall', payload || {}),
     cancel: (payload) => ipcRenderer.invoke('export:cancel', payload || {}),
   },
 

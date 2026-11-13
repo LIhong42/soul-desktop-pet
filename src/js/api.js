@@ -54,6 +54,12 @@ export const api = {
       upload: (eventId, payload)=> M.memorialEvents.photos.upload(eventId, payload),
       delete: (photoId)         => M.memorialEvents.photos.delete(photoId),
       read:   (photoId)         => M.memorialEvents.photos.read(photoId),
+      // A small version of the picture: { data_url, width, height }. The
+      // photo wall shows a hundred pictures at once and works on thumbnails.
+      thumb:  (photoId)         => M.memorialEvents.photos.thumb(photoId),
+      // The original bytes (a Uint8Array) — the wall export draws at full
+      // resolution and needs the real picture.
+      bytes:  (photoId)         => M.memorialEvents.photos.bytes(photoId),
       // A video or an audio attachment: { url, mime, size_bytes,
       // original_name }. The url is a file: URL the <video>/<audio>
       // element can load — a movie is far too big to base64 into a data
@@ -209,6 +215,8 @@ export const api = {
     pdf: (payload) => M.export_.pdf(payload || {}),
     docx: (payload) => M.export_.docx(payload || {}),
     mp4: (payload) => M.export_.mp4(payload || {}),
+    // The photo wall (PNG): { bytes } in, { path, bytes } out.
+    photoWall: (payload) => M.export_.photoWall(payload || {}),
     cancel: (payload) => M.export_.cancel(payload || {}),
   },
   // Video → frames zip tool. Main opens the file picker and save dialog so

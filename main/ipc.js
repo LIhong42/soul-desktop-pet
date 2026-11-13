@@ -17,6 +17,7 @@ const { buildPetState } = require('./pet_state');
 const albumPdf = require('./album_pdf');
 const albumDocx = require('./album_docx');
 const albumVideo = require('./album_video');
+const photoThumb = require('./photo_thumb');
 const { verifyPin, hashPin, isValidPinShape } = require('./auth');
 const petInteractions = require('./pet_interactions');
 const bondEngine = require('./bond_engine');
@@ -1310,6 +1311,48 @@ function normFreeText(s) {
       return { data_url: `data:${mime};base64,${buf.toString('base64')}`, mime };
     } catch (e) {
       console.error('photo_read failed:', e);
+      return null;
+    }
+  });
+
+  // ---- Photo thumbnails ---------------------------------------------------
+  //
+  // A photo wall can hold a hundred photos, and the editor shows every one
+  // of them at once. The originals are megabytes each — a hundred of them
+  // would choke the page — so the wall works on thumbnails.
+  //
+  // The thumbnail is generated once with ffmpeg and cached on disk
+  // (main/photo_thumb.js). It keeps the picture's own shape, so the cover
+  // maths is the same on the thumbnail as on the original.
+  //
+  // Returns: { data_url, width, height } or null.
+  ipcMain.handle('memorial_events:photo_thumb', async (_e, photoId) => {
+    const row = db.one('SELECT * FROM memorial_event_photos WHERE id = ?', [photoId]);
+    if (!row) return null;
+    const full = path.join(getPhotosDir(), row.memorial_event_id, path.basename(row.relative_path));
+    if (!fs.existsSync(full)) return null;
+    return await photoThumb.getThumb({
+      photoId,
+      sourcePath: full,
+      appData: app.getPath('appData'),
+    });
+  });
+
+  // ---- Photo bytes --------------------------------------------------------
+  //
+  // The original bytes of one photo, for the wall export: the export draws
+  // the wall at full resolution, so it needs the real picture, not the
+  // thumbnail. The bytes travel as a Uint8Array — base64 would make them a
+  // third bigger for no reason.
+  ipcMain.handle('memorial_events:photo_bytes', (_e, photoId) => {
+    const row = db.one('SELECT * FROM memorial_event_photos WHERE id = ?', [photoId]);
+    if (!row) return null;
+    const full = path.join(getPhotosDir(), row.memorial_event_id, path.basename(row.relative_path));
+    if (!fs.existsSync(full)) return null;
+    try {
+      return fs.readFileSync(full);
+    } catch (e) {
+      console.error('photo_bytes failed:', e);
       return null;
     }
   });
@@ -3773,6 +3816,32 @@ function normFreeText(s) {
     }
     return out;
   }
+
+  // ---- Photo wall (PNG) ----------------------------------------------------
+  //
+  // The renderer draws the wall (it has the canvas and the layout the user
+  // just finished editing) and hands the finished PNG over. The main
+  // process only asks where to save it and writes the bytes.
+  //
+  // The bytes travel as a Uint8Array — a data URL would make them a third
+  // bigger and a lot slower to copy.
+  ipcMain.handle('export:photo_wall', async (_e, payload = {}) => {
+    const bytes = payload && payload.bytes;
+    if (!bytes || !bytes.byteLength) throw new Error('没有可导出的照片墙数据');
+    const stamp = backupStamp();
+    const result = await dialog.showSaveDialog(winMain, {
+      title: '导出照片墙',
+      defaultPath: `soul-desktop-pet-photo-wall-${stamp}.png`,
+      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    try {
+      fs.writeFileSync(result.filePath, Buffer.from(bytes));
+    } catch (e) {
+      throw new Error('照片墙写入失败：' + ((e && e.message) || e));
+    }
+    return { path: result.filePath, bytes: bytes.byteLength };
+  });
 
   ipcMain.handle('export:pdf', async (_e, payload = {}) => {
     const eventIds = Array.isArray(payload.eventIds) ? payload.eventIds.map(String) : [];

@@ -62,6 +62,9 @@ coverage/
 # The PDF export's end-to-end test writes its log and report here.
 scripts/_pdf_e2e.log
 scripts/_pdf_e2e_report.json
+# The photo wall's end-to-end test writes its log and report here.
+scripts/_photo_wall_e2e.log
+scripts/_photo_wall_e2e_report.json
 
 # Misc
 *.tgz
