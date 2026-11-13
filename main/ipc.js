@@ -3814,6 +3814,8 @@ function normFreeText(s) {
         stats: {
           events: stats.events,
           photos: stats.photos,
+          notes: stats.notes,
+          failed: stats.failed,
           pages: stats.pages,
           bytes: stats.bytes,
           font: stats.font,

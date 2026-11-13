@@ -211,7 +211,7 @@ function render() {
         <button class="btn" id="export-docx-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (Word)</button>
         <button class="btn" id="export-mp4-btn" ${exportDisabled ? 'disabled' : ''}>导出回忆视频 (MP4)</button>
       </div>
-      <p class="meta" style="margin-top:8px;">直接导出使用简单排版；Word 导出生成可编辑的图文文档（章节 + 内嵌照片）。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
+      <p class="meta" style="margin-top:8px;">PDF 每页一篇回忆，保留回忆编辑页里的文字与图片排版，整篇等比缩放到一页；Word 导出生成可编辑的图文文档（章节 + 内嵌照片）。视频每张照片 4 秒（含 Ken Burns 推拉）。</p>
       ${renderExportProgress()}
     </div>
     </div>
@@ -430,9 +430,17 @@ async function doExport(kind) {
         ? ` · ${Math.round(r.stats.durationSec)}s`
         : '';
       const pageTxt = (r.stats.pages != null) ? ` · ${r.stats.pages} 页` : '';
+      // The PDF counts the notes it drew, so a note that could not be
+      // laid out is visible in the summary instead of silently missing.
+      const noteTxt = (kind === 'pdf' && r.stats.notes != null)
+        ? ` · ${fmt(r.stats.notes)} 篇回忆`
+        : '';
+      const failedTxt = (kind === 'pdf' && r.stats.failed)
+        ? ` · ${fmt(r.stats.failed)} 篇未能排入`
+        : '';
       const kindLabel = kind === 'docx' ? 'Word 相册'
         : kind === 'pdf' ? 'PDF 相册' : 'MP4 视频';
-      toast(`${kindLabel} 已导出：${r.stats.events} 个事件${photoTxt}${pageTxt}${durTxt}${sizeTxt}`);
+      toast(`${kindLabel} 已导出：${r.stats.events} 个事件${noteTxt}${photoTxt}${pageTxt}${failedTxt}${durTxt}${sizeTxt}`);
     } else {
       toast(kind === 'docx' ? 'Word 已导出' : kind === 'pdf' ? 'PDF 已导出' : '视频已导出');
     }

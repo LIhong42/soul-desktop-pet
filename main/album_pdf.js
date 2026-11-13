@@ -1,23 +1,47 @@
-// main/album_pdf.js — PDF photo-book generator for memorial events.
+// main/album_pdf.js — PDF 回忆相册生成器。
 //
-// Pipeline: pdfkit's streaming PDFDocument → fs.createWriteStream(out).
+// 一页 PDF = 一篇回忆笔记。
 //
-// buildAlbum({ events, outPath, progressCb }) writes a cover page, one
-// title page per event, one page per photo, and a closing index.
+// 旧的做法是「一页一张图」：照片铺满整页，回忆编辑页上的排版全部丢掉 ——
+// 用户写的段落、图组的排布、图片的大小比例，全都没有了。现在每一页放的是
+// 一整篇笔记：笔记里的文字板块和图片板块，按用户在编辑页排好的顺序，
+// 整体等比缩放到一页 PDF 上。
+//
+// 排版本身不是在这里重画一遍 —— 那会变成第二套规则，跟编辑页慢慢走样。
+// 笔记由一个离屏渲染窗口用真正的浏览器排出来：同一份 CSS、同一批模块
+// （diary_layout / diary_cover / diary_themes）、同一套板块类名。所以导出
+// 出来的页面就是编辑页的页面，不是它的模仿品。主进程把它截图下来，按
+// 同一个比例缩放放进 PDF。
+//
+// 流水线：
+//   离屏窗口渲染一篇笔记 → capturePage() 拿到位图 → 等比缩放 → 贴进一页 A4
+//
+// 缩放只有一个系数：位图按 min(页宽/图宽, 页高/图高) 整体缩放，居中放。
+// 一个系数意味着笔记的长宽比不会变 —— 文字不会被拉扁，图不会被压扁，
+// 每一页笔记和编辑页上看到的完全一致。
 
 const path = require('path');
 const fs = require('fs');
-const { app } = require('electron');
+const { BrowserWindow, ipcMain } = require('electron');
 const PDFDocument = require('pdfkit');
 
-// ---- Page geometry ---------------------------------------------------------
+// ---- 页面尺寸 -------------------------------------------------------------
 
 const PAGE = {
   a4Portrait:  { w: 595.28, h: 841.89 },
-  a4Landscape: { w: 841.89, h: 595.28 },
 };
 
-// ---- Font resolution ------------------------------------------------------
+// PDF 页面四周留的白边（pt）。笔记在白边中间落位，四周是纸。
+const PAGE_MARGIN = 36;
+
+// 笔记在浏览器里的排版宽度（CSS px）。所有笔记用同一个宽度排版，PDF 里
+// 的缩放才有可比性 —— 一段话和三段话会落在同样宽的版面上。
+const NOTE_WIDTH = 560;
+
+// 离屏窗口的尺寸上限。窗口本身不显示，只是排版台；它只要比笔记宽就行。
+const RENDER_WINDOW = { width: NOTE_WIDTH + 120, height: 900 };
+
+// ---- 中文字体 -------------------------------------------------------------
 
 function pickCjkFontPath() {
   const candidates = [];
@@ -48,48 +72,155 @@ function fmtDateOnly(s) {
   return m ? `${m[1]}-${m[2]}-${m[3]}` : s;
 }
 
-function shortText(s, max = 200) {
-  if (!s) return '';
-  const t = String(s).replace(/\s+/g, ' ').trim();
-  return t.length > max ? t.slice(0, max - 1) + '…' : t;
+// ---- 离屏渲染窗口 ---------------------------------------------------------
+
+// 渲染窗口的生命周期由 buildAlbum 管：它在这期间一直活着，一篇一篇笔记
+// 排过去。窗口不显示（show: false），但它必须真的加载出来 —— 一个
+// 从没显示过的窗口在某些平台上不会渲染，capturePage 会拿到一张空白图。
+//
+// The window's own lifetime belongs to buildAlbum: it stays alive for the
+// whole run, one note after another. It is never shown, but it does have
+// to LOAD — a window that was never shown does not paint on every
+// platform, and capturePage() would hand back a blank bitmap.
+let renderWin = null;
+
+async function ensureRenderWindow() {
+  if (renderWin && !renderWin.isDestroyed()) return renderWin;
+  renderWin = new BrowserWindow({
+    width: RENDER_WINDOW.width,
+    height: RENDER_WINDOW.height,
+    show: false,
+    // The window paints nothing the user ever sees, so it needs no
+    // chrome, no menu and no paint on screen.
+    webPreferences: {
+      preload: path.join(__dirname, 'preload_pdf_page.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      // The page is a measuring bench — it must be allowed to run its own
+      // scripts and paint without a visible window.
+      backgroundThrottling: false,
+    },
+  });
+  renderWin.removeMenu();
+  // The page's own console is forwarded to the main process log: a page
+  // that fails to load would otherwise fail silently, and the export
+  // would just time out with nothing to show for it.
+  //
+  // webContents' console-message carries (event, level, message, line,
+  // sourceId) — the level is a number, 0 (verbose) to 3 (error).
+  renderWin.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    console.error('[pdf_page]', String(message), '@', sourceId + ':' + line);
+  });
+  renderWin.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error('[pdf_page] load failed:', code, desc, url);
+  });
+  renderWin.webContents.on('preload-error', (_e, file, err) => {
+    console.error('[pdf_page] preload failed:', file, err && err.message);
+  });
+  // The listener is bound BEFORE the page loads. The page announces
+  // itself the moment its module runs, which can be before loadURL()
+  // resolves — a listener registered afterwards would miss it.
+  const ready = waitForPageReady(renderWin);
+  const pageUrl = path.join(__dirname, '..', 'src', 'pdf_page.html');
+  await renderWin.loadURL('file://' + pageUrl.replace(/\\/g, '/'));
+  await ready;
+  return renderWin;
 }
 
-// ---- photo resolution -----------------------------------------------------
-
-const photoRoot = () => path.join(app.getPath('appData'), 'SoulDesktopPet', 'photos');
-
-function resolvePhoto(p) {
-  // The PDF IPC layer pre-fills p.full_path. Defensive recompute in case
-  // it doesn't have it.
-  if (p.full_path) return p.full_path;
-  const ext = path.extname(String(p.relative_path || '')).toLowerCase();
-  return path.join(photoRoot(), p._event_id || p.eventId || '', path.basename(p.relative_path || ''));
+function closeRenderWindow() {
+  if (renderWin && !renderWin.isDestroyed()) {
+    try { renderWin.destroy(); } catch {}
+  }
+  renderWin = null;
 }
 
-// Is this row a picture? A movie and a sound live in the same table as
-// the pictures, and pdfkit can only open an image — a video row would
-// throw inside openImage(). The mime column is the authority; the
-// extension is the fallback for a row that never had one.
-const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic', '.heif']);
-
-function isPicture(p) {
-  if (!p) return false;
-  if (p.mime) return String(p.mime).toLowerCase().startsWith('image/');
-  return IMAGE_EXT.has(path.extname(String(p.relative_path || '')).toLowerCase());
+// The page announces itself when its module has loaded and the listener
+// is bound. Asking before that point would send a request into a window
+// that has no listener yet, and the answer would never come.
+//
+// The page talks to the main process with `ipcRenderer.send`, which lands
+// on `ipcMain` — NOT on `webContents.on('ipc')`. That event belongs to
+// <webview> guests (`sendToHost`), and a normal page's messages never
+// reach it.
+//
+// The listener is scoped to the render window's own webContents: the
+// channels are global, so without the check a message from another window
+// would be taken for this one's answer.
+function waitForPageReady(win) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('pdf page did not become ready'));
+    }, 20000);
+    const onIpc = (event) => {
+      if (event.sender !== win.webContents) return;
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      ipcMain.removeListener('export:pdf_page_ready', onIpc);
+    };
+    ipcMain.on('export:pdf_page_ready', onIpc);
+  });
 }
 
-function isEmbeddablePhoto(p) {
-  if (!p) return false;
-  if (!isPicture(p)) return false;
-  if (p._is_heic || p._is_heif) return false;
-  if (p.mime && /heic|heif/i.test(p.mime)) return false;
-  const fp = resolvePhoto(p);
-  try { return fs.existsSync(fp); } catch { return false; }
+// Ask the page to draw one note and wait for the answer.
+//
+// The page answers on a separate channel, because the drawing takes as
+// long as it takes — it is not a synchronous call. The answer carries the
+// note's box inside the window, which is what the PDF needs to scale it.
+//
+// A note taller than the window is cut off by the window, not by the
+// note, so the window is grown to the note's height and the page is
+// asked to draw it again in the taller space. The loop runs until the
+// note fits — a note that grows the window is drawn once more, and once
+// more if it still does not fit.
+function renderNoteInPage(win, eventId) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('pdf page render timed out'));
+    }, 60000);
+
+    const onIpc = (event, result) => {
+      if (event.sender !== win.webContents) return;
+      // A reply from a draw that has been overtaken by a newer one is
+      // not an answer — the newer one is still on its way.
+      if (result && result.reason === 'stale') return;
+      if (result && result.ok && result.height > windowHeight(win, result.viewportHeight)) {
+        // The note is taller than the window: grow the window to hold
+        // it, and let the page draw it again in the new space.
+        win.setContentSize(RENDER_WINDOW.width, result.height);
+        win.webContents.send('export:pdf_page_render', { eventId, width: NOTE_WIDTH });
+        return;
+      }
+      cleanup();
+      resolve(result || { ok: false, reason: 'no_reply' });
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      ipcMain.removeListener('export:pdf_page_reply', onIpc);
+    };
+    ipcMain.on('export:pdf_page_reply', onIpc);
+    win.webContents.send('export:pdf_page_render', { eventId, width: NOTE_WIDTH });
+  });
+}
+
+// The window's inner height, in CSS pixels.
+//
+// `getContentSize` is the frame's inner size, which is what the page's
+// viewport is — but on Windows it can lag one round-trip behind a
+// `setContentSize`, so the height the page itself reports is preferred
+// when it is available.
+function windowHeight(win, reported) {
+  if (typeof reported === 'number' && reported > 0) return reported;
+  return win.getContentSize()[1];
 }
 
 // ---- main entry -----------------------------------------------------------
 
-// Build a PDF photo book.
+// Build the PDF 回忆相册.
 //
 //   options: {
 //     events:   MemorialEventRowWithPhotos[]
@@ -97,7 +228,7 @@ function isEmbeddablePhoto(p) {
 //     progressCb: (phase, percent, note?) => void
 //   }
 //
-// Returns: { pages, events, photos, bytes, font, heicSkipped }
+// Returns: { pages, events, photos, notes, failed, bytes, font, heicSkipped }
 async function buildAlbum(options) {
   const { events, outPath, progressCb = () => {} } = options || {};
   if (!Array.isArray(events)) throw new Error('buildAlbum: events required');
@@ -108,24 +239,7 @@ async function buildAlbum(options) {
   };
   safeProgress('preparing', 0);
 
-  // Resolve photo paths upfront so the encoding loop is cheap.
-  let heicSkipped = 0;
-  for (const ev of events) {
-    ev.photos = Array.isArray(ev.photos) ? ev.photos : [];
-    ev.photos.forEach((p) => {
-      const ext = path.extname(String(p.relative_path || '')).toLowerCase();
-      p._is_heic = ext === '.heic' || ext === '.heif';
-      if (p.mime && /heic|heif/i.test(p.mime)) p._is_heic = true;
-      if (p._is_heic) heicSkipped += 1;
-      // Stamp event id BEFORE resolving full_path so resolvePhoto() can
-      // place the file under the correct event folder.
-      p._event_id = ev.id;
-      p.full_path = resolvePhoto(p);
-    });
-    ev.photos.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
-  }
-
-  // Set up the document.
+  // The document.
   const doc = new PDFDocument({
     autoFirstPage: false,
     info: {
@@ -157,16 +271,71 @@ async function buildAlbum(options) {
 
   let pages = 0;
   let photosRendered = 0;
-  const totalEvents = events.length;
+  let notesRendered = 0;
+  let failed = 0;
 
-  // Cover + per-event title page + 1 photo per page
-  const r = await renderAlbum({
-    doc, events, totalEvents, onPage: () => { pages += 1; },
-    onPhoto: () => { photosRendered += 1; safeProgress('encoding', 5 + 80 * Math.min(1, photosRendered / Math.max(1, countAllEmbeddable(events))), `已嵌入 ${photosRendered} 张`); },
-  });
-  heicSkipped = r.heicSkipped;
+  try {
+    // The cover comes first, then one page per note.
+    renderCover(doc, events);
+    pages += 1;
 
-  safeProgress('finalizing', 90);
+    // The render window is opened once and reused for every note: it is
+    // the expensive part, and one window keeps one page's photo cache
+    // warm for the notes that share a picture.
+    const win = await ensureRenderWindow();
+
+    for (let i = 0; i < events.length; i += 1) {
+      const ev = events[i];
+      const note = await renderNoteInPage(win, ev.id);
+      if (!note || !note.ok || !note.width || !note.height) {
+        failed += 1;
+        console.error('[album_pdf] could not draw the entry', ev.id, note && note.reason);
+        // A note that could not be drawn still gets a page — an empty one
+        // with its title — so the album keeps one page per entry and the
+        // order of the entries never shifts.
+        renderEmptyNote(doc, ev, i, events.length);
+        pages += 1;
+        safeProgress('encoding', 5 + 85 * ((i + 1) / Math.max(1, events.length)),
+          `第 ${i + 1} / ${events.length} 篇`);
+        continue;
+      }
+
+      // Capture ONLY the note's box, not the whole window. The window is
+      // a measuring bench and is wider and taller than the note; the
+      // parts around the note are not part of the page, and including
+      // them would shrink the note and change its proportions.
+      const shot = await win.webContents.capturePage({
+        x: note.x, y: note.y, width: note.width, height: note.height,
+      });
+      const png = shot.toPNG();
+      // The bitmap's own size, not the size the page reported: the
+      // capture comes back at the screen's pixel density, and the scale
+      // below is computed from what is actually on the page.
+      const size = shot.getSize();
+
+      doc.addPage({ size: 'A4', layout: 'portrait', margin: 0 });
+      pages += 1;
+      // The ONE scale factor: the note is scaled as a whole, so its
+      // proportions are the ones the editor drew it with.
+      const boxW = PAGE.a4Portrait.w - PAGE_MARGIN * 2;
+      const boxH = PAGE.a4Portrait.h - PAGE_MARGIN * 2;
+      const scale = Math.min(boxW / size.width, boxH / size.height);
+      const drawW = size.width * scale;
+      const drawH = size.height * scale;
+      const x = (PAGE.a4Portrait.w - drawW) / 2;
+      const y = (PAGE.a4Portrait.h - drawH) / 2;
+      doc.image(png, x, y, { width: drawW, height: drawH });
+      notesRendered += 1;
+      photosRendered += countPhotosOf(ev);
+
+      safeProgress('encoding', 5 + 85 * ((i + 1) / Math.max(1, events.length)),
+        `第 ${i + 1} / ${events.length} 篇`);
+    }
+  } finally {
+    closeRenderWindow();
+  }
+
+  safeProgress('finalizing', 92);
   doc.end();
 
   await new Promise((resolve, reject) => {
@@ -180,146 +349,88 @@ async function buildAlbum(options) {
     pages,
     events: events.length,
     photos: photosRendered,
+    notes: notesRendered,
+    failed,
     bytes,
     font: fontState,
-    heicSkipped,
+    heicSkipped: 0,
   };
 }
 
-function countAllEmbeddable(events) {
+// How many pictures a note carries. The count is only for the progress
+// line and the cover — the pictures themselves are drawn by the render
+// page, which reads the document with the editor's own parser.
+//
+// A note written before the mixed editor existed stores its pictures as
+// single `image` blocks; those count as one picture each, the same way
+// the editor reads them as one-picture galleries.
+function countPhotosOf(ev) {
   let n = 0;
-  for (const ev of events) {
-    for (const p of (ev.photos || [])) {
-      if (isEmbeddablePhoto(p)) n += 1;
-    }
+  const blocks = parseContentBlocks(ev.content);
+  for (const b of blocks) {
+    if (b.type === 'gallery' && Array.isArray(b.photos)) n += b.photos.length;
+    else if (b.type === 'image' && b.photo_id) n += 1;
   }
   return n;
 }
 
-// ---- Page rendering ---------------------------------------------------------
+// The stored document, read with the same rules the renderer uses.
+//
+// The renderer parses the document itself; this copy only counts the
+// pictures, so it stays a light reader — an unparseable document simply
+// counts no pictures.
+function parseContentBlocks(content) {
+  if (!content) return [];
+  let parsed = content;
+  if (typeof content === 'string') {
+    try { parsed = JSON.parse(content); } catch (e) { return []; }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((b) => b && typeof b === 'object');
+}
 
-async function renderAlbum({ doc, events, totalEvents, onPage, onPhoto }) {
+// ---- 封面 -----------------------------------------------------------------
+
+function renderCover(doc, events) {
   const BRAND = '#f4a8a0';
-  const BRAND_DARK = '#d97757';
   const TEXT = '#2a2a2a';
   const MUTED = '#8a8478';
-  const BG_BEIGE = '#f8f7f3';
+  const w = PAGE.a4Portrait.w;
+  const h = PAGE.a4Portrait.h;
 
-  let heicSkipped = 0;
-  // ---- Cover page ----
   doc.addPage({ size: 'A4', layout: 'portrait', margin: 0 });
-  onPage();
-  doc.rect(0, 0, PAGE.a4Portrait.w, 24).fill(BRAND);
-  doc.rect(0, PAGE.a4Portrait.h - 24, PAGE.a4Portrait.w, 24).fill(BRAND);
+  doc.rect(0, 0, w, 24).fill(BRAND);
+  doc.rect(0, h - 24, w, 24).fill(BRAND);
   doc.fillColor(TEXT).fontSize(40)
-     .text('回忆相册', 0, PAGE.a4Portrait.h * 0.30, {
-       width: PAGE.a4Portrait.w, align: 'center',
-     });
+     .text('回忆相册', 0, h * 0.30, { width: w, align: 'center' });
   let totalPhotos = 0;
-  for (const ev of events) for (const p of (ev.photos || [])) {
-    if (isEmbeddablePhoto(p)) totalPhotos += 1;
-    else if (p._is_heic) heicSkipped += 1;
-  }
+  for (const ev of events) totalPhotos += countPhotosOf(ev);
   doc.moveDown(1.5).fontSize(14).fillColor(MUTED)
-     .text(`${totalEvents} 个事件 · ${totalPhotos} 张照片`,
-       { width: PAGE.a4Portrait.w, align: 'center' });
+     .text(`${events.length} 篇回忆 · ${totalPhotos} 张照片`, { width: w, align: 'center' });
   if (events.length) {
     const earliest = fmtDateOnly(events[0].occurred_at);
     const latest = fmtDateOnly(events[events.length - 1].occurred_at);
-    doc.moveDown(0.5).text(`时间跨度：${earliest} → ${latest}`,
-      { width: PAGE.a4Portrait.w, align: 'center' });
+    doc.moveDown(0.5).text(`时间跨度：${earliest} → ${latest}`, { width: w, align: 'center' });
   }
-  doc.moveDown(0.5).text(`生成于 ${fmtDateOnly(new Date().toISOString())}`,
-    { width: PAGE.a4Portrait.w, align: 'center' });
+  doc.moveDown(0.5).text(`生成于 ${fmtDateOnly(new Date().toISOString())}`, { width: w, align: 'center' });
+}
 
-  // ---- Per event ----
-  for (let i = 0; i < events.length; i += 1) {
-    const ev = events[i];
-    const embeddable = (ev.photos || []).filter((p) => isEmbeddablePhoto(p));
-    const evTitle = ev.title || '(无标题)';
-    const evDate = fmtDateOnly(ev.occurred_at);
-    const evContacts = Array.isArray(ev.contact_names) && ev.contact_names.length
-      ? ev.contact_names.join('、') : '独立事件';
-
-    // Title card
-    doc.addPage({ size: 'A4', layout: 'landscape', margin: 0 });
-    onPage();
-    const w = PAGE.a4Landscape.w, h = PAGE.a4Landscape.h;
-    doc.rect(0, 0, w, h).fill(BG_BEIGE);
-    doc.rect(0, 0, 12, h).fill(BRAND);
-    doc.fillColor(TEXT).fontSize(32)
-       .text(evTitle, 48, 80, { width: w - 96, align: 'center' });
-    doc.moveDown(0.5).fontSize(14).fillColor(MUTED)
-       .text(`${evDate}  ·  ${evContacts}`, 48, doc.y, { width: w - 96, align: 'center' });
-    const detailLines = [
-      ['地点', ev.place], ['食物', ev.food], ['穿搭', ev.outfit],
-      ['活动', ev.activities], ['笔记', ev.notes],
-    ].filter(([_, v]) => v && String(v).trim());
-    if (detailLines.length) {
-      doc.moveDown(1.2);
-      let cursorY = doc.y;
-      for (const [k, v] of detailLines) {
-        doc.fillColor(BRAND_DARK).fontSize(11).text(k, 100, cursorY, { width: 60 });
-        doc.fillColor(TEXT).fontSize(11).text(shortText(v, 120), 170, cursorY,
-          { width: w - 220 });
-        cursorY = doc.y + 6;
-      }
-    }
-    doc.moveTo(48, h - 48).lineTo(w - 48, h - 48).strokeColor(BRAND).lineWidth(1).stroke();
-    doc.fontSize(9).fillColor(MUTED)
-       .text(`第 ${i + 1} / ${totalEvents} 个事件 · 共 ${ev.photos.length} 张照片（${embeddable.length} 张可嵌入）`,
-         48, h - 40, { width: w - 96, align: 'center' });
-
-    // Per-photo pages
-    for (let j = 0; j < ev.photos.length; j += 1) {
-      const p = ev.photos[j];
-      if (!isEmbeddablePhoto(p)) continue;
-      doc.addPage({ size: 'A4', layout: 'landscape', margin: 0 });
-      onPage();
-      const pw = PAGE.a4Landscape.w, ph = PAGE.a4Landscape.h;
-      doc.rect(0, 0, pw, ph).fill(BG_BEIGE);
-      try {
-        doc.image(p.full_path, 40, 30, {
-          fit: [pw - 80, ph - 90], align: 'center', valign: 'center',
-        });
-      } catch (e) {
-        doc.fillColor(MUTED).fontSize(12)
-           .text('（图片加载失败）', 40, ph / 2 - 12, { width: pw - 80, align: 'center' });
-      }
-      const caption = `${p.original_name || path.basename(p.full_path)}  ·  第 ${j + 1} / ${ev.photos.length} 张  ·  来自《${evTitle}》`;
-      doc.fontSize(9).fillColor(MUTED)
-         .text(shortText(caption, 200), 40, ph - 32, { width: pw - 80, align: 'center' });
-      onPhoto();
-    }
-  }
-
-  // ---- Index ----
+// A note that could not be drawn still gets its page: the title and the
+// date, so the reader can see which entry it was and the album keeps one
+// page per entry.
+function renderEmptyNote(doc, ev, index, total) {
+  const w = PAGE.a4Portrait.w;
+  const h = PAGE.a4Portrait.h;
   doc.addPage({ size: 'A4', layout: 'portrait', margin: 0 });
-  onPage();
-  doc.rect(0, 0, PAGE.a4Portrait.w, 18).fill(BRAND);
-  doc.fillColor(TEXT).fontSize(22)
-     .text('目录', 0, 60, { width: PAGE.a4Portrait.w, align: 'center' });
-  doc.moveDown(1.5);
-  doc.fontSize(11);
-  for (let i = 0; i < events.length; i += 1) {
-    const ev = events[i];
-    const idx = `${String(i + 1).padStart(2, '0')}.`;
-    const title = ev.title || '(无标题)';
-    const date = fmtDateOnly(ev.occurred_at);
-    const contacts = Array.isArray(ev.contact_names) && ev.contact_names.length
-      ? ev.contact_names.join('、') : '独立事件';
-    const line = `${idx}  ${title}  —  ${date}  ·  ${contacts}  ·  ${ev.photos.length} 张照片`;
-    doc.fillColor(TEXT).text(shortText(line, 80), { width: PAGE.a4Portrait.w - 72, align: 'left' });
-    doc.moveDown(0.3);
-  }
-  doc.moveDown(2);
-  doc.fontSize(10).fillColor(MUTED)
-     .text(`由 SoulDesktopPet 制作于 ${fmtDateOnly(new Date().toISOString())}`,
-       0, PAGE.a4Portrait.h - 80, { width: PAGE.a4Portrait.w, align: 'center' });
-  doc.text(`共 ${totalEvents} 个事件 / ${totalPhotos} 张照片`,
-    0, PAGE.a4Portrait.h - 60, { width: PAGE.a4Portrait.w, align: 'center' });
-
-  return { heicSkipped };
+  doc.fillColor('#2a2a2a').fontSize(20)
+     .text(ev.title || '(无标题)', PAGE_MARGIN, PAGE_MARGIN, { width: w - PAGE_MARGIN * 2, align: 'center' });
+  doc.moveDown(0.5).fontSize(11).fillColor('#8a8478')
+     .text(fmtDateOnly(ev.occurred_at), PAGE_MARGIN, doc.y, { width: w - PAGE_MARGIN * 2, align: 'center' });
+  doc.fontSize(10).fillColor('#8a8478')
+     .text('（这篇回忆的内容无法排入 PDF）', PAGE_MARGIN, h / 2, { width: w - PAGE_MARGIN * 2, align: 'center' });
+  doc.fontSize(9).fillColor('#8a8478')
+     .text(`第 ${index + 1} / ${total} 篇`, PAGE_MARGIN, h - PAGE_MARGIN - 12,
+       { width: w - PAGE_MARGIN * 2, align: 'center' });
 }
 
 module.exports = { buildAlbum };

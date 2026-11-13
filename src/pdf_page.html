@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- The offscreen diary page. It renders ONE memory note exactly the way
+       the 回忆 editor draws it — the same CSS, the same modules, the same
+       block order — and the main process screenshots it for the PDF.
+
+       The CSP matches index.html: the photos are data URLs (the same
+       `memorial_events:photo_read` IPC the editor uses). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>回忆导出排版</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <style>
+    /* The page is a measuring bench, not an app screen: no scrollbars, no
+       app chrome, and a transparent background so the screenshot carries
+       only the note itself. */
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      overflow: hidden;
+    }
+    body {
+      display: inline-block;
+      font-family: var(--font-stack);
+      color: var(--text);
+    }
+    /* The note's own sheet. The width is set by the main process (the
+       capture width) so the rendered layout is the one the PDF will show. */
+    #pdf-sheet {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="pdf-sheet"></div>
+  <script type="module" src="js/pdf_page.js"></script>
+</body>
+</html>
