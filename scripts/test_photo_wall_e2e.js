@@ -92,24 +92,43 @@ async function waitFor(fn, timeoutMs) {
   return null;
 }
 
+// The app's own CSP, read from src/index.html.
+//
+// The harness page MUST carry it: the real window loads src/index.html, and
+// a CSP rule the page does not have (the wall export draws the original
+// bytes through a blob: URL) is invisible to a harness without one — the
+// test would pass while the app showed an empty wall.
+function appCsp() {
+  const html = fs.readFileSync(path.join(ROOT, 'src', 'index.html'), 'utf8');
+  const m = html.match(/<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/);
+  if (!m) throw new Error('src/index.html has no Content-Security-Policy');
+  return m[1];
+}
+
 // The page that hosts the wall. It is the project's own page module, loaded
 // on its own — the whole app (with its pet, its reminders and its PIN
 // lock) is not what is being tested here.
+//
+// The page's script is a FILE, not an inline block: the app's CSP says
+// `script-src 'self'`, so an inline module would be refused and the page
+// would never start.
 function writeHarnessPage(dir, ids) {
+  const script = `import { start } from '${pathToFileURL(path.join(ROOT, 'src', 'js', 'router.js')).href}';
+import '${pathToFileURL(path.join(ROOT, 'src', 'js', 'pages', 'photo_wall.js')).href}';
+location.hash = '#/photo-wall?ids=${ids.join(',')}';
+start();
+`;
+  fs.writeFileSync(path.join(dir, 'wall-harness.js'), script, 'utf8');
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
+<meta http-equiv="Content-Security-Policy" content="${appCsp()}"/>
 <link rel="stylesheet" href="${pathToFileURL(path.join(ROOT, 'src', 'css', 'styles.css')).href}"/>
 </head>
 <body>
 <div id="app"></div>
-<script type="module">
-  import { start } from '${pathToFileURL(path.join(ROOT, 'src', 'js', 'router.js')).href}';
-  import '${pathToFileURL(path.join(ROOT, 'src', 'js', 'pages', 'photo_wall.js')).href}';
-  location.hash = '#/photo-wall?ids=${ids.join(',')}';
-  start();
-</script>
+<script type="module" src="wall-harness.js"></script>
 </body>
 </html>`;
   const file = path.join(dir, 'wall-harness.html');
@@ -289,8 +308,8 @@ module.exports = (async () => {
     })()`);
 
     if (written) {
-      // The PNG that came out is read back and looked at: its size, and
-      // how much of it is red.
+      // The PNG that came out is read back and looked at: its size, how much
+      // of it is red, and how far the shape keeps away from the edges.
       const dataUrl = 'data:image/png;base64,' + fs.readFileSync(outPath).toString('base64');
       report.png = await win.webContents.executeJavaScript(`(async () => {
         const img = new Image();
@@ -302,15 +321,35 @@ module.exports = (async () => {
         ctx.drawImage(img, 0, 0);
         const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
         let red = 0, total = 0;
-        for (let i = 0; i < d.length; i += 4) {
-          total += 1;
-          if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
+        // The shape's box: everything that is not the white background.
+        let minX = cv.width, minY = cv.height, maxX = -1, maxY = -1;
+        for (let y = 0; y < cv.height; y += 1) {
+          for (let x = 0; x < cv.width; x += 1) {
+            const i = (y * cv.width + x) * 4;
+            total += 1;
+            if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
+            if (d[i] < 250 || d[i + 1] < 250 || d[i + 2] < 250) {
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
         }
+        const r4 = (n) => Number(n.toFixed(4));
         return {
           width: img.naturalWidth,
           height: img.naturalHeight,
-          redRatio: Number((total ? red / total : 0).toFixed(4)),
+          redRatio: r4(total ? red / total : 0),
           bytes: ${JSON.stringify(fs.statSync(outPath).size)},
+          // How much white the shape keeps between itself and each edge,
+          // as a share of that edge's length.
+          margin: {
+            left: r4(cv.width ? minX / cv.width : 0),
+            right: r4(cv.width ? (cv.width - 1 - maxX) / cv.width : 0),
+            top: r4(cv.height ? minY / cv.height : 0),
+            bottom: r4(cv.height ? (cv.height - 1 - maxY) / cv.height : 0),
+          },
         };
       })()`);
     }
@@ -329,7 +368,9 @@ module.exports = (async () => {
     report.errors = errors;
     // The wall is one canvas now: the pictures are on it, the shape clips
     // them (so the corner of the canvas stays white), and the export comes
-    // out as a PNG of the same shape.
+    // out as a PNG of the same shape. The shape also keeps away from the
+    // edges — a heart pasted onto the border looks cut off.
+    const margin = (report.png && report.png.margin) || {};
     report.ok = !!report.exported
       && report.selection && report.selection.hasCoverBtn
       && report.preview && report.preview.redRatio > 0.05
@@ -337,6 +378,8 @@ module.exports = (async () => {
       && report.preview.bottomRight[0] > 200
       && report.png && report.png.redRatio > 0.05
       && report.png.width > 200 && report.png.height > 200
+      && margin.left > 0.03 && margin.right > 0.03
+      && margin.top > 0.03 && margin.bottom > 0.03
       && errors.length === 0;
   } catch (e) {
     report.error = String((e && e.stack) || e);

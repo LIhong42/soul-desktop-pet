@@ -5,7 +5,7 @@
 // 画法（规则在 src/js/photo_wall_layout.js，编辑器和导出共用一套）：
 //
 //   1. 画布的长宽比 = 照片的长宽比（格子画幅）；
-//   2. 形状用函数画在画布正中，占满画布能占的最大面积；
+//   2. 形状用函数画在画布正中，四周留出一圈白边（画布的 5%）；
 //   3. 画布按 n×n 的网格线切开，只有「有一块落进形状里」的格子摆照片；
 //   4. 照片再被形状裁一刀 —— 整面墙的轮廓就是形状本身。
 //
@@ -95,6 +95,12 @@ async function loadPhotos() {
     if (!ev) continue;
     state.events.push({ id: ev.id, title: ev.title || '(无标题)' });
     const seen = new Set();
+    // 照片表里的 mime —— 笔记里排好的照片也要从这儿拿（导出时解码原图要
+    // 知道它是什么格式）。
+    const mimes = new Map();
+    for (const row of ev.photos || []) {
+      if (row && row.id && row.mime) mimes.set(row.id, row.mime);
+    }
     for (const block of parseDiaryContent(ev.content)) {
       if (block.type !== 'gallery') continue;
       for (const p of block.photos || []) {
@@ -102,7 +108,7 @@ async function loadPhotos() {
         seen.add(p.photo_id);
         photos.push({
           photoId: p.photo_id, name: '', eventId: ev.id, eventTitle: ev.title || '',
-          cover: p.cover || null,
+          cover: p.cover || null, mime: mimes.get(p.photo_id) || '',
         });
       }
     }
@@ -112,7 +118,7 @@ async function loadPhotos() {
       seen.add(row.id);
       photos.push({
         photoId: row.id, name: row.original_name || '', eventId: ev.id,
-        eventTitle: ev.title || '', cover: null,
+        eventTitle: ev.title || '', cover: null, mime: row.mime || '',
       });
     }
   }
@@ -228,7 +234,7 @@ function render() {
       <div class="wall-head">
         <a class="wall-back" href="#/export">← 返回导出页</a>
         <h1>照片墙</h1>
-        <p class="meta">把回忆里的照片拼成一块形状。画布的长宽比跟照片一样，照片摆进格子不用裁；形状画在画布正中，只有落进形状里的格子才摆照片，照片再被形状裁一刀 —— 整面墙的轮廓就是形状。</p>
+        <p class="meta">把回忆里的照片拼成一块形状。画布的长宽比跟照片一样，照片摆进格子不用裁；形状画在画布正中、四周留一圈白边，只有落进形状里的格子才摆照片，照片再被形状裁一刀 —— 整面墙的轮廓就是形状。</p>
       </div>
 
       <div class="card">
@@ -810,6 +816,7 @@ async function doExport() {
 
 // 把一张照片画进导出用的画布。
 async function drawExportCell(ctx, geo, cell, cover) {
+  const p = state.photoById.get(cell.photoId);
   let bytes = null;
   try {
     bytes = await api.memorialEvents.photos.bytes(cell.photoId);
@@ -818,21 +825,43 @@ async function drawExportCell(ctx, geo, cell, cover) {
     return false;
   }
   if (!bytes || !bytes.byteLength) return false;
-  const url = URL.createObjectURL(new Blob([bytes]));
+  const bmp = await decodePhoto(bytes, p ? p.mime : '');
+  if (!bmp) return false;
   try {
-    const img = await loadImage(url);
-    if (!img) return false;
-    const rect = coverRect(img.naturalWidth, img.naturalHeight, cover);
+    const rect = coverRect(bmp.width, bmp.height, cover);
     const r = cellRect(geo, cell);
-    ctx.drawImage(img, rect.left, rect.top, rect.width, rect.height,
+    ctx.drawImage(bmp, rect.left, rect.top, rect.width, rect.height,
       r.x, r.y, r.w, r.h);
     return true;
   } catch (e) {
     console.error('draw export cell failed', cell.photoId, e);
     return false;
   } finally {
-    URL.revokeObjectURL(url);
+    // 解码出来的是一整张原图 —— 画完就放掉，别把显存占着。
+    if (typeof bmp.close === 'function') bmp.close();
   }
+}
+
+// 解码一张照片的原始字节。
+//
+// 不用「blob: URL + <img>」：主窗口的 CSP 是 `img-src 'self' data: file:`，
+// blob: 会被当场拒绝（「Refused to load the image 'blob:…'」），图片永远
+// 加载不出来 —— 导出的墙于是只剩一块形状的底色。createImageBitmap 直接吃
+// Blob，不经过 URL，也就绕开了 CSP 这条路。
+//
+// 类型对不上时（mime 记错了）再试一次没有类型的 Blob，让浏览器自己认。
+async function decodePhoto(bytes, mime) {
+  let last = null;
+  const tries = mime ? [{ type: mime }, {}] : [{}];
+  for (const opts of tries) {
+    try {
+      return await createImageBitmap(new Blob([bytes], opts));
+    } catch (e) {
+      last = e;
+    }
+  }
+  console.error('decode photo failed', last);
+  return null;
 }
 
 function setStatus(text) {

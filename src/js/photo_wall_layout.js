@@ -9,7 +9,8 @@
 // 画法（编辑器和导出用的是同一套）：
 //
 //   1. 画布的长宽比 = 画幅 = 照片的长宽比；
-//   2. 形状用函数画在画布正中，占满画布能占的最大面积（一点不裁掉）；
+//   2. 形状用函数画在画布正中，四周留出一圈白边（画布的 5%），占满留白
+//      之后能占的最大面积（一点不裁掉）；
 //   3. 画布按 n×n 的网格线切开，只有「有一块落进形状里」的格子摆照片；
 //   4. 照片再被形状裁一刀 —— 于是整面墙的轮廓就是形状本身。
 //
@@ -121,14 +122,24 @@ export function getSize(sizeId) {
 
 // ---- 形状的几何 ------------------------------------------------------------
 
+// 形状离画布边缘留多远（占画布宽/高的比例）。
+//
+// 形状贴着边画出来，墙看起来像被画布切掉了一角 —— 上下左右都留一点白边，
+// 墙才「浮」在画布中间。
+const SHAPE_MARGIN = 0.05;
+
 // 形状在画布里占的位置：整个轮廓按比例缩放后放进去（一点不裁掉），居中。
 //
 // 画布太宽或太高时，形状就由窄的那一边决定大小 —— 形状永远是「能放进
-// 画布的最大那一个」。
+// 画布的最大那一个」（留出白边以后，是「能放进白边里最大的那一个」）。
 function placeShape(shape, canvasW, canvasH) {
-  const w = Math.min(canvasW, canvasH * shape.aspect);
+  const mx = canvasW * SHAPE_MARGIN;
+  const my = canvasH * SHAPE_MARGIN;
+  const availW = canvasW - mx * 2;
+  const availH = canvasH - my * 2;
+  const w = Math.min(availW, availH * shape.aspect);
   const h = w / shape.aspect;
-  return { x: (canvasW - w) / 2, y: (canvasH - h) / 2, w, h };
+  return { x: mx + (availW - w) / 2, y: my + (availH - h) / 2, w, h };
 }
 
 // 把轮廓切成一条条水平带，每条带记住它在 x 上的几段区间。

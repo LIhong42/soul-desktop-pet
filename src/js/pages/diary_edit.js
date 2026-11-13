@@ -88,6 +88,7 @@ import { openCoverEditor as openCoverEditorDialog } from '../cover_editor.js';
 import { openMemorialMetaDialog } from '../diary_meta_form.js';
 import { openAudioRecorderDialog } from '../diary_audio_recorder.js';
 import { normalizeMemorialKind } from '../diary_kinds.js';
+import { fileToDataUrl } from '../file_image.js';
 
 const MEMORIAL_LIST_ROUTE = '/events/memorial';
 
@@ -1253,17 +1254,6 @@ async function loadMediaUrl(mediaId) {
     console.error('media read failed:', e);
     return '';
   }
-}
-
-// Read a picked file into a data URL so it can be shown in an <img>.
-// The CSP allows data: URLs, which is what the saved photos use too.
-function fileToDataUrl(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result || null);
-    reader.onerror = () => resolve(null);
-    reader.readAsDataURL(file);
-  });
 }
 
 // ---- Moving the blocks ---------------------------------------------------

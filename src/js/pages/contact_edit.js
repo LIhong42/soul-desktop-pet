@@ -21,6 +21,7 @@
 // upload anything.
 import { api, escapeHtml, toast, getCachedAvatarDataUrl, fetchAvatarDataUrl, invalidateAvatarDataUrl } from '../api.js';
 import { ICONS, iconSVG, suggestIconKind } from '../icons.js';
+import { fileToDataUrl } from '../file_image.js';
 import { register, navigate } from '../router.js';
 
 async function render(args) {
@@ -177,12 +178,16 @@ async function render(args) {
       return;
     }
     try {
-      // Show a local blob URL immediately so the user gets feedback before
+      // Show the picked picture immediately so the user gets feedback before
       // the save round-trip. The File itself stays in fileInput.files for
       // the save() handler to POST.
-      const blobUrl = URL.createObjectURL(f);
+      //
+      // The preview is a DATA URL, not a blob: URL: the main window's CSP
+      // is `img-src 'self' data: file:`, so a blob: URL would be refused
+      // and the preview would be a broken image.
+      const dataUrl = await fileToDataUrl(f);
       pendingFileInput = f;
-      previewEl.innerHTML = renderAvatarImg(blobUrl);
+      previewEl.innerHTML = renderAvatarImg(dataUrl);
       clearBtn.disabled = false;
       labelEl.textContent = '当前：已选择新头像（保存后生效）';
     } catch (e) {
