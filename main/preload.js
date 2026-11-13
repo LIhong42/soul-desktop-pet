@@ -256,6 +256,18 @@ contextBridge.exposeInMainWorld('mp', {
     cancel: (payload) => ipcRenderer.invoke('export:cancel', payload || {}),
   },
 
+  // The photo wall's imported photos. They belong to NO memory — they are
+  // material for one wall only, so they live in the temp directory and are
+  // deleted as soon as the export is done.
+  tmpPhotos: {
+    // payload: { filename, mime, bytes (ArrayBuffer|Uint8Array) }
+    save:   (payload) => ipcRenderer.invoke('tmp_photos:save', payload),
+    thumb:  (id)      => ipcRenderer.invoke('tmp_photos:thumb', id),
+    read:   (id)      => ipcRenderer.invoke('tmp_photos:read', id),
+    remove: (id)      => ipcRenderer.invoke('tmp_photos:remove', id),
+    clear:  ()        => ipcRenderer.invoke('tmp_photos:clear'),
+  },
+
   // Video → frames zip tool. Backed by `tools:split_video_to_frames` and
   // `tools:cancel` in main/ipc.js. Both dialogs (input + save) run in the
   // main process — the renderer just kicks off the job and waits.

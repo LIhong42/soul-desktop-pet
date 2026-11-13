@@ -82,8 +82,28 @@ async function getThumb({ photoId, sourcePath, appData }) {
   }
 }
 
+// 删掉一张照片的缓存缩略图。
+//
+// 照片墙的临时照片删掉时，缩略图也要跟着走 —— 缓存目录不留残骸。
+// 缩略图有两种（有透明通道的 PNG 存成 PNG，其余存成 JPEG），两个都试。
+function removeThumb(photoId, appData) {
+  if (!photoId) return false;
+  let removed = false;
+  for (const ext of ['.png', '.jpg']) {
+    const file = path.join(thumbDir(appData), `${photoId}${ext}`);
+    try {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+        removed = true;
+      }
+    } catch (e) { /* 删不掉就算了 —— 它只是缓存 */ }
+  }
+  return removed;
+}
+
 module.exports = {
   getThumb,
+  removeThumb,
   thumbDir,
   THUMB_MAX,
 };

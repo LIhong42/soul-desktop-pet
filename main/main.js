@@ -6,6 +6,7 @@ const fs = require('fs');
 const db = require('./db');
 const scheduler = require('./scheduler');
 const ipc = require('./ipc');
+const tmpPhotos = require('./tmp_photos');
 const { PetController, petRenderSize } = require('./pet_controller');
 const { PetRegistry } = require('./pet_registry');
 const { buildPetState } = require('./pet_state');
@@ -405,6 +406,15 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   await db.open(getDbPath());
+
+  // The photo wall's imported photos are temporary: the wall deletes them
+  // once the export is done. Anything still lying around belongs to a run
+  // that was killed before it could clean up — sweep it now.
+  try {
+    tmpPhotos.clear({ appData: app.getPath('appData') });
+  } catch (e) {
+    console.error('tmp photos sweep failed:', e);
+  }
 
   // The microphone permission must be answered before any window asks
   // for a recording.

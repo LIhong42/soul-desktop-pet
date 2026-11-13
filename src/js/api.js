@@ -219,6 +219,15 @@ export const api = {
     photoWall: (payload) => M.export_.photoWall(payload || {}),
     cancel: (payload) => M.export_.cancel(payload || {}),
   },
+  // The photo wall's imported photos. They belong to no memory: they sit in
+  // the temp directory and are deleted once the export is done.
+  tmpPhotos: {
+    save:   (payload) => M.tmpPhotos.save(payload),
+    thumb:  (id)      => M.tmpPhotos.thumb(id),
+    read:   (id)      => M.tmpPhotos.read(id),
+    remove: (id)      => M.tmpPhotos.remove(id),
+    clear:  ()        => M.tmpPhotos.clear(),
+  },
   // Video → frames zip tool. Main opens the file picker and save dialog so
   // raw video bytes never have to round-trip through IPC.
   tools: {

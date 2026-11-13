@@ -88,7 +88,7 @@ import { openCoverEditor as openCoverEditorDialog } from '../cover_editor.js';
 import { openMemorialMetaDialog } from '../diary_meta_form.js';
 import { openAudioRecorderDialog } from '../diary_audio_recorder.js';
 import { normalizeMemorialKind } from '../diary_kinds.js';
-import { fileToDataUrl } from '../file_image.js';
+import { fileToDataUrl, imageMimeForFile } from '../file_image.js';
 
 const MEMORIAL_LIST_ROUTE = '/events/memorial';
 
@@ -2538,7 +2538,7 @@ async function onSave() {
         const ab = await p.file.arrayBuffer();
         const photo = await api.memorialEvents.photos.upload(saved.id, {
           filename: p.file.name,
-          mime: p.file.type,
+          mime: imageMimeForFile(p.file),
           bytes: ab,
         });
         // Point the gallery at the saved photo.

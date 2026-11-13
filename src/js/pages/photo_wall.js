@@ -20,6 +20,7 @@
 // 外长，长到有一条边碰到照片的边为止）。
 
 import { api, escapeHtml, toast } from '../api.js';
+import { isImageFile, imageMimeForFile } from '../file_image.js';
 import { register } from '../router.js';
 import { parseDiaryContent } from '../diary_layout.js';
 import { coverRect } from '../diary_cover.js';
@@ -41,13 +42,20 @@ const state = {
   hover: -1,
   loading: false,
   exporting: false,
+  importing: false,
   status: '',
 };
 
 // 窗口大小变了，画布要跟着重新算宽度。监听器只留一个（换页时换掉）。
 let resizeHandler = null;
 
+// 离开这一页的监听器 —— 只留一个（换页时换掉）。
+let leaveHandler = null;
+
 async function mount(_args, params) {
+  // 上一轮留下的临时照片（换了一组回忆又进来）—— 先清掉，它们是上一轮
+  // 的素材，不该跟着这面墙走。
+  await dropTmpPhotos();
   const raw = (params && params.ids) || '';
   state.eventIds = String(raw).split(',').map((s) => s.trim()).filter(Boolean);
   state.events = [];
@@ -58,6 +66,7 @@ async function mount(_args, params) {
   state.selected = -1;
   state.hover = -1;
   state.exporting = false;
+  state.importing = false;
   state.status = '';
   if (state.eventIds.length === 0) {
     render();
@@ -75,6 +84,15 @@ async function mount(_args, params) {
     drawWall();
   };
   window.addEventListener('resize', resizeHandler);
+  // 离开这一页：临时照片用完就删（导出了，或者干脆没导出）。
+  if (leaveHandler) window.removeEventListener('hashchange', leaveHandler);
+  leaveHandler = () => {
+    if ((location.hash || '').startsWith('#/photo-wall')) return;
+    window.removeEventListener('hashchange', leaveHandler);
+    leaveHandler = null;
+    dropTmpPhotos();
+  };
+  window.addEventListener('hashchange', leaveHandler);
 }
 
 // ---- 照片 ------------------------------------------------------------------
@@ -281,6 +299,12 @@ function render() {
           <div id="wall-selected"></div>
           <h3>还没上墙的照片</h3>
           <div class="wall-tray" id="wall-tray"></div>
+          <h3>临时导入</h3>
+          <div class="wall-import">
+            <button type="button" class="btn" id="wall-import-btn"${state.importing ? ' disabled' : ''}>${state.importing ? '导入中…' : '导入照片'}</button>
+            <input type="file" id="wall-import-input" accept="image/*" multiple hidden/>
+          </div>
+          <p class="meta">回忆里的照片不够摆满这面墙时，可以从系统里再导入几张。导入的照片<b>不属于任何一篇回忆</b>，只存在临时目录里 —— 导出完成后自动删除。</p>
         </div>
       </div>
 
@@ -498,6 +522,18 @@ function wire() {
 
   const exportBtn = document.getElementById('wall-export-btn');
   if (exportBtn) exportBtn.onclick = doExport;
+
+  wireImport();
+}
+
+// 导入用的控件：一个挑文件的按钮。
+function wireImport() {
+  const btn = document.getElementById('wall-import-btn');
+  const input = document.getElementById('wall-import-input');
+  if (btn && input) {
+    btn.onclick = () => input.click();
+    input.onchange = onImportFiles;
+  }
 }
 
 function wireCanvas(canvas) {
@@ -701,6 +737,133 @@ function renderTray() {
   });
 }
 
+// ---- 导入照片 --------------------------------------------------------------
+
+// 导入：把系统里的照片传进这面墙。
+//
+// 导入的照片**不属于任何一篇回忆** —— 它们只是这一面墙的素材。所以它们
+// 不进数据库，也不进回忆的照片目录，而是写进临时目录（main/tmp_photos.js）：
+// 导出时按原图分辨率画进格子，导出完成（或离开这一页）时删掉。
+//
+// 跟回忆编辑页的「插入图片」是同一套做法：挑文件 → 存进临时目录 → 照片进
+// 列表；只是存的地方不一样 —— 这里不落到任何一篇回忆里。
+const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
+
+async function onImportFiles(e) {
+  const input = e.target;
+  const files = Array.from(input.files || []);
+  // 清掉选中的文件：连续挑同一张图两次也要能再挑一次。
+  input.value = '';
+  if (!files.length) return;
+
+  const images = files.filter(isImageFile);
+  if (!images.length) { toast('挑的文件里没有图片'); return; }
+
+  state.importing = true;
+  render();
+  let ok = 0;
+  let fail = 0;
+  for (const file of images) {
+    setStatus(`正在导入 ${ok + fail + 1} / ${images.length}…`);
+    if (file.size > MAX_IMPORT_BYTES) {
+      console.warn('import photo too large', file.name, file.size);
+      fail += 1;
+      continue;
+    }
+    try {
+      const bytes = await file.arrayBuffer();
+      const row = await api.tmpPhotos.save({
+        filename: file.name,
+        mime: imageMimeForFile(file),
+        bytes,
+      });
+      const p = await adoptPhoto(row, file.name);
+      if (!p) { fail += 1; continue; }
+      state.photos.push(p);
+      state.photoById.set(p.photoId, p);
+      ok += 1;
+    } catch (err) {
+      console.error('import photo failed', err);
+      fail += 1;
+    }
+  }
+  state.importing = false;
+  setStatus('');
+  // 导入的照片先补进空着的格子；墙满了就留在下面的列表里，由用户摆。
+  fillFreeCells();
+  render();
+  if (ok && fail) toast(`已导入 ${ok} 张，${fail} 张失败`);
+  else if (ok) toast(`已导入 ${ok} 张临时照片`);
+  else toast('导入失败');
+  // 格子不够放的时候说一声 —— 换一档更密的网格才能全摆上去。
+  if (ok && state.template && state.photos.length > state.template.capacity) {
+    toast('照片比格子多 —— 在「网格」里换一档更密的就能全摆上');
+  }
+}
+
+// 一张刚导入的照片 → 墙上的一张照片（跟读回来的照片一个样）。
+async function adoptPhoto(row, name) {
+  const p = {
+    photoId: `tmp:${row.id}`,
+    tmpId: row.id,
+    name: name || '',
+    eventId: '',
+    eventTitle: '临时导入',
+    cover: null,
+    mime: row.mime || '',
+  };
+  try {
+    const thumb = await api.tmpPhotos.thumb(row.id);
+    if (thumb) {
+      p.url = thumb.data_url;
+      p.w = thumb.width;
+      p.h = thumb.height;
+    }
+  } catch (e) {
+    console.error('imported photo thumb failed', row.id, e);
+  }
+  // 读不出来（文件坏了、格式 ffmpeg 处理不了）就别上墙 —— 空格子更让人
+  // 困惑，而且导出时它也画不上。
+  if (!p.url) {
+    api.tmpPhotos.remove(row.id).catch(() => {});
+    return null;
+  }
+  const img = await loadImage(p.url);
+  if (img) {
+    p.img = img;
+    if (!p.w || !p.h) { p.w = img.naturalWidth; p.h = img.naturalHeight; }
+  }
+  return p;
+}
+
+// 临时照片用完就删 —— 它们不属于任何一篇回忆，也不该留在磁盘上。
+//
+// 删掉之后它们也从墙上撤下来：墙上摆的每一张照片都还在（临时照片已经
+// 不在了，留着就是空格子）。
+async function dropTmpPhotos() {
+  const tmp = state.photos.filter((p) => p.tmpId);
+  if (!tmp.length) return;
+  for (const p of tmp) {
+    try { await api.tmpPhotos.remove(p.tmpId); } catch (e) { /* 删不掉就留着 */ }
+    state.photoById.delete(p.photoId);
+    for (const c of state.cells) {
+      if (c.photoId === p.photoId) { c.photoId = null; c.cover = null; }
+    }
+  }
+  state.photos = state.photos.filter((p) => !p.tmpId);
+}
+
+// 还没上墙的照片补进空格子 —— 墙上的摆法不动，只填空位。
+function fillFreeCells() {
+  const used = new Set(state.cells.filter((c) => c.photoId).map((c) => c.photoId));
+  const free = state.cells.filter((c) => !c.photoId);
+  if (!free.length) return;
+  const waiting = state.photos.filter((p) => !used.has(p.photoId));
+  for (let i = 0; i < free.length && i < waiting.length; i += 1) {
+    free[i].photoId = waiting[i].photoId;
+  }
+}
+
 // 给某个格子改封面 —— 和笔记里那套编辑器是同一个（src/js/cover_editor.js）。
 // 格子的画幅是模板定的，所以取景框锁在这个画幅上。
 function openCoverForCell() {
@@ -800,12 +963,18 @@ async function doExport() {
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const r = await api.export_.photoWall({ bytes });
     if (r && r.canceled) {
+      // 用户自己取消了保存 —— 临时照片留着（也许还要再导一次）。
       setStatus('');
       return;
     }
+    // 导出完成：临时照片用完就删 —— 它们不属于任何一篇回忆，也不该留在
+    // 磁盘上。墙上它们的位置也空出来（照片已经不在了）。
+    const tmpCount = state.photos.filter((p) => p.tmpId).length;
+    await dropTmpPhotos();
     const mb = (r && r.bytes ? (r.bytes / 1024 / 1024).toFixed(1) : '?');
     const failedTxt = failed ? ` · ${failed} 张没画上` : '';
-    toast(`照片墙已导出：${W}×${H} · ${filled.length} 张照片${failedTxt} · ${mb} MB`);
+    const tmpTxt = tmpCount ? ` · ${tmpCount} 张临时照片已清理` : '';
+    toast(`照片墙已导出：${W}×${H} · ${filled.length} 张照片${failedTxt}${tmpTxt} · ${mb} MB`);
   } catch (e) {
     toast('导出失败：' + ((e && e.message) || e));
   }
@@ -817,9 +986,13 @@ async function doExport() {
 // 把一张照片画进导出用的画布。
 async function drawExportCell(ctx, geo, cell, cover) {
   const p = state.photoById.get(cell.photoId);
+  if (!p) return false;
   let bytes = null;
   try {
-    bytes = await api.memorialEvents.photos.bytes(cell.photoId);
+    // 临时导入的照片在临时目录里，回忆里的照片在数据库里 —— 两条路。
+    bytes = p.tmpId
+      ? await api.tmpPhotos.read(p.tmpId)
+      : await api.memorialEvents.photos.bytes(cell.photoId);
   } catch (e) {
     console.error('read export bytes failed', cell.photoId, e);
     return false;

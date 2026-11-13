@@ -18,6 +18,7 @@
 // exposes no browsing/listing surface — write-only, so it can't be used to
 // peek at the data the PIN protects.
 import { api, escapeHtml, displayName, todayYmd, wireDateInputs } from './api.js';
+import { imageMimeForFile } from './file_image.js';
 import {
   QUICK_THEME,
   buildEventForm,
@@ -540,7 +541,7 @@ async function saveMemorial() {
         const ab = await f.arrayBuffer();
         await api.memorialEvents.photos.upload(saved.id, {
           filename: f.name,
-          mime: f.type,
+          mime: imageMimeForFile(f),
           bytes: ab,
         });
         okCount += 1;

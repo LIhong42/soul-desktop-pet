@@ -18,6 +18,7 @@ const albumPdf = require('./album_pdf');
 const albumDocx = require('./album_docx');
 const albumVideo = require('./album_video');
 const photoThumb = require('./photo_thumb');
+const tmpPhotos = require('./tmp_photos');
 const { verifyPin, hashPin, isValidPinShape } = require('./auth');
 const petInteractions = require('./pet_interactions');
 const bondEngine = require('./bond_engine');
@@ -1337,6 +1338,45 @@ function normFreeText(s) {
       appData: app.getPath('appData'),
     });
   });
+
+  // ---- Photo wall's temporary photos ---------------------------------------
+  //
+  // The photos imported into the wall do NOT belong to any memory — they
+  // are only material for this one wall. So they never touch the database
+  // and never sit in a memory's photo directory: they live in the temp
+  // directory until the export is done, and are deleted right after.
+  //
+  // The thumbnail is the REAL one (main/photo_thumb.js) — the wall draws
+  // thumbnails, so they have to be the real thing.
+  ipcMain.handle('tmp_photos:save', (_e, input) => tmpPhotos.save({
+    appData: app.getPath('appData'),
+    filename: input && input.filename,
+    mime: input && input.mime,
+    bytes: input && input.bytes,
+  }));
+
+  ipcMain.handle('tmp_photos:thumb', async (_e, id) => {
+    const file = tmpPhotos.fileOf(app.getPath('appData'), id);
+    if (!file) return null;
+    return await photoThumb.getThumb({
+      photoId: id,
+      sourcePath: file,
+      appData: app.getPath('appData'),
+    });
+  });
+
+  ipcMain.handle('tmp_photos:read', (_e, id) =>
+    tmpPhotos.read({ appData: app.getPath('appData'), id }));
+
+  // Deleting a temporary photo also drops its cached thumbnail.
+  ipcMain.handle('tmp_photos:remove', (_e, id) => {
+    const done = tmpPhotos.remove({ appData: app.getPath('appData'), id });
+    photoThumb.removeThumb(id, app.getPath('appData'));
+    return done;
+  });
+
+  ipcMain.handle('tmp_photos:clear', () =>
+    tmpPhotos.clear({ appData: app.getPath('appData') }));
 
   // ---- Photo bytes --------------------------------------------------------
   //

@@ -50,6 +50,7 @@
   - **It picks itself**: the number of photos you selected and the cover ratio you gave them in the diary decide the grid density (the tightest one that still holds them all);
   - **The wall shows covers, not originals** — the cover you set in the note is reused, and if its ratio does not match the cell, it is re-cropped the same way the diary's default cover is (from the centre outwards, until one edge reaches the photo's edge);
   - **You can edit before exporting**: **add / delete / replace** the photo in a cell, **set a cover** for a cell (the same cover editor the diary uses, with the cell's shape locked), and **drag** the photos around to change where they sit;
+  - **Out of photos? Import some** — when the memories do not fill the wall, you can pick pictures straight from the system (the same way the diary editor inserts them). They belong to **no memory**: they sit in a temporary directory, are deleted as soon as the export is done, and are cleaned up when you leave the page as well;
   - **New shapes and backgrounds are cheap**: a shape is nothing but a ring of outline points, and a background is one filled rectangle laid down before the pictures.
 
 ### 🃏 Card Draw Life & Streak Wall
@@ -185,6 +186,7 @@ All data is stored in your operating system's user directory:
   ├─ soul-desktop-pet.db       ← SQLite database (sql.js)
   ├─ avatars\<contact_id>      ← custom contact avatars
   ├─ photos\<event_id>\        ← memory event photos
+  ├─ tmp-photos\               ← photos imported into the wall (deleted after the export, not part of the backup)
   ├─ thumbs\                   ← photo wall thumbnails (a cache, not part of the backup)
   └─ pets\                     ← built-in + imported pet packages
 ```

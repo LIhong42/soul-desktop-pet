@@ -4031,6 +4031,14 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   white-space: nowrap;
 }
 
+/* 从系统导入照片 —— 一个挑文件的按钮。 */
+.wall-import {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 /* The photo picker — "换一张照片". A sheet over the page with every photo
    of the selection in it. */
 .wall-picker {

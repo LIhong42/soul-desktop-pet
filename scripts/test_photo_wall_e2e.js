@@ -54,15 +54,21 @@ function chunk(type, data) {
 
 // A picture that cannot be mistaken for a placeholder: solid red.
 function makeRedPng(width, height) {
+  return makePng(width, height, 220, 20, 20);
+}
+
+// A picture in a colour of its own — the imported one is blue, so "did the
+// imported picture reach the wall" is a question about the pixels.
+function makePng(width, height, r, g, b) {
   const raw = Buffer.alloc((width * 3 + 1) * height);
   let at = 0;
   for (let y = 0; y < height; y += 1) {
     raw[at] = 0; // filter: none
     at += 1;
     for (let x = 0; x < width; x += 1) {
-      raw[at] = 220; at += 1; // R
-      raw[at] = 20; at += 1;  // G
-      raw[at] = 20; at += 1;  // B
+      raw[at] = r; at += 1;
+      raw[at] = g; at += 1;
+      raw[at] = b; at += 1;
     }
   }
   const ihdr = Buffer.alloc(13);
@@ -179,25 +185,76 @@ module.exports = (async () => {
 
   // The IPC the wall page needs. The thumbnail handler is the REAL one
   // (main/photo_thumb.js) — the thumbnails are what the page draws, so
-  // they have to be the real thing.
+  // they have to be the real thing. The temporary photo store is the real
+  // one too (main/tmp_photos.js): the imported photos have to land on
+  // disk and be deleted again, exactly like they do in the app.
   const photoThumb = require(path.join(ROOT, 'main', 'photo_thumb.js'));
+  const tmpPhotos = require(path.join(ROOT, 'main', 'tmp_photos.js'));
+  // An upload into a memory — the import must NOT do this. The handler
+  // exists so that a regression shows up as a recorded call.
+  const memoryUploads = [];
+  const findPhoto = (photoId) => {
+    for (const ev of events) {
+      const row = ev.photos.find((p) => p.id === photoId);
+      if (row) return { ev, row };
+    }
+    return null;
+  };
+  const photoPath = (ev, row) => path.join(photosDir, ev.id, path.basename(row.relative_path));
   ipcMain.handle('memorial_events:get', (_e, id) => events.find((x) => x.id === id) || null);
+  ipcMain.handle('memorial_events:photos_upload', (_e, eventId, input) => {
+    memoryUploads.push({ eventId, filename: input && input.filename });
+    throw new Error('the wall must not upload into a memory');
+  });
   ipcMain.handle('memorial_events:photo_thumb', async (_e, photoId) => {
-    const ev = events.find((x) => x.photos.some((p) => p.id === photoId));
-    if (!ev) return null;
+    const hit = findPhoto(photoId);
+    if (!hit) return null;
     return await photoThumb.getThumb({
       photoId,
-      sourcePath: path.join(photosDir, ev.id, `${photoId}.png`),
+      sourcePath: photoPath(hit.ev, hit.row),
       appData: app.getPath('appData'),
     });
   });
   ipcMain.handle('memorial_events:photo_bytes', (_e, photoId) => {
-    const ev = events.find((x) => x.photos.some((p) => p.id === photoId));
-    if (!ev) return null;
-    const file = path.join(photosDir, ev.id, `${photoId}.png`);
+    const hit = findPhoto(photoId);
+    if (!hit) return null;
+    const file = photoPath(hit.ev, hit.row);
     if (!fs.existsSync(file)) return null;
     return fs.readFileSync(file);
   });
+  ipcMain.handle('memorial_events:photo_read', (_e, photoId) => {
+    const hit = findPhoto(photoId);
+    if (!hit) return null;
+    const file = photoPath(hit.ev, hit.row);
+    if (!fs.existsSync(file)) return null;
+    const mime = hit.row.mime || 'image/png';
+    return { data_url: `data:${mime};base64,${fs.readFileSync(file).toString('base64')}`, mime };
+  });
+  // The temporary store the imported photos live in.
+  ipcMain.handle('tmp_photos:save', (_e, input) => tmpPhotos.save({
+    appData: app.getPath('appData'),
+    filename: input && input.filename,
+    mime: input && input.mime,
+    bytes: input && input.bytes,
+  }));
+  ipcMain.handle('tmp_photos:thumb', async (_e, id) => {
+    const file = tmpPhotos.fileOf(app.getPath('appData'), id);
+    if (!file) return null;
+    return await photoThumb.getThumb({
+      photoId: id,
+      sourcePath: file,
+      appData: app.getPath('appData'),
+    });
+  });
+  ipcMain.handle('tmp_photos:read', (_e, id) =>
+    tmpPhotos.read({ appData: app.getPath('appData'), id }));
+  ipcMain.handle('tmp_photos:remove', (_e, id) => {
+    const done = tmpPhotos.remove({ appData: app.getPath('appData'), id });
+    photoThumb.removeThumb(id, app.getPath('appData'));
+    return done;
+  });
+  ipcMain.handle('tmp_photos:clear', () =>
+    tmpPhotos.clear({ appData: app.getPath('appData') }));
 
   const outPath = path.join(tmp, 'wall.png');
   ipcMain.handle('export:photo_wall', (_e, payload) => {
@@ -291,11 +348,70 @@ module.exports = (async () => {
       hasRemoveBtn: !!document.getElementById('wall-remove-btn'),
     }))()`);
 
+    // Import a picture from the system — the way a user does when the
+    // notes have no photos left for the wall.
+    //
+    // The file goes into the picker of the page (CDP sets the files of a
+    // file input), so the page really reads the file and really stores
+    // it. The wall still has free cells, so the imported picture lands on
+    // one of them.
+    const importFile = path.join(tmp, 'imported-blue.png');
+    fs.writeFileSync(importFile, makePng(260, 200, 30, 90, 220));
+    win.webContents.debugger.attach('1.3');
+    const doc = await win.webContents.debugger.sendCommand('DOM.getDocument');
+    const inputNode = await win.webContents.debugger.sendCommand('DOM.querySelector', {
+      nodeId: doc.root.nodeId,
+      selector: '#wall-import-input',
+    });
+    await win.webContents.debugger.sendCommand('DOM.setFileInputFiles', {
+      files: [importFile],
+      nodeId: inputNode.nodeId,
+    });
+    win.webContents.debugger.detach();
+    // The page counts its own photos — the note says how many there are.
+    const imported = await waitFor(async () => {
+      const n = await win.webContents.executeJavaScript(`(() => {
+        const note = document.getElementById('wall-template-note');
+        if (!note) return 0;
+        const m = /照片 (\\d+) 张/.exec(note.textContent);
+        return m ? Number(m[1]) : 0;
+      })()`);
+      return n >= 5 ? n : null;
+    }, 20000);
+    report.importedPhotos = imported;
+    // It went into the temporary store, not into a memory.
+    report.memoryUploads = memoryUploads;
+    const tmpDir = tmpPhotos.tmpDir(app.getPath('appData'));
+    report.tmpFilesDuringImport = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
+    // The imported picture is blue: is it on the wall?
+    report.blueOnWall = await win.webContents.executeJavaScript(`(() => {
+      const cv = document.getElementById('wall-canvas');
+      if (!cv) return 0;
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      let blue = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] < 90 && d[i + 1] < 120 && d[i + 2] > 140) blue += 1;
+      }
+      return blue;
+    })()`);
+
     // Export it.
     await win.webContents.executeJavaScript(
       'document.getElementById("wall-export-btn").click()');
     const written = await waitFor(() => (fs.existsSync(outPath) ? outPath : null), 30000);
     report.exported = !!written;
+    // The export is done → the temporary photos are deleted (they were only
+    // material for this wall, and they belong to no memory).
+    await waitFor(() => {
+      const files = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
+      return files.length === 0;
+    }, 10000);
+    report.tmpFilesAfterExport = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
+    // Their cached thumbnails go with them.
+    const thumbDir = path.join(app.getPath('appData'), 'SoulDesktopPet', 'thumbs');
+    const thumbFiles = fs.existsSync(thumbDir) ? fs.readdirSync(thumbDir) : [];
+    const tmpIds = (report.tmpFilesDuringImport || []).map((x) => path.basename(x, path.extname(x)));
+    report.tmpThumbsLeft = thumbFiles.filter((f) => tmpIds.some((i) => i && f.startsWith(i)));
     // The layout after the export — the export re-renders the page, so the
     // wall must not come out a different size than it went in.
     report.after = await win.webContents.executeJavaScript(`(() => {
@@ -320,7 +436,7 @@ module.exports = (async () => {
         const ctx = cv.getContext('2d');
         ctx.drawImage(img, 0, 0);
         const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
-        let red = 0, total = 0;
+        let red = 0, total = 0, blue = 0;
         // The shape's box: everything that is not the white background.
         let minX = cv.width, minY = cv.height, maxX = -1, maxY = -1;
         for (let y = 0; y < cv.height; y += 1) {
@@ -328,6 +444,7 @@ module.exports = (async () => {
             const i = (y * cv.width + x) * 4;
             total += 1;
             if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
+            if (d[i] < 90 && d[i + 1] < 120 && d[i + 2] > 140) blue += 1;
             if (d[i] < 250 || d[i + 1] < 250 || d[i + 2] < 250) {
               if (x < minX) minX = x;
               if (x > maxX) maxX = x;
@@ -341,6 +458,7 @@ module.exports = (async () => {
           width: img.naturalWidth,
           height: img.naturalHeight,
           redRatio: r4(total ? red / total : 0),
+          blueRatio: r4(total ? blue / total : 0),
           bytes: ${JSON.stringify(fs.statSync(outPath).size)},
           // How much white the shape keeps between itself and each edge,
           // as a share of that edge's length.
@@ -365,6 +483,38 @@ module.exports = (async () => {
       report.screenshotError = String(e && e.message);
     }
 
+    // Import once more and leave the page WITHOUT exporting: the temporary
+    // photos are cleaned up on the way out too.
+    const importFile2 = path.join(tmp, 'imported-green.png');
+    fs.writeFileSync(importFile2, makePng(200, 200, 20, 160, 40));
+    win.webContents.debugger.attach('1.3');
+    const doc2 = await win.webContents.debugger.sendCommand('DOM.getDocument');
+    const inputNode2 = await win.webContents.debugger.sendCommand('DOM.querySelector', {
+      nodeId: doc2.root.nodeId,
+      selector: '#wall-import-input',
+    });
+    await win.webContents.debugger.sendCommand('DOM.setFileInputFiles', {
+      files: [importFile2],
+      nodeId: inputNode2.nodeId,
+    });
+    win.webContents.debugger.detach();
+    await waitFor(async () => {
+      const n = await win.webContents.executeJavaScript(`(() => {
+        const note = document.getElementById('wall-template-note');
+        if (!note) return 0;
+        const m = /照片 (\\d+) 张/.exec(note.textContent);
+        return m ? Number(m[1]) : 0;
+      })()`);
+      return n >= 5 ? n : null;
+    }, 20000);
+    report.tmpFilesBeforeLeave = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
+    await win.webContents.executeJavaScript(`location.hash = '#/elsewhere'`);
+    await waitFor(() => {
+      const files = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
+      return files.length === 0;
+    }, 10000);
+    report.tmpFilesAfterLeave = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
+
     report.errors = errors;
     // The wall is one canvas now: the pictures are on it, the shape clips
     // them (so the corner of the canvas stays white), and the export comes
@@ -380,6 +530,19 @@ module.exports = (async () => {
       && report.png.width > 200 && report.png.height > 200
       && margin.left > 0.03 && margin.right > 0.03
       && margin.top > 0.03 && margin.bottom > 0.03
+      // The imported picture: it was stored in the temp directory (not in
+      // a memory), it is on the wall, and it is in the exported PNG.
+      // After the export it is gone again.
+      && report.importedPhotos === 5
+      && report.memoryUploads && report.memoryUploads.length === 0
+      && report.tmpFilesDuringImport && report.tmpFilesDuringImport.length === 1
+      && report.blueOnWall > 0
+      && report.png && report.png.blueRatio > 0.0005
+      && report.tmpFilesAfterExport && report.tmpFilesAfterExport.length === 0
+      && report.tmpThumbsLeft && report.tmpThumbsLeft.length === 0
+      // Leaving the page without exporting cleans up as well.
+      && report.tmpFilesBeforeLeave && report.tmpFilesBeforeLeave.length === 1
+      && report.tmpFilesAfterLeave && report.tmpFilesAfterLeave.length === 0
       && errors.length === 0;
   } catch (e) {
     report.error = String((e && e.stack) || e);
