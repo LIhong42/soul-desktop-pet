@@ -61,6 +61,11 @@ const state = {
   restored: false,
   // 导出历史。见「导出历史」一节。
   history: [],
+  // 现在墙上摆的是历史里的哪一版 —— 空串 = 不是从历史里载进来的（或者
+  // 用户在载入之后又改了，那一版就算「改过了」）。
+  historyLoadedId: '',
+  // 载入那一版**之前**墙上摆的是什么 —— 「撤销载入」靠它回去。
+  historyPrev: null,   // { eventIds, snapshot }
   // 正在往存档里写 —— 免得连着好几次改动写出一串存档。
   saveTimer: null,
   // 攒着的那一次存档要写什么（哪几篇回忆 + 当时那面墙的样子）。
@@ -104,6 +109,9 @@ async function mount(_args, params) {
   // 上一轮攒着的存档 —— 换了一组回忆，它属于上一轮，不该带过来。
   state.pending = null;
   state.written = null;
+  // 上一轮从历史里载入了哪一版 —— 换了一组回忆就作废了。
+  state.historyLoadedId = '';
+  state.historyPrev = null;
   // 上一轮留下的 bitmap（换了一组回忆又进来）—— 先放掉，别攒着占显存。
   state.bgToken = (state.bgToken || 0) + 1;
   releaseBackground();
@@ -777,6 +785,7 @@ function render() {
       <div class="card">
         <h2>导出历史</h2>
         <div id="wall-history">${historyHtml()}</div>
+        <p class="meta" style="margin-top:8px;">点「<b>载入编辑</b>」把那一版的摆法摆回墙上，接着改（挪照片、改封面、调形状都行），改完再导出。载入<b>不会</b>覆盖你现在这一版 —— 载入前摆的那一版还在存档里，随时可以「撤销载入」回去。</p>
       </div>
     </div>
   `;
@@ -2012,7 +2021,7 @@ function setStatus(text) {
 //
 // 有了那份样子，用户就能：
 //
-//   * 「按这版再导一次」—— 把上次那版摆法读回墙上，确认后直接导出；
+//   * 「载入编辑」—— 把上次那版的摆法摆回墙上，**接着改**，改完再导出；
 //   * 知道上次导到哪儿了（文件路径），省得翻文件夹。
 //
 // 历史存在主进程（settings 表，见 main/photo_wall_history.js）。
@@ -2034,25 +2043,51 @@ function historyItemHtml(entry) {
   const when = String(entry.exportedAt || '').slice(0, 16);
   const size = entry.width && entry.height ? `${entry.width}×${entry.height}` : '';
   const name = entry.path ? String(entry.path).split(/[\\/]/).pop() : '';
+  // 这一版被载入过 —— 标出来，并且把「载入编辑」换成「撤销载入」。
+  //
+  // 载入之后用户接着改了 —— 墙上就不**是**那一版了，但仍然是「在这一版上
+  // 改」，所以标记还在（写的是「正在改这一版」，不是「墙上就是这一版」）。
+  // 只有撤销了才回到「载入编辑」。
+  const loaded = state.historyLoadedId === entry.id;
+  const edited = loaded && !loadedHistoryStillMatches();
   return `
-    <div class="wall-history-item" data-history-id="${escapeHtml(entry.id)}">
+    <div class="wall-history-item${loaded ? ' wall-history-item-loaded' : ''}" data-history-id="${escapeHtml(entry.id)}">
       <div class="wall-history-main">
-        <div class="wall-history-title">${escapeHtml(when || '（时间未知）')}</div>
+        <div class="wall-history-title">${escapeHtml(when || '（时间未知）')}${loaded ? ` <span class="wall-history-badge">${edited ? '正在改这一版' : '已载入这一版'}</span>` : ''}</div>
         <div class="meta">${escapeHtml(name || '（未保存）')}${size ? ' · ' + escapeHtml(size) : ''}${entry.photoCount ? ' · ' + escapeHtml(String(entry.photoCount)) + ' 张' : ''}</div>
       </div>
       <div class="wall-history-actions">
-        <button type="button" class="btn secondary" data-history-act="reuse">按这版再导</button>
+        <button type="button" class="btn secondary" data-history-act="${loaded ? 'unload' : 'load'}">${loaded ? '撤销载入' : '载入编辑'}</button>
         <button type="button" class="btn secondary" data-history-act="remove">删除</button>
       </div>
     </div>
   `;
 }
 
+// 墙上现在摆的还是不是历史里的那一版（一个字都没改过）。
+//
+// 载入之后用户接着改了 —— 墙上就不是那一版了，标记要写「正在改这一版」
+// 而不是「已载入这一版」。判据是拿现在的墙跟载入时那一版比一比（比存档里
+// 的那一份没用：那一份是载入**之前**的摆法）。
+//
+// 只比**摆法**，不比「用了哪几篇回忆」—— 历史里的那一版可能是用另一组
+// 回忆导出来的，那一组现在未必还在墙上，但摆法一样就是同一版。
+function loadedHistoryStillMatches() {
+  const id = state.historyLoadedId;
+  if (!id) return false;
+  const entry = state.history.find((e) => e.id === id);
+  if (!entry || !entry.snapshot) return false;
+  return sameSnapshot(
+    { eventIds: [], snapshot: currentState() },
+    { eventIds: [], snapshot: entry.snapshot },
+  );
+}
+
 // 历史那一块（列表 + 清空）。
 function historyHtml() {
   const list = state.history || [];
   if (!list.length) {
-    return `<p class="meta">还没有导出过。导出一次之后，这里会记下每次的版本，可以按老版本再导一次。</p>`;
+    return `<p class="meta">还没有导出过。导出一次之后，这里会记下每次的版本 —— 点「载入编辑」能把那一版摆回墙上，接着改，改完再导出。</p>`;
   }
   return `
     <div class="wall-history-list">
@@ -2064,16 +2099,27 @@ function historyHtml() {
   `;
 }
 
-// 把历史里某一版的样子读回墙上。
+// 把历史里某一版的样子**载到墙上**，接着改。
 //
 // 这一版可能是用**别的**那几篇回忆导出来的 —— 那些回忆现在不一定还在
 // 这一面墙上。所以读回来的时候，照片对不上的就跳过（applySavedState
 // 已经这么做了），墙上摆的是能对上的那些。
-async function reuseHistoryEntry(entry) {
+//
+// **载入不会覆盖存档** —— 墙上原来摆的那一版还在存档里，离开这一页再
+// 回来还是它。用户是从历史里「借」了一版来改，不是把原来的扔了。
+//
+// 载入之后用户接着改，改动会照常存进存档（scheduleSave）—— 所以在历史
+// 版本上改出来的东西，离开再回来也在。
+async function loadHistoryEntry(entry) {
   if (!entry || !entry.snapshot) {
     toast('这一版没有保存摆法');
     return;
   }
+  // 载入之前墙上摆的那一版 —— 拍下来，「撤销载入」靠它回去。
+  //
+  // 不能靠存档：存档里存的是**这一轮改动过之后**的摆法，载入之后又改了
+  // 它就跟着变了，回不到载入前那一版。
+  const prev = { eventIds: state.eventIds.slice(), snapshot: currentState() };
   const ok = applySavedState(entry.snapshot);
   if (!ok) {
     toast('这一版的摆法用不上了（照片或形状已经变了）');
@@ -2082,9 +2128,37 @@ async function reuseHistoryEntry(entry) {
   // 背景要按当前的画幅重新读一遍（背景是按画幅分目录的）。
   syncBackground();
   await reloadBackground();
+  // 墙上现在是历史里的那一版 —— 记着是哪一版，界面上标出来。
+  state.historyLoadedId = entry.id || '';
+  state.historyPrev = prev;
   render();
+  // **不存** —— 存了就等于把墙上原来那一版顶掉了。用户是从历史里借了一版
+  // 来改，原来那版还在存档里。
+  toast('已载入这一版，可以继续改，改完再导出');
+}
+
+// 放弃墙上现在摆的（历史里的那一版），回到载入之前摆的那一版。
+//
+// 载入之前那一版在 state.historyPrev 里（载入的时候拍下来的）。
+async function undoHistoryLoad() {
+  const prev = state.historyPrev;
+  if (!prev) {
+    toast('没有可以撤销的版本了');
+    return;
+  }
+  const ok = applySavedState(prev.snapshot);
+  if (!ok) {
+    toast('撤销失败：原来的摆法已经用不上了');
+    return;
+  }
+  syncBackground();
+  await reloadBackground();
+  state.historyLoadedId = '';
+  state.historyPrev = null;
+  render();
+  // 回到载入前那一版 —— 存档也跟着回去（离开这一页再回来还是它）。
   scheduleSave();
-  toast('已按那版的样子摆好，确认后可以再导出');
+  toast('已回到载入之前的那一版');
 }
 
 // 把历史里的一条忘掉。
@@ -2120,7 +2194,8 @@ function wireHistory() {
       const entry = state.history.find((e) => e.id === id);
       const act = btn.getAttribute('data-history-act');
       if (act === 'remove') { removeHistoryEntry(id); return; }
-      if (act === 'reuse') { reuseHistoryEntry(entry); }
+      if (act === 'load') { loadHistoryEntry(entry); return; }
+      if (act === 'unload') { undoHistoryLoad(); }
     };
   });
   const clearBtn = document.getElementById('wall-history-clear');

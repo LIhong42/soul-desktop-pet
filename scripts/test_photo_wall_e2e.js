@@ -1489,7 +1489,7 @@ module.exports = (async () => {
       return {
         count: items.length,
         first: items.length ? items[0].textContent.replace(/\\s+/g, ' ').trim() : '',
-        hasReuse: !!(items[0] && items[0].querySelector('[data-history-act="reuse"]')),
+        hasLoad: !!(items[0] && items[0].querySelector('[data-history-act="load"]')),
         hasRemove: !!(items[0] && items[0].querySelector('[data-history-act="remove"]')),
       };
     })()`);
@@ -1501,26 +1501,116 @@ module.exports = (async () => {
       && Array.isArray(report.exportMeta.snapshot.cells));
     report.exportMetaHasSize = !!(report.exportMeta && report.exportMeta.sizeId === 'g9');
 
-    // 「按这版再导」—— read that version back onto the wall. The wall is
-    // already that version, so what matters is that the button WORKS: it
-    // puts the arrangement back and says so.
-    report.reuseResult = await win.webContents.executeJavaScript(`(() => {
-      const btn = document.querySelector('[data-history-act="reuse"]');
+    // ---- 「载入编辑」：把那一版摆回墙上，接着改 --------------------------
+    //
+    // 这才是用户要的：从历史里挑一版，**当底稿继续改**，改完再导出。
+    //
+    // 先把墙上的摆法改成**另一版**（不然载入回来的就是同一版，看不出是
+    // 不是真的换了），再从历史里载入之前那一版。
+    await win.webContents.executeJavaScript(`(() => {
+      const scale = document.getElementById('wall-scale');
+      if (scale) { scale.value = '60'; scale.dispatchEvent(new Event('input', { bubbles: true })); }
+    })()`);
+    await new Promise((r) => setTimeout(r, 900));
+    report.beforeLoadScale = await win.webContents.executeJavaScript(
+      'document.getElementById("wall-scale").value');
+
+    // 载入历史里的那一版（前面导出的那次 —— 缩放 85%）。
+    report.loadResult = await win.webContents.executeJavaScript(`(() => {
+      const btn = document.querySelector('[data-history-act="load"]');
       if (!btn) return { skipped: true };
       btn.click();
       return { clicked: true };
     })()`);
-    await new Promise((r) => setTimeout(r, 900));
-    report.reuseUi = await win.webContents.executeJavaScript(`(() => ({
+    await new Promise((r) => setTimeout(r, 1000));
+    report.loadedUi = await win.webContents.executeJavaScript(`(() => ({
       size: document.getElementById('wall-size') ? document.getElementById('wall-size').value : null,
       cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
       scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
-      status: document.getElementById('wall-status') ? document.getElementById('wall-status').textContent : '',
+      // 界面上标着「墙上就是这一版」。
+      badge: !!(document.querySelector('.wall-history-badge')),
+      loadedRow: !!document.querySelector('.wall-history-item-loaded'),
+      // 载入了以后，那个按钮变成「撤销载入」。
+      hasUnload: !!document.querySelector('[data-history-act="unload"]'),
     }))()`);
-    report.reuseWorked = !!(report.reuseUi
-      && report.reuseUi.size === 'g9'
-      && report.reuseUi.cx === '44'
-      && report.reuseUi.scale === '85');
+    // 那一版真的摆回来了（形状回到 85%，网格还是 g9）。
+    report.loadWorked = !!(report.loadedUi
+      && report.loadedUi.size === 'g9'
+      && report.loadedUi.cx === '44'
+      && report.loadedUi.scale === '85');
+    report.loadMarked = !!(report.loadedUi
+      && report.loadedUi.badge && report.loadedUi.loadedRow && report.loadedUi.hasUnload);
+
+    // ---- 载入之后还能接着改，改完还能导出 --------------------------------
+    //
+    // 这是用户要的核心：载入不是终点，载入之后就是**可编辑的底稿**。
+    report.editAfterLoad = await win.webContents.executeJavaScript(`(() => {
+      const cx = document.getElementById('wall-shape-cx');
+      if (!cx) return { skipped: true };
+      cx.value = '62';
+      cx.dispatchEvent(new Event('change', { bubbles: true }));
+      return { edited: true };
+    })()`);
+    await new Promise((r) => setTimeout(r, 900));
+    report.editedAfterLoadUi = await win.webContents.executeJavaScript(`(() => ({
+      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
+      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
+      // 改过之后，标记还在 —— 但写的是「正在改这一版」（不再是「已载入这一版」）。
+      badge: document.querySelector('.wall-history-badge')
+        ? document.querySelector('.wall-history-badge').textContent : '',
+      // 「撤销载入」还在 —— 随时能回到载入前那一版。
+      hasUnload: !!document.querySelector('[data-history-act="unload"]'),
+    }))()`);
+    report.editAfterLoadWorked = !!(report.editedAfterLoadUi
+      && report.editedAfterLoadUi.cx === '62'
+      && report.editedAfterLoadUi.scale === '85');
+    report.editAfterLoadKeepsDraft = !!(report.editedAfterLoadUi
+      && report.editedAfterLoadUi.badge.indexOf('正在改') >= 0
+      && report.editedAfterLoadUi.hasUnload);
+
+    // 改完再导出一次 —— 导出的是**改过之后**的那一版。
+    const editedOut = path.join(tmp, 'wall-edited-after-load.png');
+    const savedExportTarget = exportTarget;
+    exportTarget = editedOut;
+    await win.webContents.executeJavaScript(
+      'document.getElementById("wall-export-btn").click()');
+    const editedWritten = await waitFor(
+      () => (fs.existsSync(editedOut) && fs.statSync(editedOut).size > 0 ? editedOut : null),
+      30000);
+    exportTarget = savedExportTarget;
+    report.exportAfterLoad = !!editedWritten;
+    // 导出的那一次带的是**改过之后**的状态（中心 62，不是载入时的 44）。
+    const lastMeta = exportMetas.length ? exportMetas[exportMetas.length - 1] : null;
+    report.exportAfterLoadMeta = lastMeta
+      && lastMeta.snapshot
+      && lastMeta.snapshot.transform
+      ? Number(lastMeta.snapshot.transform.dx) : null;
+    report.exportAfterLoadHasEdits = !!(
+      lastMeta && lastMeta.snapshot && lastMeta.snapshot.cells
+      && Array.isArray(lastMeta.snapshot.cells)
+    );
+    await new Promise((r) => setTimeout(r, 800));
+
+    // ---- 「撤销载入」：回到载入之前那一版 ---------------------------------
+    //
+    // 载入**不能**把用户原来摆的那一版弄丢 —— 载入之前摆的是 60%。
+    report.unloadResult = await win.webContents.executeJavaScript(`(() => {
+      const btn = document.querySelector('[data-history-act="unload"]');
+      if (!btn) return { skipped: true };
+      btn.click();
+      return { clicked: true };
+    })()`);
+    await new Promise((r) => setTimeout(r, 1000));
+    report.unloadedUi = await win.webContents.executeJavaScript(`(() => ({
+      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
+      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
+      badge: !!document.querySelector('.wall-history-badge'),
+    }))()`);
+    // 撤销之后回到的是**载入之前**的那一版（60%，中心 50 —— 载入前摆的
+    // 那一版被拍下来了，撤销就是把它摆回去）。
+    report.unloadWorked = !!(report.unloadedUi
+      && report.unloadedUi.scale === '60'
+      && !report.unloadedUi.badge);
 
     // Removing a history entry takes it off the list.
     report.historyRemove = await win.webContents.executeJavaScript(`(() => {
@@ -1631,17 +1721,28 @@ module.exports = (async () => {
       && report.stateRestoredPixels
       && report.stateRestoredPhotos
       // The export history: the export is recorded, the entry carries the
-      // wall's state along (so it can be restored), and the entry can be
-      // put back onto the wall.
+      // wall's state along, and the entry can be LOADED onto the wall.
       && report.historyExported
       && report.historyAfter && report.historyAfter.count >= 1
-      && report.historyAfter.hasReuse
+      && report.historyAfter.hasLoad
       && report.historyAfter.hasRemove
       && report.exportMetaHasSnapshot
       && report.exportMetaHasSize
-      && report.reuseWorked
+      // 「载入编辑」puts that version back on the wall and MARKS it as the
+      // one on the wall.
+      && report.loadWorked
+      && report.loadMarked
+      // And it is a DRAFT: the user can go on editing it, and what they
+      // export afterwards is the edited version.
+      && report.editAfterLoadWorked
+      && report.editAfterLoadKeepsDraft
+      && report.exportAfterLoad
+      && report.exportAfterLoadHasEdits
+      // Loading did NOT throw away what was on the wall before — 「撤销载入」
+      // brings it back.
+      && report.unloadWorked
       && report.historyRemove && !report.historyRemove.skipped
-      && report.historyCountAfterRemove < report.historyAfter.count
+      && report.historyCountAfterRemove < report.historyRemove.before
       && errors.length === 0;
   } catch (e) {
     report.error = String((e && e.stack) || e);
