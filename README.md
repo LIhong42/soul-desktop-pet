@@ -51,6 +51,7 @@
   - **The wall shows covers, not originals** — the cover you set in the note is reused, and if its ratio does not match the cell, it is re-cropped the same way the diary's default cover is (from the centre outwards, until one edge reaches the photo's edge);
   - **You can edit before exporting**: **add / delete / replace** the photo in a cell, **set a cover** for a cell (the same cover editor the diary uses, with the cell's shape locked), and **drag** the photos around to change where they sit;
   - **Out of photos? Import some** — when the memories do not fill the wall, you can pick pictures straight from the system (the same way the diary editor inserts them). They belong to **no memory**: they sit in a temporary directory, are deleted as soon as the export is done, and are cleaned up when you leave the page as well;
+  - **You can lay a background under it**: the wall is painted **opaquely on top** of the background, and only what sticks out of the shape shows the background. The backgrounds live in `resources/photo_wall_background/`, one folder per **canvas ratio** — the folder is named `width-height` (`1-1` is the 1:1 ratio), and every PNG in it is one candidate background for that ratio, so the candidates follow the ratio you pick. **A ratio that has no background art yet falls back to no background** (the wall on a white base);
   - **New shapes and backgrounds are cheap**: a shape is nothing but a ring of outline points, and a background is one filled rectangle laid down before the pictures.
 
 ### 🃏 Card Draw Life & Streak Wall

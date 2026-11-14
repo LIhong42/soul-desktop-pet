@@ -19,6 +19,9 @@ const albumDocx = require('./album_docx');
 const albumVideo = require('./album_video');
 const photoThumb = require('./photo_thumb');
 const tmpPhotos = require('./tmp_photos');
+// 照片墙的背景图库 (resources/photo_wall_background/<宽-高>/*.png)。
+// 见 main/photo_wall_bg.js 的说明。
+const photoWallBg = require('./photo_wall_bg');
 const { verifyPin, hashPin, isValidPinShape } = require('./auth');
 const petInteractions = require('./pet_interactions');
 const bondEngine = require('./bond_engine');
@@ -1377,6 +1380,32 @@ function normFreeText(s) {
 
   ipcMain.handle('tmp_photos:clear', () =>
     tmpPhotos.clear({ appData: app.getPath('appData') }));
+
+  // ---- Photo wall backgrounds ---------------------------------------------
+  //
+  // The background art for the photo wall, keyed by the wall's canvas ratio.
+  // `resources/photo_wall_background/<宽-高>/*.png` — the folder name is the
+  // ratio (`1-1` → `1:1`), and every PNG in it is one candidate background
+  // for that ratio.
+  //
+  // Returns `{ '1:1': [{ id, file, url, label }], ... }` — a ratio with no
+  // art is simply absent, which the renderer reads as "no background".
+  //
+  // The URLs are `file://` (the renderer can't read the filesystem, and the
+  // main window's CSP only allows `file:` in `img-src` — the same rule the
+  // page background follows). The wall doesn't DRAW those URLs, though: it
+  // draws the BYTES from the handler below, because a file:// image painted
+  // onto a canvas served from a file:// page taints that canvas.
+  ipcMain.handle('photo_wall_bg:list', () => photoWallBg.list(null));
+
+  // The bytes of one background image.
+  //
+  // The renderer draws the background with `createImageBitmap`, which needs
+  // the BYTES — drawing a `file://` image onto a canvas served from a
+  // `file://` page taints that canvas, and `toBlob()` then throws
+  // SecurityError, so the exported PNG would be empty.
+  ipcMain.handle('photo_wall_bg:read', (_e, payload = {}) =>
+    photoWallBg.read(null, payload && payload.ratioId, payload && payload.id));
 
   // ---- Photo bytes --------------------------------------------------------
   //

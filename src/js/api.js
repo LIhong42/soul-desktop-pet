@@ -228,6 +228,14 @@ export const api = {
     remove: (id)      => M.tmpPhotos.remove(id),
     clear:  ()        => M.tmpPhotos.clear(),
   },
+  // 照片墙的背景图库。键是画幅 id（`1:1`），值是该画幅下的背景候选。
+  // 没有这一档背景的画幅不出现在结果里 —— 渲染进程据此退回「无背景」。
+  photoWallBg: {
+    list: () => M.photoWallBg?.list?.() || Promise.resolve({}),
+    // 读一张背景的原始字节。渲染进程用它解 bitmap —— 从 file:// 页面里画
+    // file:// 的图会弄脏画布，toBlob() 就抛 SecurityError，导出是空的。
+    read: (payload) => M.photoWallBg?.read?.(payload) || Promise.resolve(null),
+  },
   // Video → frames zip tool. Main opens the file picker and save dialog so
   // raw video bytes never have to round-trip through IPC.
   tools: {

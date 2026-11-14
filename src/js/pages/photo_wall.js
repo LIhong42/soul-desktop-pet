@@ -44,6 +44,11 @@ const state = {
   exporting: false,
   importing: false,
   status: '',
+  // 背景：画布底图。见「背景」小节。
+  bgCatalog: {},     // { '1:1': [{ id, url, ... }] } —— 按画幅分组
+  bgId: '',          // 当前选中的背景 id（空串 = 无背景）
+  bgImg: null,       // 当前背景的 ImageBitmap，没有则为 null
+  bgToken: 0,        // 读背景图的代号 —— 用来作废过期的读图请求
 };
 
 // 窗口大小变了，画布要跟着重新算宽度。监听器只留一个（换页时换掉）。
@@ -68,13 +73,17 @@ async function mount(_args, params) {
   state.exporting = false;
   state.importing = false;
   state.status = '';
+  state.bgId = '';
+  // 上一轮留下的 bitmap（换了一组回忆又进来）—— 先放掉，别攒着占显存。
+  state.bgToken = (state.bgToken || 0) + 1;
+  releaseBackground();
   if (state.eventIds.length === 0) {
     render();
     return;
   }
   state.loading = true;
   render();
-  await loadPhotos();
+  await Promise.all([loadPhotos(), loadBackgrounds()]);
   state.loading = false;
   autoPick();
   render();
@@ -91,6 +100,9 @@ async function mount(_args, params) {
     window.removeEventListener('hashchange', leaveHandler);
     leaveHandler = null;
     dropTmpPhotos();
+    // 背景的 bitmap 占着显存 —— 离开这一页就放掉（正在读的那次也作废）。
+    state.bgToken = (state.bgToken || 0) + 1;
+    releaseBackground();
   };
   window.addEventListener('hashchange', leaveHandler);
 }
@@ -186,6 +198,153 @@ function loadImage(url) {
   });
 }
 
+// ---- 背景 ------------------------------------------------------------------
+//
+// 画布的底图。资源在 `resources/photo_wall_background/<宽-高>/*.png`：一个
+// 子目录 = 一个画幅，目录名写成「宽-高」（`1-1` 就是 1:1 画幅），里面的每
+// 张 PNG 都是这一档画幅下的一张背景候选。
+//
+// 换画幅就换目录：当前画幅的那个目录里没有图，就退回「无背景」—— 墙照旧
+// 画在白底上，不会因为缺资源而报错。
+//
+// 背景画在画布的最底下，照片墙整个盖在上面（形状的底色是不透明的，所以墙
+// 的轮廓之外才是背景露出来的地方）。
+
+// 读背景图库。读不到就当没有背景 —— 这一步失败不该拦住整个页面。
+async function loadBackgrounds() {
+  try {
+    const catalog = await api.photoWallBg.list();
+    state.bgCatalog = (catalog && typeof catalog === 'object') ? catalog : {};
+  } catch (e) {
+    console.error('load photo wall backgrounds failed', e);
+    state.bgCatalog = {};
+  }
+}
+
+// 当前画幅下的背景候选。
+function bgOptions() {
+  const t = state.template;
+  if (!t) return [];
+  return state.bgCatalog[t.ratioId] || [];
+}
+
+// 选中一张背景（或者「无背景」）。
+//
+// 换了画幅以后原来那张可能已经不在候选里了 —— 这时候退回无背景，而不是
+// 拿一张不对画幅的图硬贴上去。
+async function selectBackground(bgId) {
+  const opts = bgOptions();
+  const hit = opts.find((o) => o.id === bgId) || null;
+  state.bgId = hit ? hit.id : '';
+  await reloadBackground();
+  render();
+}
+
+// 把当前选中的背景读进内存（还没读就读，读不出来就退回无背景）。
+//
+// 换画幅之后同一个 id 指的是另一张图 —— 所以读图这一步每次都要重新做，
+// 不能靠缓存 id。
+//
+// 读图是异步的（字节从主进程过来），所以这里带一个「代号」：读图的这会儿
+// 里用户可能又换了画幅或者又挑了另一张 —— 那一次读回来的是过期的东西，
+// 不能往画布上放。代号对不上就把它扔掉。
+async function reloadBackground() {
+  const token = (state.bgToken = (state.bgToken || 0) + 1);
+  if (!state.bgId || !state.template) {
+    releaseBackground();
+    return;
+  }
+  const hit = bgOptions().find((o) => o.id === state.bgId);
+  if (!hit) {
+    state.bgId = '';
+    releaseBackground();
+    return;
+  }
+  const bmp = await loadBackgroundBitmap(hit);
+  if (token !== state.bgToken) {
+    // 有人抢先了（又换了一次）—— 这张读回来的图已经过期，放掉它。
+    if (bmp && typeof bmp.close === 'function') {
+      try { bmp.close(); } catch (e) { /* 已经关过了 */ }
+    }
+    return;
+  }
+  if (!bmp) {
+    // 图读不出来（文件没了、格式不对）—— 当成没有背景。
+    state.bgId = '';
+    releaseBackground();
+    return;
+  }
+  releaseBackground();
+  state.bgImg = bmp;
+}
+
+// 读一张背景图，解成 bitmap。
+//
+// 不用 `<img src="file://…">` 再 drawImage：主窗口是从 file:// 加载的，
+// 从这样的页面里画一张 file:// 的图会把画布弄脏（opaque origin），随后
+// `toBlob()` 抛 SecurityError —— 导出的 PNG 会一个像素都拿不到。
+//
+// 字节从主进程过来（IPC），用 createImageBitmap 解：它直接吃 Blob，不经
+// 过 URL，也不弄脏画布。跟导出照片时解原图是同一个办法。
+async function loadBackgroundBitmap(bg) {
+  try {
+    const bytes = await api.photoWallBg.read({ ratioId: state.template.ratioId, id: bg.id });
+    if (!bytes || !bytes.byteLength) return null;
+    const bmp = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    return bmp;
+  } catch (e) {
+    console.error('load background failed', bg && bg.id, e);
+    return null;
+  }
+}
+
+// 换画幅之后重新对一下背景。
+//
+// 背景是按画幅分目录的：新画幅那个目录里可能没有原来那张，也可能有一张同
+// 名同 id 的（不同画幅各有 1.png 是很正常的）—— 但那是**另一张图**，得重
+// 新读。所以这里只保留 id，图片交给调用方重新加载。
+//
+// 新画幅的候选里没有这一张，就退回无背景。
+function syncBackground() {
+  // 画幅变了 —— 正在读的那张图已经不对了，让它作废。
+  state.bgToken = (state.bgToken || 0) + 1;
+  const opts = bgOptions();
+  const still = opts.find((o) => o.id === state.bgId);
+  if (!still) {
+    state.bgId = '';
+    releaseBackground();
+    return;
+  }
+  // 同一个 id，但已经换了一张图 —— 丢掉旧的 bitmap，重新读。
+  releaseBackground();
+}
+
+// 放掉当前背景的 bitmap。
+//
+// ImageBitmap 占了显存，不用了就得 close —— 否则翻几次背景就攒下一堆。
+function releaseBackground() {
+  const img = state.bgImg;
+  state.bgImg = null;
+  if (img && typeof img.close === 'function') {
+    try { img.close(); } catch (e) { /* 已经关过了 */ }
+  }
+}
+
+// 背景画在画布上的位置：铺满整个画布，等比放大裁掉多出来的那一边
+// （`cover`）—— 所以背景的边永远被画布切掉，不会露白。
+function paintBackground(ctx, W, H) {
+  const img = state.bgImg;
+  if (!img || !img.width) return;
+  const scale = Math.max(W / img.width, H / img.height);
+  const dw = img.width * scale;
+  const dh = img.height * scale;
+  try {
+    ctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  } catch (e) {
+    console.error('paint background failed', e);
+  }
+}
+
 // ---- 模板 ------------------------------------------------------------------
 
 // 自动挑一套模板：按照片张数和用户给照片设的封面画幅。
@@ -197,6 +356,8 @@ function autoPick() {
   const shapeId = state.template ? state.template.shapeId : SHAPES[0].id;
   state.template = pickTemplate(shapeId, state.photos.length, want);
   buildCells();
+  // 自动匹配会改画幅 —— 背景是按画幅分目录的，得重新对一下。
+  syncBackground();
 }
 
 // 换模板（形状 / 网格 / 画幅）之后重排格子。
@@ -252,7 +413,7 @@ function render() {
       <div class="wall-head">
         <a class="wall-back" href="#/export">← 返回导出页</a>
         <h1>照片墙</h1>
-        <p class="meta">把回忆里的照片拼成一块形状。画布的长宽比跟照片一样，照片摆进格子不用裁；形状画在画布正中、四周留一圈白边，只有落进形状里的格子才摆照片，照片再被形状裁一刀 —— 整面墙的轮廓就是形状。</p>
+        <p class="meta">把回忆里的照片拼成一块形状。画布的长宽比跟照片一样，照片摆进格子不用裁；形状画在画布正中、四周留一圈白边，只有落进形状里的格子才摆照片，照片再被形状裁一刀 —— 整面墙的轮廓就是形状。画布底下还能铺一张背景图，照片墙整个盖在上面。</p>
       </div>
 
       <div class="card">
@@ -277,6 +438,16 @@ function render() {
           <div class="field">
             <label>&nbsp;</label>
             <button type="button" class="btn" id="wall-auto-btn">重新自动匹配</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label>背景</label>
+            <select id="wall-bg">${bgOptionsHtml()}</select>
+          </div>
+          <div class="field" style="flex:1; min-width:240px;">
+            <label>&nbsp;</label>
+            <p class="meta" id="wall-bg-note">${bgNote()}</p>
           </div>
         </div>
         <p class="meta" id="wall-template-note">${templateNote()}</p>
@@ -313,7 +484,7 @@ function render() {
           <button type="button" class="btn primary" id="wall-export-btn"${state.exporting || !t || used === 0 ? ' disabled' : ''}>导出照片墙 (PNG)</button>
           <span class="meta">${used} 张已上墙 · 共 ${state.photos.length} 张</span>
         </div>
-        <p class="meta" style="margin-top:8px;">导出的是一块完整的 PNG：白色底，照片按原始分辨率裁切，形状之外的地方留白。</p>
+        <p class="meta" style="margin-top:8px;">导出的是一块完整的 PNG：照片按原始分辨率裁切，照片墙整个盖在背景上（不透明），形状之外露出来的是背景（没选背景时是白底）。</p>
       </div>
     </div>
   `;
@@ -343,6 +514,26 @@ function templateNote() {
   const ratio = WALL_RATIOS.find((r) => r.id === t.ratioId);
   return `当前：${shape ? shape.name : t.shapeId} · ${t.sizeName} 网格 · ${ratio ? ratio.id : t.ratioId}（${ratio ? ratio.name : ''}） · `
     + `画布 ${t.ratio.toFixed(2)}:1 · 共 ${t.capacity} 个格子，照片 ${state.photos.length} 张。`;
+}
+
+// 背景下拉：先是「无背景」，然后是当前画幅下的候选。
+function bgOptionsHtml() {
+  const opts = bgOptions();
+  const none = `<option value=""${state.bgId ? '' : ' selected'}>无背景</option>`;
+  return none + opts.map((o) => (
+    `<option value="${escapeHtml(o.id)}"${state.bgId === o.id ? ' selected' : ''}>${escapeHtml(o.label || o.id)}</option>`
+  )).join('');
+}
+
+// 背景这一行下面的一句话：说清楚为什么没有背景可选。
+function bgNote() {
+  const t = state.template;
+  if (!t) return '';
+  const opts = bgOptions();
+  if (!opts.length) {
+    return `这一档画幅（${t.ratioId}）没有背景资源 —— 用无背景模式，照片墙画在白底上。`;
+  }
+  return `背景铺在画布底下，照片墙整个盖在上面（不透明），露出来的部分是背景。`;
 }
 
 // ---- 画布 ------------------------------------------------------------------
@@ -388,11 +579,15 @@ function paintBase(ctx, W, H) {
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, W, H);
+  // 背景铺在最底下（铺满整个画布）。形状和照片随后整个盖在它上面。
+  paintBackground(ctx, W, H);
   if (!t) return;
   const geo = wallGeometry(t, H);
   const path = shapePath(geo.shape);
 
   // 形状的底：一层淡色，让人看得见形状（空着的格子就是它）。
+  //
+  // 这一层是不透明的 —— 墙整个盖在背景上，形状之外才是背景露出来的地方。
   ctx.save();
   ctx.fillStyle = SHAPE_FILL;
   ctx.fill(path);
@@ -504,15 +699,27 @@ function wire() {
   }
   const ratioSel = document.getElementById('wall-ratio');
   if (ratioSel) {
-    ratioSel.onchange = () => {
+    ratioSel.onchange = async () => {
       // 换画幅：画布的长宽比变了，格子数也跟着变 —— 重新挑一档网格。
       state.template = pickTemplate(state.template.shapeId, state.photos.length, ratioSel.value);
       buildCells();
+      // 背景是按画幅分的目录 —— 换画幅就换一批候选，同名的那张也是另一张
+      // 图，所以要重新读一次。
+      syncBackground();
+      await reloadBackground();
       render();
     };
   }
   const autoBtn = document.getElementById('wall-auto-btn');
-  if (autoBtn) autoBtn.onclick = () => { autoPick(); render(); };
+  if (autoBtn) autoBtn.onclick = async () => {
+    autoPick();
+    // 自动匹配可能改了画幅 —— 背景要重新读。
+    await reloadBackground();
+    render();
+  };
+
+  const bgSel = document.getElementById('wall-bg');
+  if (bgSel) bgSel.onchange = () => { selectBackground(bgSel.value); };
 
   const canvas = document.getElementById('wall-canvas');
   if (canvas) wireCanvas(canvas);
@@ -933,10 +1140,13 @@ async function doExport() {
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, W, H);
+  // 背景铺在最底下 —— 和编辑器里看到的是同一张图（只是分辨率不同）。
+  paintBackground(ctx, W, H);
 
   const geo = wallGeometry(t, H);
   const path = shapePath(geo.shape);
   // 形状的底 —— 空着的格子是它，墙的轮廓因此看得见。
+  // 不透明：墙整个盖在背景上。
   ctx.fillStyle = SHAPE_FILL;
   ctx.fill(path);
   const filled = state.cells.filter((c) => c.photoId);

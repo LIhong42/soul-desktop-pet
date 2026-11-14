@@ -212,7 +212,7 @@ function render() {
         <button class="btn" id="export-mp4-btn" ${exportDisabled ? 'disabled' : ''}>导出回忆视频 (MP4)</button>
         <button class="btn secondary" id="export-wall-btn" ${exportDisabled ? 'disabled' : ''}>导出照片墙 (PNG)</button>
       </div>
-      <p class="meta" style="margin-top:8px;">PDF 每页一篇回忆，保留回忆编辑页里的文字与图片排版，整篇等比缩放到一页；Word 导出同样一篇一页（标题行 + 内容 + 日期行），照片保持等比并且每张都能点开原图。视频每张照片 4 秒（含 Ken Burns 推拉）。照片墙把选中的几篇回忆里的照片拼成一块心形的墙：画布的长宽比跟照片一样，形状画在正中，照片按网格填进形状里，墙的轮廓就是形状；进了编辑页还能换位置、改封面，最后导出成一张 PNG。</p>
+      <p class="meta" style="margin-top:8px;">PDF 每页一篇回忆，保留回忆编辑页里的文字与图片排版，整篇等比缩放到一页；Word 导出同样一篇一页（标题行 + 内容 + 日期行），照片保持等比并且每张都能点开原图。视频每张照片 4 秒（含 Ken Burns 推拉）。照片墙把选中的几篇回忆里的照片拼成一块心形的墙：画布的长宽比跟照片一样，形状画在正中，照片按网格填进形状里，墙的轮廓就是形状；画布底下还能铺一张背景图，照片墙整个盖在上面；进了编辑页还能换位置、改封面，最后导出成一张 PNG。</p>
       ${renderExportProgress()}
     </div>
     </div>

@@ -190,6 +190,9 @@ module.exports = (async () => {
   // disk and be deleted again, exactly like they do in the app.
   const photoThumb = require(path.join(ROOT, 'main', 'photo_thumb.js'));
   const tmpPhotos = require(path.join(ROOT, 'main', 'tmp_photos.js'));
+  // The background catalog is the REAL one (main/photo_wall_bg.js): the page
+  // has to find the art and read its bytes exactly the way the app does.
+  const photoWallBg = require(path.join(ROOT, 'main', 'photo_wall_bg.js'));
   // An upload into a memory — the import must NOT do this. The handler
   // exists so that a regression shows up as a recorded call.
   const memoryUploads = [];
@@ -256,12 +259,21 @@ module.exports = (async () => {
   ipcMain.handle('tmp_photos:clear', () =>
     tmpPhotos.clear({ appData: app.getPath('appData') }));
 
+  // The background catalog: the real scanner, and the real byte reader.
+  ipcMain.handle('photo_wall_bg:list', () => photoWallBg.list(null));
+  ipcMain.handle('photo_wall_bg:read', (_e, payload) =>
+    photoWallBg.read(null, payload && payload.ratioId, payload && payload.id));
+
   const outPath = path.join(tmp, 'wall.png');
+  // The exports go to a different file each time, so the second export (the
+  // one WITH the background) does not overwrite the first one (the baseline
+  // without a background).
+  let exportTarget = outPath;
   ipcMain.handle('export:photo_wall', (_e, payload) => {
     const bytes = payload && payload.bytes;
     if (!bytes || !bytes.byteLength) throw new Error('没有可导出的照片墙数据');
-    fs.writeFileSync(outPath, Buffer.from(bytes));
-    return { path: outPath, bytes: bytes.byteLength };
+    fs.writeFileSync(exportTarget, Buffer.from(bytes));
+    return { path: exportTarget, bytes: bytes.byteLength };
   });
 
   const errors = [];
@@ -279,7 +291,13 @@ module.exports = (async () => {
   win.webContents.on('console-message', (_e, level, message) => {
     // The harness page has no CSP of its own, so Electron prints its
     // security warning into the console. It says nothing about the wall.
-    if (level >= 2 && !/Security Warning/.test(message)) errors.push(message);
+    //
+    // "willReadFrequently" is a performance HINT that Chromium prints when
+    // the test reads the canvas pixels back a lot — and reading the pixels
+    // back is exactly what this test is for. It is not a defect.
+    if (level >= 2
+      && !/Security Warning/.test(message)
+      && !/willReadFrequently/.test(message)) errors.push(message);
   });
 
   const report = { photos: photoCount, ok: false };
@@ -347,6 +365,31 @@ module.exports = (async () => {
       hasCoverBtn: !!document.getElementById('wall-cover-btn'),
       hasRemoveBtn: !!document.getElementById('wall-remove-btn'),
     }))()`);
+
+    // ---- the background ----------------------------------------------------
+    //
+    // The background art lives in `resources/photo_wall_background/<宽-高>/`
+    // — one folder per canvas ratio. The wall's canvas ratio decides which
+    // folder is used, and the wall is painted ON TOP of it, opaquely.
+    //
+    // The pictures of this test are 4:3 and 3:4 — neither of those ratios
+    // ships art yet, so the ratio is switched to 1:1 (which does) to
+    // exercise the feature. A ratio WITHOUT art has to fall back to "no
+    // background" — that is checked here too, before the switch.
+    report.bgPickerNoArt = await win.webContents.executeJavaScript(`(() => {
+      const sel = document.getElementById('wall-bg');
+      if (!sel) return null;
+      return {
+        options: Array.from(sel.options).map((o) => o.value),
+        note: document.getElementById('wall-bg-note')
+          ? document.getElementById('wall-bg-note').textContent : '',
+        ratio: document.getElementById('wall-ratio')
+          ? document.getElementById('wall-ratio').value : '',
+      };
+    })()`);
+
+    // The background is exercised after the first export (so that export
+    // stays the clean baseline for the shape's margins) — see below.
 
     // Import a picture from the system — the way a user does when the
     // notes have no photos left for the wall.
@@ -472,6 +515,109 @@ module.exports = (async () => {
       })()`);
     }
 
+    // ---- export WITH a background -----------------------------------------
+    //
+    // The second export carries the background art. This is the check that
+    // matters: a canvas painted with a `file://` image is tainted, and
+    // `toBlob()` on a tainted canvas throws SecurityError — so an export
+    // that comes out at all is proof that the page drew the background
+    // from BYTES (createImageBitmap) rather than from a file:// URL.
+    //
+    // The art is picked by the corner pixel: the corner is outside the
+    // shape, so with no background it is white, and with one it is the
+    // background's own colour.
+    const bgOutPath = path.join(tmp, 'wall-with-bg.png');
+    const bgPicked = await win.webContents.executeJavaScript(`(async () => {
+      // Switch the canvas to 1:1 — the ratio that ships background art.
+      // (The ratio change re-picks the grid and re-renders the page.)
+      const ratio = document.getElementById('wall-ratio');
+      if (ratio) {
+        ratio.value = '1:1';
+        ratio.dispatchEvent(new Event('change'));
+        await new Promise((r) => setTimeout(r, 800));
+      }
+      // The picker of the new ratio.
+      const picker = document.getElementById('wall-bg');
+      if (!picker) return null;
+      const opt = Array.from(picker.options).find((o) => o.value);
+      if (!opt) return { noArt: true };
+      picker.value = opt.value;
+      picker.dispatchEvent(new Event('change'));
+      // Wait for the page to have the bitmap and to have drawn it.
+      const started = Date.now();
+      while (Date.now() - started < 20000) {
+        await new Promise((r) => setTimeout(r, 120));
+        const cv = document.getElementById('wall-canvas');
+        if (!cv || !cv.width) continue;
+        const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+        // White means "no background drawn yet".
+        if (d[0] < 250 || d[1] < 250 || d[2] < 250) {
+          return {
+            id: opt.value,
+            corner: [d[0], d[1], d[2]],
+            options: Array.from(picker.options).map((o) => o.value),
+            note: document.getElementById('wall-bg-note')
+              ? document.getElementById('wall-bg-note').textContent : '',
+          };
+        }
+      }
+      return { id: opt.value, corner: null };
+    })()`);
+    report.bgPicked = bgPicked;
+
+    // The wall sits ON TOP of the background and is opaque: the middle of
+    // the canvas is the shape's own colour, never the background's.
+    report.bgUnderShape = await win.webContents.executeJavaScript(`(() => {
+      const cv = document.getElementById('wall-canvas');
+      if (!cv) return null;
+      const ctx = cv.getContext('2d');
+      const mid = ctx.getImageData(Math.floor(cv.width / 2), Math.floor(cv.height / 2), 1, 1).data;
+      return { centre: [mid[0], mid[1], mid[2]] };
+    })()`);
+
+    if (bgPicked && bgPicked.corner) {
+      exportTarget = bgOutPath;
+      await win.webContents.executeJavaScript(
+        'document.getElementById("wall-export-btn").click()');
+      const bgWritten = await waitFor(
+        () => (fs.existsSync(bgOutPath) && fs.statSync(bgOutPath).size > 0 ? bgOutPath : null),
+        30000);
+      report.bgExported = !!bgWritten;
+      if (bgWritten) {
+        // Read the exported PNG back and look at its corner: the art has to
+        // be in the file, not just on the screen.
+        const bgDataUrl = 'data:image/png;base64,'
+          + fs.readFileSync(bgOutPath).toString('base64');
+        report.bgPng = await win.webContents.executeJavaScript(`(async () => {
+          const img = new Image();
+          img.src = ${JSON.stringify(bgDataUrl)};
+          await img.decode();
+          const cv = document.createElement('canvas');
+          cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+          const ctx = cv.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+          const corner = [d[0], d[1], d[2]];
+          const mid = ctx.getImageData(
+            Math.floor(cv.width / 2), Math.floor(cv.height / 2), 1, 1).data;
+          let red = 0, total = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            total += 1;
+            if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
+          }
+          const r4 = (n) => Number(n.toFixed(4));
+          return {
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+            corner: corner,
+            centre: [mid[0], mid[1], mid[2]],
+            redRatio: r4(total ? red / total : 0),
+            bytes: ${JSON.stringify(fs.statSync(bgOutPath).size)},
+          };
+        })()`);
+      }
+    }
+
     // A picture of the page, so the wall can be looked at rather than
     // only measured.
     try {
@@ -543,6 +689,21 @@ module.exports = (async () => {
       // Leaving the page without exporting cleans up as well.
       && report.tmpFilesBeforeLeave && report.tmpFilesBeforeLeave.length === 1
       && report.tmpFilesAfterLeave && report.tmpFilesAfterLeave.length === 0
+      // The background: a ratio WITHOUT art falls back to "no background"
+      // (the picker offers nothing else), the ratio WITH art offers its
+      // pictures, picking one paints it in the corner (outside the shape),
+      // the wall stays opaque on top of it, and the art survives into the
+      // exported PNG.
+      && report.bgPickerNoArt && report.bgPickerNoArt.options.length === 1
+      && report.bgPickerNoArt.options[0] === ''
+      && report.bgPicked && report.bgPicked.corner
+      && report.bgPicked.options && report.bgPicked.options.length >= 2
+      && report.bgPicked.options[0] === ''
+      && report.bgPicked.corner[0] < 250
+      && report.bgUnderShape && report.bgUnderShape.centre
+      && report.bgExported
+      && report.bgPng && report.bgPng.corner[0] < 250
+      && report.bgPng && report.bgPng.redRatio > 0.01
       && errors.length === 0;
   } catch (e) {
     report.error = String((e && e.stack) || e);

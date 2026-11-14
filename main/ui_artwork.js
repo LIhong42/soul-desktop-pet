@@ -31,7 +31,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { pathToFileURL } = require('url');
+const artworkScan = require('./artwork_scan');
 
 // Only these are offered. Lowercased because a `.PNG` from a Windows
 // screenshot tool must not silently vanish.
@@ -68,49 +68,17 @@ function list(appPath) {
   if (cache) return cache;
 
   const dir = uiDir(appPath);
-  let names = [];
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
+  if (!fs.existsSync(dir)) {
     // No folder at all. Not an error: a build without any ui artwork simply
     // has no decoration, and the pages render on the plain app surface.
     cache = [];
     return cache;
   }
 
-  const rows = [];
-  for (const name of names) {
-    if (!name.toLowerCase().endsWith(ACCEPTED_EXT)) continue;
-    // Skip directories that merely end in .png, and anything we can't stat.
-    const abs = path.join(dir, name);
-    try {
-      if (!fs.statSync(abs).isFile()) continue;
-    } catch { continue; }
-
-    const id = path.basename(name, path.extname(name));
-    if (!id) continue;
-    rows.push({
-      id,
-      file: name,
-      // Same encoding the frame loader relies on: a Chinese filename has to be
-      // percent-encoded or the <img> fails to load silently.
-      url: pathToFileURL(abs).href,
-      // What the picker shows. The raw id is the honest label — inventing a
-      // name here would mean a second place to update when a PNG is renamed.
-      label: id,
-    });
-  }
-
-  rows.sort((a, b) => {
-    const na = Number(a.id);
-    const nb = Number(b.id);
-    const aNum = Number.isFinite(na);
-    const bNum = Number.isFinite(nb);
-    if (aNum && bNum) return na - nb;
-    if (aNum) return -1;      // numeric ids first, then named ones
-    if (bNum) return 1;
-    return a.id.localeCompare(b.id);
-  });
+  // The scan itself (what counts as an image, how the rows are shaped, how
+  // they are sorted) is shared with the photo wall's background catalog —
+  // see main/artwork_scan.js.
+  const rows = artworkScan.listFiles(dir, ACCEPTED_EXT);
 
   cache = rows;
   return cache;

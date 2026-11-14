@@ -268,6 +268,22 @@ contextBridge.exposeInMainWorld('mp', {
     clear:  ()        => ipcRenderer.invoke('tmp_photos:clear'),
   },
 
+  // The photo wall's background art. `resources/photo_wall_background/` —
+  // one folder per canvas ratio (`1-1` → `1:1`), every PNG in it a candidate
+  // background for that ratio. The main process scans the folder and hands
+  // back `file://` URLs, because the renderer can't read the filesystem and
+  // the main window's CSP only allows `file:` in `img-src`.
+  //   list() → { '1:1': [{ id, file, url, label }], ... }
+  //   read({ ratioId, id }) → the PNG's bytes (a Buffer)
+  //
+  // The bytes are what the renderer actually draws: a `file://` image drawn
+  // onto a canvas would taint it, and `toBlob()` on a tainted canvas throws
+  // SecurityError — the export would come out empty.
+  photoWallBg: {
+    list: () => ipcRenderer.invoke('photo_wall_bg:list'),
+    read: (payload) => ipcRenderer.invoke('photo_wall_bg:read', payload || {}),
+  },
+
   // Video → frames zip tool. Backed by `tools:split_video_to_frames` and
   // `tools:cancel` in main/ipc.js. Both dialogs (input + save) run in the
   // main process — the renderer just kicks off the job and waits.
