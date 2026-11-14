@@ -13,7 +13,8 @@
 //
 // 自动的部分：按照片张数和照片的画幅挑网格密度。
 //
-// 手动的部分：换照片、删照片、给某个格子改封面、把照片拖到别的格子。
+// 手动的部分：换照片、删照片、给某个格子改封面、把照片拖到别的格子，
+// 以及**调整形状**（拖形状挪位置、拖角上的手柄等比缩放）。
 //
 // 墙上摆的不是原图，是照片的等比封面 —— 默认用回忆笔记里给这张照片设的
 // 封面；封面画幅和格子不一样时按笔记的默认裁法重裁一遍（从照片中心往
@@ -29,6 +30,8 @@ import {
   SHAPES, WALL_SIZES, WALL_RATIOS,
   buildTemplate, pickTemplate, dominantRatio, resolveCellCover, photoDefaultRatio,
   wallGeometry, cellRect, exportCanvasWidth,
+  DEFAULT_SHAPE_TRANSFORM, SHAPE_SCALE_MIN, SHAPE_SCALE_MAX,
+  normalizeTransform, clampTransform,
 } from '../photo_wall_layout.js';
 
 const state = {
@@ -44,6 +47,10 @@ const state = {
   exporting: false,
   importing: false,
   status: '',
+  // 形状的调整：位置 + 等比缩放。见「调整形状」一节。
+  transform: { ...DEFAULT_SHAPE_TRANSFORM },
+  // 正在拖形状（移动 / 缩放）—— 拖的过程中不重排 DOM，只重画画布。
+  dragging: null,    // { kind: 'move' | 'scale', ... }
   // 背景：画布底图。见「背景」小节。
   bgCatalog: {},     // { '1:1': [{ id, url, ... }] } —— 按画幅分组
   bgId: '',          // 当前选中的背景 id（空串 = 无背景）
@@ -56,6 +63,9 @@ let resizeHandler = null;
 
 // 离开这一页的监听器 —— 只留一个（换页时换掉）。
 let leaveHandler = null;
+
+// 刚刚拖过形状 —— 拖完的那一次点击不算「选格子」（手一松就点，容易误点）。
+let justDragged = false;
 
 async function mount(_args, params) {
   // 上一轮留下的临时照片（换了一组回忆又进来）—— 先清掉，它们是上一轮
@@ -73,6 +83,8 @@ async function mount(_args, params) {
   state.exporting = false;
   state.importing = false;
   state.status = '';
+  state.transform = { ...DEFAULT_SHAPE_TRANSFORM };
+  state.dragging = null;
   state.bgId = '';
   // 上一轮留下的 bitmap（换了一组回忆又进来）—— 先放掉，别攒着占显存。
   state.bgToken = (state.bgToken || 0) + 1;
@@ -354,7 +366,7 @@ function autoPick() {
   ));
   const want = dominantRatio(ratios);
   const shapeId = state.template ? state.template.shapeId : SHAPES[0].id;
-  state.template = pickTemplate(shapeId, state.photos.length, want);
+  state.template = pickTemplate(shapeId, state.photos.length, want, state.transform);
   buildCells();
   // 自动匹配会改画幅 —— 背景是按画幅分目录的，得重新对一下。
   syncBackground();
@@ -450,6 +462,19 @@ function render() {
             <p class="meta" id="wall-bg-note">${bgNote()}</p>
           </div>
         </div>
+        <div class="form-row">
+          <div class="field">
+            <label>形状大小</label>
+            <div class="wall-scale-row">
+              <input type="range" id="wall-scale" min="${Math.round(SHAPE_SCALE_MIN * 100)}" max="${Math.round(SHAPE_SCALE_MAX * 100)}" step="1" value="${Math.round(state.transform.scale * 100)}"/>
+              <span class="wall-scale-value" id="wall-scale-value">${Math.round(state.transform.scale * 100)}%</span>
+            </div>
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <button type="button" class="btn" id="wall-shape-reset-btn">重置形状位置和大小</button>
+          </div>
+        </div>
         <p class="meta" id="wall-template-note">${templateNote()}</p>
       </div>
 
@@ -463,6 +488,7 @@ function render() {
           </div>
           <p class="meta" id="wall-status">${escapeHtml(state.status)}</p>
           <p class="meta">点一个格子就能换照片、删照片、改封面；把照片从侧栏拖到墙上可以换位置。</p>
+          <p class="meta">也可以直接调整形状：按住形状里<b>空着的格子</b>拖动可以挪位置，拖<b>四个角上的手柄</b>可以等比缩放（也可以用上面的滑块）。</p>
         </div>
 
         <div class="card wall-side">
@@ -501,7 +527,7 @@ function sizeOptions() {
   const shapeId = t ? t.shapeId : SHAPES[0].id;
   const ratioId = t ? t.ratioId : '1:1';
   return WALL_SIZES.map((s) => {
-    const cap = buildTemplate(shapeId, s.id, ratioId).capacity;
+    const cap = buildTemplate(shapeId, s.id, ratioId, state.transform).capacity;
     const on = t && t.sizeId === s.id ? ' selected' : '';
     return `<option value="${s.id}"${on}>${s.name}（${cap} 格）</option>`;
   }).join('');
@@ -572,6 +598,13 @@ function drawWall() {
 
   paintBase(canvas.getContext('2d'), W, H);
   paintOverlay();
+}
+
+// 拖动形状的时候重画底画布 —— 尺寸不变，只把内容重画一遍。
+function paintBaseNow() {
+  const canvas = document.getElementById('wall-canvas');
+  if (!canvas || !canvas.width) return;
+  paintBase(canvas.getContext('2d'), canvas.width, canvas.height);
 }
 
 function paintBase(ctx, W, H) {
@@ -647,6 +680,33 @@ function paintOverlay() {
   };
   if (state.hover >= 0 && state.hover !== state.selected) mark(state.hover, 'rgba(40, 35, 30, 0.45)');
   if (state.selected >= 0) mark(state.selected, '#d97757');
+  paintHandles(ctx, geo);
+}
+
+// 四个角的缩放手柄 —— 画在轮廓的包围盒四角上。
+//
+// 手柄是给用户看的：按住它拖，形状就等比缩放。
+//
+// geo.bounds 和 handlePoints 给的都是**设备像素**（画布按 dpr 放大过），
+// 而这里画的也是同一块画布 —— 所以不用再换算。
+function paintHandles(ctx, geo) {
+  const b = geo.bounds;
+  if (!Number.isFinite(b.minX)) return;
+  // 手柄的大小按画布缩放：缩略图上也抓得住，又不至于盖住整面墙。
+  const size = Math.max(8, Math.min(HANDLE_SIZE * 2, geo.scale / 30));
+  const half = size / 2;
+  ctx.save();
+  for (const h of handlePoints(geo)) {
+    // 白底 + 深色的边 —— 什么背景上都看得清。
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#d97757';
+    ctx.lineWidth = Math.max(1.5, geo.scale / 300);
+    ctx.beginPath();
+    ctx.rect(h.x - half, h.y - half, size, size);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function shapePath(points) {
@@ -676,6 +736,249 @@ function cellAt(clientX, clientY) {
   return -1;
 }
 
+// ---- 调整形状 --------------------------------------------------------------
+//
+// 系统给的是默认形状：摆在画布正中，占满留白以后能占的最大面积。有时候背
+// 景和形状对不上 —— 形状该往边上挪一挪，或者该小一点。所以形状可以被
+// 用户拖着改。
+//
+// 两种手势：
+//
+//   拖形状本身   → 挪位置
+//   拖角上的手柄 → 等比缩放（形状的长宽比不变，心形放大以后还是心形）
+//
+// 调整完以后，格子要按**调整过后的形状**重排 —— 哪些格子还落进形状里，
+// 就重新算一遍，照片按顺序重新填进去（和换网格时的做法一样）。
+//
+// 拖动过程中不重排 DOM（那太贵），只重画画布；手一松才重排格子。
+
+// 手柄的边长（像素）—— 按画布大小缩放，缩略图上也能抓住。
+const HANDLE_SIZE = 12;
+
+// 抓着多近算抓住了手柄（像素）—— 比手柄本身大一点，好抓。
+const HANDLE_GRAB = 16;
+
+// 画布坐标（宽 = ratio、高 = 1）里的手柄位置 —— 四个角。
+//
+// 手柄跟着形状走：形状挪了、缩了，手柄跟着走。
+function handlePoints(geo) {
+  const b = geo.bounds;
+  return [
+    { id: 'nw', x: b.minX, y: b.minY },
+    { id: 'ne', x: b.maxX, y: b.minY },
+    { id: 'se', x: b.maxX, y: b.maxY },
+    { id: 'sw', x: b.minX, y: b.maxY },
+  ];
+}
+
+// 屏幕坐标（像素）→ 画布坐标（宽 = ratio、高 = 1）。
+function toCanvasPoint(clientX, clientY) {
+  const canvas = document.getElementById('wall-canvas');
+  const t = state.template;
+  if (!canvas || !t) return null;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.height) return null;
+  return {
+    x: (clientX - rect.left) / rect.height,
+    y: (clientY - rect.top) / rect.height,
+  };
+}
+
+// 指针落在哪个手柄上 —— 落在就返回它的 id，否则 null。
+//
+// 返回的 pxX / pxY 是手柄在**屏幕**上的位置（CSS 像素）—— 缩放的时候
+// 手柄跟手，就靠它。
+//
+// 手柄的位置来自 wallGeometry —— 那是**设备像素**（画布按 dpr 放大过），
+// 所以要除掉 dpr 才是屏幕上的 CSS 像素。
+function handleAt(clientX, clientY) {
+  const canvas = document.getElementById('wall-canvas');
+  const t = state.template;
+  if (!canvas || !t) return null;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.height) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const geo = wallGeometry(t, rect.height * dpr);
+  const px = clientX - rect.left;
+  const py = clientY - rect.top;
+  for (const h of handlePoints(geo)) {
+    const hx = h.x / dpr;
+    const hy = h.y / dpr;
+    if (Math.abs(px - hx) <= HANDLE_GRAB && Math.abs(py - hy) <= HANDLE_GRAB) {
+      return { id: h.id, pxX: rect.left + hx, pxY: rect.top + hy };
+    }
+  }
+  return null;
+}
+
+// 指针在不在形状里面 —— 在形状里按下就意味着「挪形状」。
+//
+// 判据用的是轮廓点：点在多边形里就算在形状内。这里用的是「射线法」的
+// 简化版 —— 从点往右边数轮廓的边，奇数条就在里面。
+function insideShape(pt) {
+  const t = state.template;
+  if (!t || !pt) return false;
+  const pts = t.outline;
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i, i += 1) {
+    const a = pts[i];
+    const b = pts[j];
+    if ((a.y > pt.y) !== (b.y > pt.y)) {
+      const x = a.x + ((pt.y - a.y) / (b.y - a.y)) * (b.x - a.x);
+      if (pt.x < x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// 应用一份调整：形状变了，格子按新形状重排，照片重新填进去。
+function applyTransform(next) {
+  state.transform = normalizeTransform(next);
+  if (!state.template) return;
+  // 挪动不能把形状整个拖出画布 —— 拖出去就找不回来了。
+  state.transform = clampTransform(
+    state.transform,
+    state.template.ratio,
+    baseOutline(),
+  );
+  state.template = buildTemplate(
+    state.template.shapeId,
+    state.template.sizeId,
+    state.template.ratioId,
+    state.transform,
+  );
+  buildCells();
+  syncScaleUi();
+  render();
+}
+
+// 没挪没缩的那份轮廓 —— 挪动的余地按它算。
+//
+// 每次都重新算（而不是存起来）：形状模板换了、画幅换了以后，「没调过的形状」
+// 也不一样了，存起来会过期。
+function baseOutline() {
+  const t = state.template;
+  if (!t) return [];
+  const base = buildTemplate(t.shapeId, t.sizeId, t.ratioId, DEFAULT_SHAPE_TRANSFORM);
+  return base.outline;
+}
+
+// 滑块和它旁边的数字 —— 跟着当前调整走。
+function syncScaleUi() {
+  const range = document.getElementById('wall-scale');
+  if (range) range.value = String(Math.round(state.transform.scale * 100));
+  const label = document.getElementById('wall-scale-value');
+  if (label) label.textContent = `${Math.round(state.transform.scale * 100)}%`;
+}
+
+// 拖动：记下手势的起点和形状当时的框。
+//
+// 「起点」记两遍 —— 一遍在屏幕坐标（算手柄跟不跟手），一遍在画布坐标
+// （算形状挪了多少）。
+//
+// 缩放还要记下形状中心在**屏幕**上的位置：手柄离中心多远，形状就多大
+// —— 中心不动，手柄跟手。
+function beginDrag(e, kind, extra) {
+  const canvas = document.getElementById('wall-canvas');
+  if (!canvas) return;
+  const t = state.template;
+  if (!t) return;
+  const rect = canvas.getBoundingClientRect();
+  const geo = wallGeometry(t, rect.height * (window.devicePixelRatio || 1));
+  const dpr = window.devicePixelRatio || 1;
+  // 形状中心在屏幕上的位置（CSS 像素）—— 缩放的尺子。
+  //
+  // geo.bounds 是设备像素（画布按 dpr 放大过），除掉 dpr 才是屏幕像素。
+  const centreX = rect.left + geo.bounds.cx / dpr;
+  const centreY = rect.top + geo.bounds.cy / dpr;
+  state.dragging = {
+    kind,
+    startClient: { x: e.clientX, y: e.clientY },
+    startTransform: { ...state.transform },
+    startBounds: { ...geo.bounds },
+    // 没挪没缩的那份轮廓 —— 挪动的余地按它算（形状越小能挪的范围反而越
+    // 大，没道理）。
+    baseOutline: baseOutline(),
+    // 形状中心在屏幕上的位置（CSS 像素）—— 缩放的尺子。
+    centreClient: { x: centreX, y: centreY },
+    // 起手时手柄离中心的距离（屏幕像素）—— 缩放的尺子的起点。
+    startDist: extra && extra.handle
+      ? Math.hypot(e.clientX - centreX, e.clientY - centreY)
+      : 0,
+  };
+  canvas.classList.add(kind === 'scale' ? 'wall-scale-mode' : 'wall-move-mode');
+  // 抓住画布 —— 指针拖到画布外面也不松手。
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* 老浏览器没有 */ }
+}
+
+// 拖动中：算出新的调整，**只重画画布**（格子等手松了再重排）。
+function moveDrag(e) {
+  const d = state.dragging;
+  const t = state.template;
+  if (!d || !t) return;
+  if (d.kind === 'move') {
+    // 挪动：按画布单位算位移（画布高 = 1）。
+    const rect = document.getElementById('wall-canvas').getBoundingClientRect();
+    const dx = (e.clientX - d.startClient.x) / rect.height;
+    const dy = (e.clientY - d.startClient.y) / rect.height;
+    state.transform = clampTransform({
+      scale: d.startTransform.scale,
+      dx: d.startTransform.dx + dx,
+      dy: d.startTransform.dy + dy,
+    }, t.ratio, d.baseOutline);
+    redrawTransform();
+    return;
+  }
+  // 缩放：手柄离形状中心的距离变了多少倍，形状就放大多少倍。
+  //
+  // 抓住哪个角，就用那个角和形状中心的距离当尺子 —— 形状中心不动，
+  // 手柄跟手（这是图形编辑器里最常见的手感）。
+  if (!(d.startDist > 0)) return;
+  const nowDist = Math.hypot(
+    e.clientX - d.centreClient.x,
+    e.clientY - d.centreClient.y,
+  );
+  const startDist = Math.hypot(
+    d.startClient.x - d.centreClient.x,
+    d.startClient.y - d.centreClient.y,
+  );
+  if (!(startDist > 0)) return;
+  const factor = nowDist / startDist;
+  const scale = Math.min(SHAPE_SCALE_MAX, Math.max(SHAPE_SCALE_MIN, d.startTransform.scale * factor));
+  state.transform = normalizeTransform({
+    scale,
+    dx: d.startTransform.dx,
+    dy: d.startTransform.dy,
+  });
+  redrawTransform();
+}
+
+// 拖动中重画：形状的轮廓和格子都按新的调整画一遍（不重排 DOM）。
+//
+// 格子也得跟着重算 —— 形状挪了以后，哪些格子还落进形状里变了。但重排会
+// 把照片挪来挪去，拖动的时候那样会闪。所以这里只是**重画**当前的格子
+// （格子集合不变），手松开时再真的重排。
+function redrawTransform() {
+  const t = state.template;
+  if (!t) return;
+  // 用新的调整重算形状和格子，但先不换掉 state.cells（照片不闪）。
+  const next = buildTemplate(t.shapeId, t.sizeId, t.ratioId, state.transform);
+  state.template = next;
+  paintBaseNow();
+  paintOverlay();
+  syncScaleUi();
+}
+
+// 拖动结束：真的重排格子，照片按顺序重新填进去。
+function endDrag() {
+  const d = state.dragging;
+  state.dragging = null;
+  const canvas = document.getElementById('wall-canvas');
+  if (canvas) canvas.classList.remove('wall-scale-mode', 'wall-move-mode');
+  if (!d) return;
+  applyTransform(state.transform);
+}
+
 // ---- 交互 ------------------------------------------------------------------
 
 function wire() {
@@ -684,7 +987,7 @@ function wire() {
     shapeSel.onchange = () => {
       // 换形状：按同样的照片数和画幅重新挑一个网格。
       const ratio = state.template ? state.template.ratioId : '1:1';
-      state.template = pickTemplate(shapeSel.value, state.photos.length, ratio);
+      state.template = pickTemplate(shapeSel.value, state.photos.length, ratio, state.transform);
       buildCells();
       render();
     };
@@ -692,7 +995,7 @@ function wire() {
   const sizeSel = document.getElementById('wall-size');
   if (sizeSel) {
     sizeSel.onchange = () => {
-      state.template = buildTemplate(state.template.shapeId, sizeSel.value, state.template.ratioId);
+      state.template = buildTemplate(state.template.shapeId, sizeSel.value, state.template.ratioId, state.transform);
       buildCells();
       render();
     };
@@ -701,7 +1004,7 @@ function wire() {
   if (ratioSel) {
     ratioSel.onchange = async () => {
       // 换画幅：画布的长宽比变了，格子数也跟着变 —— 重新挑一档网格。
-      state.template = pickTemplate(state.template.shapeId, state.photos.length, ratioSel.value);
+      state.template = pickTemplate(state.template.shapeId, state.photos.length, ratioSel.value, state.transform);
       buildCells();
       // 背景是按画幅分的目录 —— 换画幅就换一批候选，同名的那张也是另一张
       // 图，所以要重新读一次。
@@ -717,6 +1020,18 @@ function wire() {
     await reloadBackground();
     render();
   };
+  const resetShapeBtn = document.getElementById('wall-shape-reset-btn');
+  if (resetShapeBtn) resetShapeBtn.onclick = () => {
+    state.transform = { ...DEFAULT_SHAPE_TRANSFORM };
+    applyTransform();
+  };
+  const scaleRange = document.getElementById('wall-scale');
+  if (scaleRange) {
+    scaleRange.oninput = () => {
+      // 滑块只改大小 —— 位置不动。
+      applyTransform({ ...state.transform, scale: Number(scaleRange.value) / 100 });
+    };
+  }
 
   const bgSel = document.getElementById('wall-bg');
   if (bgSel) bgSel.onchange = () => { selectBackground(bgSel.value); };
@@ -745,13 +1060,72 @@ function wireImport() {
 
 function wireCanvas(canvas) {
   canvas.addEventListener('click', (e) => {
+    // 刚刚拖过形状的话，这一次点击不算「选格子」—— 手一松就想点格子，
+    // 结果点中的却是刚挪走的位置，会让人莫名其妙。
+    if (justDragged) { justDragged = false; return; }
     state.selected = cellAt(e.clientX, e.clientY);
     renderSide();
     paintOverlay();
   });
 
+  // ---- 调整形状：拖动 ----
+  //
+  // 手柄优先：抓着角上的小方块是缩放，抓着形状本身是挪位置。
+  //
+  // 用 pointer 事件而不是 mouse —— 触屏也能用（电子墨水屏的笔也行）。
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    const handle = handleAt(e.clientX, e.clientY);
+    if (handle) {
+      beginDrag(e, 'scale', { handle });
+      e.preventDefault();
+      return;
+    }
+    // 形状里面才算是「挪形状」—— 形状外面按下去是选格子。
+    const pt = toCanvasPoint(e.clientX, e.clientY);
+    if (!pt || !insideShape(pt)) return;
+    // 但格子里**有照片**时按下去是拖照片（原有的功能）—— 挪形状得从
+    // 空着的格子（形状的底色）下手，否则两个手势打架。
+    const index = cellAt(e.clientX, e.clientY);
+    const cell = index >= 0 ? state.cells[index] : null;
+    if (cell && cell.photoId) return;
+    beginDrag(e, 'move');
+    e.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!state.dragging) {
+      // 没在拖的时候：指针在手柄上就换个光标，让用户知道这里能抓。
+      const handle = handleAt(e.clientX, e.clientY);
+      if (handle) {
+        canvas.classList.add('wall-handle-hover');
+        canvas.classList.remove('wall-shape-hover');
+      } else {
+        canvas.classList.remove('wall-handle-hover');
+        const pt = toCanvasPoint(e.clientX, e.clientY);
+        canvas.classList.toggle('wall-shape-hover', !!(pt && insideShape(pt)));
+      }
+      return;
+    }
+    moveDrag(e);
+    e.preventDefault();
+  });
+
+  const stopDrag = (e) => {
+    if (!state.dragging) return;
+    justDragged = true;
+    endDrag();
+    if (e && e.pointerId != null) {
+      try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* 没有抓到 */ }
+    }
+  };
+  canvas.addEventListener('pointerup', stopDrag);
+  canvas.addEventListener('pointercancel', stopDrag);
+
   // 把墙上的照片拖到别的格子 —— 换位置。
   canvas.addEventListener('dragstart', (e) => {
+    // 在形状上拖动 = 挪形状 —— 别让浏览器把照片也拖起来。
+    if (state.dragging) { e.preventDefault(); return; }
     const index = cellAt(e.clientX, e.clientY);
     const cell = index >= 0 ? state.cells[index] : null;
     if (!cell || !cell.photoId) { e.preventDefault(); return; }

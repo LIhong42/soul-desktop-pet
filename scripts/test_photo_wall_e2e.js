@@ -98,6 +98,77 @@ async function waitFor(fn, timeoutMs) {
   return null;
 }
 
+// A pointer gesture on the wall's canvas: press, move, release.
+//
+// The shape is dragged with POINTER events (not mouse ones), so this has to
+// dispatch PointerEvents — a MouseEvent would never move the shape and the
+// test would pass while the feature was broken.
+function pointerGesture(win, from, to, steps) {
+  const n = steps || 6;
+  return win.webContents.executeJavaScript(`(() => {
+    const cv = document.getElementById('wall-canvas');
+    if (!cv) return false;
+    const r = cv.getBoundingClientRect();
+    const mk = (type, x, y) => new PointerEvent(type, {
+      pointerId: 1,
+      isPrimary: true,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: type === 'pointerup' ? 0 : 1,
+      clientX: r.left + x,
+      clientY: r.top + y,
+    });
+    const x0 = ${JSON.stringify(from[0])}, y0 = ${JSON.stringify(from[1])};
+    const x1 = ${JSON.stringify(to[0])}, y1 = ${JSON.stringify(to[1])};
+    cv.dispatchEvent(mk('pointerdown', x0, y0));
+    for (let i = 1; i <= ${n}; i += 1) {
+      const k = i / ${n};
+      cv.dispatchEvent(mk('pointermove', x0 + (x1 - x0) * k, y0 + (y1 - y0) * k));
+    }
+    cv.dispatchEvent(mk('pointerup', x1, y1));
+    return true;
+  })()`);
+}
+
+// Where the wall's shape sits on the canvas — measured from the PIXELS.
+//
+// The wall's outline is the only thing on the canvas that is not white (the
+// shape has its own fill, and the photos are red), so the bounding box of
+// everything non-white IS the shape's box. Measuring it this way means the
+// test never has to know how the page stores the shape — it asks what was
+// actually drawn.
+//
+// The result is in CANVAS pixels (the canvas' own pixel grid), so the caller
+// has to convert to CSS pixels before using it as a gesture target.
+function shapeBox(win) {
+  return win.webContents.executeJavaScript(`(() => {
+    const cv = document.getElementById('wall-canvas');
+    if (!cv) return null;
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let minX = cv.width, minY = cv.height, maxX = -1, maxY = -1;
+    for (let y = 0; y < cv.height; y += 1) {
+      for (let x = 0; x < cv.width; x += 1) {
+        const i = (y * cv.width + x) * 4;
+        // White = outside the shape (the background is not white in this
+        // phase of the test, so the shape's own fill counts as non-white).
+        if (d[i] > 248 && d[i + 1] > 248 && d[i + 2] > 248) continue;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) return null;
+    return {
+      minX, minY, maxX, maxY,
+      width: cv.width,
+      height: cv.height,
+      cssScale: parseFloat(cv.style.width) / cv.width,
+    };
+  })()`);
+}
+
 // The app's own CSP, read from src/index.html.
 //
 // The harness page MUST carry it: the real window loads src/index.html, and
@@ -365,6 +436,304 @@ module.exports = (async () => {
       hasCoverBtn: !!document.getElementById('wall-cover-btn'),
       hasRemoveBtn: !!document.getElementById('wall-remove-btn'),
     }))()`);
+
+    // ---- adjusting the shape ------------------------------------------------
+    //
+    // The system ships a default shape; the user may drag it (to move it) and
+    // drag its corner handles (to scale it proportionally).
+    //
+    // What is checked here, in order:
+    //
+    //   1. the shape's box on the canvas, measured from the pixels;
+    //   2. a DRAG of the shape moves it — the box shifts;
+    //   3. a DRAG of a corner handle scales it — the box grows/shrinks, and
+    //      the aspect stays the same (a proportional scale);
+    //   4. the reset button puts it back where it started.
+    //
+    // The pixels are the only trustworthy witness here: a transform that
+    // only moved some internal state would leave the drawing untouched, and
+    // a test that looked at the state would happily call that a pass.
+    const box0 = await shapeBox(win);
+    report.shapeBox0 = box0;
+
+    // The canvas' CSS pixels per canvas pixel — the gesture works in CSS
+    // pixels (the page reads clientX/clientY).
+    const cssScale = box0 ? box0.cssScale : 1;
+    // Where to grab the shape: an EMPTY cell inside it.
+    //
+    // The page moves the shape when you press an empty cell of it, and
+    // drags the PHOTO when you press a cell that has one (that is the
+    // older feature, and it has to keep working). So the gesture has to
+    // start on an empty cell — the test asks the page where one is.
+    const aim = await win.webContents.executeJavaScript(`(() => {
+      const cv = document.getElementById('wall-canvas');
+      if (!cv) return null;
+      const r = cv.getBoundingClientRect();
+      // The empty cells are the ones with the shape's own fill. Scan the
+      // canvas for a pixel of that fill — it is the only thing on the wall
+      // that is neither a photo nor white.
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      const at = (x, y) => {
+        const i = (y * cv.width + x) * 4;
+        return [d[i], d[i + 1], d[i + 2]];
+      };
+      for (let y = 2; y < cv.height - 2; y += 2) {
+        for (let x = 2; x < cv.width - 2; x += 2) {
+          const [r0, g0, b0] = at(x, y);
+          // The shape's fill (#efe9e0) — and it must NOT be a photo.
+          if (Math.abs(r0 - 0xef) < 8 && Math.abs(g0 - 0xe9) < 8 && Math.abs(b0 - 0xe0) < 8) {
+            return {
+              x: (x / cv.width) * r.width,
+              y: (y / cv.height) * r.height,
+            };
+          }
+        }
+      }
+      return null;
+    })()`);
+    report.shapeGrabPoint = aim;
+
+    // (2) Drag the shape to the right.
+    if (aim) {
+      await pointerGesture(win, [aim.x, aim.y], [aim.x + 60, aim.y], 6);
+      await waitFor(async () => {
+        const b = await shapeBox(win);
+        return b && b.minX > box0.minX + 10 ? b : null;
+      }, 8000);
+    }
+    const box1 = await shapeBox(win);
+    report.shapeBox1 = box1;
+    report.shapeMoved = !!(box0 && box1 && box1.minX > box0.minX + 5);
+
+    // (3) Scale it with the bottom-right handle. The handle sits on the
+    // corner of the shape's box, so the gesture starts right there.
+    const handle = box1 ? {
+      x: box1.maxX * cssScale,
+      y: box1.maxY * cssScale,
+    } : null;
+    if (handle) {
+      // Pull the handle away from the centre — the shape grows.
+      await pointerGesture(win, [handle.x, handle.y], [handle.x + 50, handle.y + 50], 6);
+      await waitFor(async () => {
+        const b = await shapeBox(win);
+        return b && b.maxX > box1.maxX + 10 ? b : null;
+      }, 8000);
+    }
+    const box2 = await shapeBox(win);
+    report.shapeBox2 = box2;
+    report.shapeScaled = !!(box1 && box2 && box2.maxX > box1.maxX + 5);
+    // A proportional scale keeps the shape's own aspect: the width and the
+    // height grow by the same factor.
+    report.shapeScaleRatio = (box1 && box2 && box1.maxX > box1.minX && box1.maxY > box1.minY)
+      ? Number((((box2.maxX - box2.minX) / (box1.maxX - box1.minX))
+        / ((box2.maxY - box2.minY) / (box1.maxY - box1.minY))).toFixed(3))
+      : null;
+
+    // (4) The reset button puts the shape back.
+    await win.webContents.executeJavaScript(
+      'document.getElementById("wall-shape-reset-btn").click()');
+    await waitFor(async () => {
+      const b = await shapeBox(win);
+      return b && Math.abs(b.minX - box0.minX) < 4 && Math.abs(b.maxX - box0.maxX) < 4 ? b : null;
+    }, 8000);
+    const box3 = await shapeBox(win);
+    report.shapeBox3 = box3;
+    report.shapeReset = !!(box0 && box3
+      && Math.abs(box3.minX - box0.minX) < 6 && Math.abs(box3.maxX - box0.maxX) < 6);
+
+    // (5) The two gestures must not fight each other.
+    //
+    // The shape moves when you press an EMPTY cell of it, and a PHOTO is
+    // dragged when you press a cell that has one. Adding the shape's
+    // gestures must not have broken the photo drag that was there before.
+    //
+    // So: find a cell that has a photo, drag it to another cell, and check
+    // that the photo changed places — and that the shape did NOT move.
+    report.photoDrag = await win.webContents.executeJavaScript(`(() => {
+      const cv = document.getElementById('wall-canvas');
+      if (!cv) return null;
+      const r = cv.getBoundingClientRect();
+      // The cells with a photo are the red ones.
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      const isRed = (x, y) => {
+        const i = (y * cv.width + x) * 4;
+        return d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90;
+      };
+      const find = (want) => {
+        for (let y = 4; y < cv.height - 4; y += 3) {
+          for (let x = 4; x < cv.width - 4; x += 3) {
+            if (isRed(x, y) === want) return { x, y };
+          }
+        }
+        return null;
+      };
+      const src = find(true);
+      const dst = find(false);
+      if (!src || !dst) return { skipped: true };
+      const toCss = (p) => ({
+        x: (p.x / cv.width) * r.width,
+        y: (p.y / cv.height) * r.height,
+      });
+      return { src: toCss(src), dst: toCss(dst) };
+    })()`);
+
+    if (report.photoDrag && !report.photoDrag.skipped) {
+      // The HTML5 drag-and-drop is driven by the browser's own drag events,
+      // so this one is a DataTransfer-based gesture, not a pointer one.
+      await win.webContents.executeJavaScript(`(() => {
+        const cv = document.getElementById('wall-canvas');
+        const r = cv.getBoundingClientRect();
+        const src = ${JSON.stringify(report.photoDrag.src)};
+        const dst = ${JSON.stringify(report.photoDrag.dst)};
+        const dt = new DataTransfer();
+        const fire = (type, x, y) => {
+          const ev = new DragEvent(type, {
+            bubbles: true, cancelable: true, dataTransfer: dt,
+            clientX: r.left + x, clientY: r.top + y,
+          });
+          cv.dispatchEvent(ev);
+        };
+        fire('dragstart', src.x, src.y);
+        fire('dragover', dst.x, dst.y);
+        fire('drop', dst.x, dst.y);
+        fire('dragend', dst.x, dst.y);
+      })()`);
+      await waitFor(async () => {
+        const b = await shapeBox(win);
+        return b && Math.abs(b.minX - box0.minX) < 6 ? b : null;
+      }, 4000);
+      // The shape stayed put, and the red area moved towards the target.
+      const afterDrag = await shapeBox(win);
+      report.photoDragKeptShape = !!(afterDrag
+        && Math.abs(afterDrag.minX - box0.minX) < 6
+        && Math.abs(afterDrag.maxX - box0.maxX) < 6);
+      const moved = await win.webContents.executeJavaScript(`(() => {
+        const cv = document.getElementById('wall-canvas');
+        const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+        let red = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
+        }
+        return red;
+      })()`);
+      report.photoDragRed = moved;
+      report.photoDragWorked = moved > 0;
+    }
+
+    // The scale slider and the percentage next to it follow the transform.
+    report.scaleUi = await win.webContents.executeJavaScript(`(() => ({
+      value: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
+      label: document.getElementById('wall-scale-value')
+        ? document.getElementById('wall-scale-value').textContent : null,
+    }))()`);
+
+    // The wall must still be a wall: the shape's fill is there, the photos
+    // are on it, and the corner outside the shape is still white.
+    report.afterAdjust = await win.webContents.executeJavaScript(`(() => {
+      const cv = document.getElementById('wall-canvas');
+      if (!cv) return null;
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      let red = 0, total = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        total += 1;
+        if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
+      }
+      return {
+        redRatio: Number((total ? red / total : 0).toFixed(4)),
+        corner: [d[0], d[1], d[2]],
+      };
+    })()`);
+
+    // ---- the export carries the adjustment ----------------------------------
+    //
+    // The editor's canvas and the exported PNG are drawn by the same code —
+    // but only if the adjustment is part of the geometry both of them use.
+    // A transform that stayed in the page's state would leave the exported
+    // PNG with the OLD shape, and the user would get a wall they never
+    // designed.
+    //
+    // So: shrink the shape with the slider, export, and compare WHERE the
+    // shape sits in the PNG with where it sits on the screen. Both are
+    // measured from the pixels, and both are given as a share of their own
+    // canvas — the two canvases have different sizes.
+    await win.webContents.executeJavaScript(`(() => {
+      const r = document.getElementById('wall-scale');
+      if (!r) return;
+      r.value = '70';
+      r.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await waitFor(async () => {
+      const v = await win.webContents.executeJavaScript(
+        'document.getElementById("wall-scale-value").textContent');
+      return v === '70%' ? v : null;
+    }, 8000);
+    const shrunkBox = await shapeBox(win);
+    report.shrunkBox = shrunkBox;
+    // Where the shape sits on the screen, as a share of the canvas — the
+    // same measure the exported PNG gets, so the two can be compared.
+    report.shrunkScreenBox = shrunkBox ? {
+      left: Number((shrunkBox.minX / shrunkBox.width).toFixed(4)),
+      right: Number(((shrunkBox.width - 1 - shrunkBox.maxX) / shrunkBox.width).toFixed(4)),
+      top: Number((shrunkBox.minY / shrunkBox.height).toFixed(4)),
+      bottom: Number(((shrunkBox.height - 1 - shrunkBox.maxY) / shrunkBox.height).toFixed(4)),
+    } : null;
+
+    const adjustedOut = path.join(tmp, 'wall-adjusted.png');
+    const savedTarget = exportTarget;
+    exportTarget = adjustedOut;
+    await win.webContents.executeJavaScript(
+      'document.getElementById("wall-export-btn").click()');
+    const adjustedWritten = await waitFor(
+      () => (fs.existsSync(adjustedOut) && fs.statSync(adjustedOut).size > 0 ? adjustedOut : null),
+      30000);
+    exportTarget = savedTarget;
+    report.adjustedExported = !!adjustedWritten;
+    if (adjustedWritten) {
+      const adjDataUrl = 'data:image/png;base64,'
+        + fs.readFileSync(adjustedOut).toString('base64');
+      report.adjustedPng = await win.webContents.executeJavaScript(`(async () => {
+        const img = new Image();
+        img.src = ${JSON.stringify(adjDataUrl)};
+        await img.decode();
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+        const ctx = cv.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+        // The shape is everything that is not white.
+        let minX = cv.width, minY = cv.height, maxX = -1, maxY = -1;
+        let red = 0;
+        for (let y = 0; y < cv.height; y += 1) {
+          for (let x = 0; x < cv.width; x += 1) {
+            const i = (y * cv.width + x) * 4;
+            if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
+            if (d[i] > 248 && d[i + 1] > 248 && d[i + 2] > 248) continue;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+        const r4 = (n) => Number(n.toFixed(4));
+        return {
+          width: cv.width,
+          height: cv.height,
+          redRatio: r4(red / (cv.width * cv.height)),
+          // Where the shape sits, as a share of the canvas — the same way
+          // the screen's box is measured, so the two can be compared.
+          box: {
+            left: r4(minX / cv.width),
+            right: r4((cv.width - 1 - maxX) / cv.width),
+            top: r4(minY / cv.height),
+            bottom: r4((cv.height - 1 - maxY) / cv.height),
+          },
+        };
+      })()`);
+    }
+
+    // Put the shape back to normal before the rest of the test.
+    await win.webContents.executeJavaScript(
+      'document.getElementById("wall-shape-reset-btn").click()');
 
     // ---- the background ----------------------------------------------------
     //
@@ -676,6 +1045,38 @@ module.exports = (async () => {
       && report.png.width > 200 && report.png.height > 200
       && margin.left > 0.03 && margin.right > 0.03
       && margin.top > 0.03 && margin.bottom > 0.03
+      // The shape can be adjusted: dragged (it moves), scaled by its
+      // corner handle (it grows, and it grows PROPORTIONALLY — the width
+      // and the height grow by the same factor), and put back with the
+      // reset button. The wall still looks like a wall afterwards.
+      && report.shapeMoved
+      && report.shapeScaled
+      && report.shapeScaleRatio && report.shapeScaleRatio > 0.9
+      && report.shapeScaleRatio < 1.1
+      && report.shapeReset
+      // The photo drag still works, and it does NOT drag the shape along.
+      && report.photoDrag && !report.photoDrag.skipped
+      && report.photoDragWorked
+      && report.photoDragKeptShape
+      && report.scaleUi && report.scaleUi.value === '100'
+      && report.scaleUi && report.scaleUi.label === '100%'
+      && report.afterAdjust && report.afterAdjust.redRatio > 0.05
+      && report.afterAdjust && report.afterAdjust.corner[0] > 200
+      // The exported PNG carries the adjustment too: the shape sits in the
+      // same place in the PNG as it does on the screen (both measured as a
+      // share of their own canvas), and it is SMALLER than the default one
+      // (the slider was at 70%).
+      && report.adjustedExported
+      && report.adjustedPng && report.adjustedPng.redRatio > 0.02
+      && report.shrunkScreenBox && report.adjustedPng
+      && Math.abs(report.adjustedPng.box.left - report.shrunkScreenBox.left) < 0.02
+      && Math.abs(report.adjustedPng.box.right - report.shrunkScreenBox.right) < 0.02
+      && Math.abs(report.adjustedPng.box.top - report.shrunkScreenBox.top) < 0.02
+      && Math.abs(report.adjustedPng.box.bottom - report.shrunkScreenBox.bottom) < 0.02
+      // A shape shrunk to 70% keeps a bigger margin than the default one
+      // (the default leaves 5%).
+      && report.adjustedPng.box.top > 0.05
+      && report.adjustedPng.box.bottom > 0.05
       // The imported picture: it was stored in the temp directory (not in
       // a memory), it is on the wall, and it is in the exported PNG.
       // After the export it is gone again.

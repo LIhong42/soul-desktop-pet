@@ -19,6 +19,10 @@
 //
 // 照片数决定网格密度：小数量用稀网格（6×6），大数量用密网格。
 //
+// 系统给的是默认形状，但用户可以**调整**它：拖动位置、拖角上手柄等比缩放
+// （见「形状的调整」一节）。调整算在第 2 步里 —— 格子落不落进形状，
+// 用的就是调整过后的形状，所以照片和轮廓永远对得上。
+//
 // 这个文件是纯计算，不碰 DOM —— 导出时算格子、编辑时画格子，用的是同一
 // 套规则。加一个新形状只要往 SHAPES 里加一条：一圈轮廓点。
 
@@ -142,6 +146,106 @@ function placeShape(shape, canvasW, canvasH) {
   return { x: mx + (availW - w) / 2, y: my + (availH - h) / 2, w, h };
 }
 
+// ---- 形状的调整（位置 + 大小）---------------------------------------------
+//
+// 系统给的是一套默认形状 —— 心形摆在画布正中，占满留白以后能占的最大面
+// 积。有时候背景和形状对不上：形状该往边上挪一挪，或者该小一点。
+//
+// 所以形状带着一份「调整」：
+//
+//   scale —— 等比缩放（50% ~ 200%）
+//   dx    —— 左右挪多少（模板单位：画布宽 = ratio，高 = 1）
+//   dy    —— 上下挪多少
+//
+// 缩放是**等比**的 —— 形状自己的长宽比不变，所以心形放大以后还是心形，
+// 不会被拉扁。
+//
+// 缩放绕形状的中心转：放大的那一圈从中心往外长，而不是往一边挤。
+
+// 调整的上下限。
+export const SHAPE_SCALE_MIN = 0.5;
+export const SHAPE_SCALE_MAX = 2;
+
+// 一份「什么都没调」的调整。
+export const DEFAULT_SHAPE_TRANSFORM = Object.freeze({ scale: 1, dx: 0, dy: 0 });
+
+// 把一份调整收拾干净：不是数的用默认值，缩放夹在上下限里。
+export function normalizeTransform(transform) {
+  const t = transform || {};
+  let scale = Number(t.scale);
+  if (!Number.isFinite(scale)) scale = 1;
+  scale = Math.min(SHAPE_SCALE_MAX, Math.max(SHAPE_SCALE_MIN, scale));
+  let dx = Number(t.dx);
+  if (!Number.isFinite(dx)) dx = 0;
+  let dy = Number(t.dy);
+  if (!Number.isFinite(dy)) dy = 0;
+  return { scale, dx, dy };
+}
+
+// 调整在缓存键里的样子。
+function transformKey(tf) {
+  const q = (n) => Math.round(n * TRANSFORM_KEY_PRECISION);
+  return `${q(tf.scale)}.${q(tf.dx)}.${q(tf.dy)}`;
+}
+
+// 把轮廓按调整摆到画布上。
+//
+// 轮廓点先绕形状自己的中心缩放（等比），再整体平移 —— 于是缩放不会让形
+// 状「跑到一边去」，用户抓着的那个手柄也不会在缩放时从手里跑掉。
+function applyTransform(outline, place, tf) {
+  if (tf.scale === 1 && tf.dx === 0 && tf.dy === 0) return outline;
+  const cx = place.x + place.w / 2;
+  const cy = place.y + place.h / 2;
+  return outline.map((p) => ({
+    x: cx + (p.x - cx) * tf.scale + tf.dx,
+    y: cy + (p.y - cy) * tf.scale + tf.dy,
+  }));
+}
+
+// 调整之后形状在画布里占的框 —— 手柄就画在它四个角上。
+//
+// 框是轮廓的包围盒（不是缩放前的那个框）—— 形状挪了、缩了，手柄跟着走。
+function shapeBounds(outline) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of outline) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 };
+}
+
+// 把形状挪进画布范围里 —— 别让它整个跑到画布外面去（用户看不见，也找
+// 不回来）。
+//
+// 规矩：形状的包围盒至少要有**三分之一**留在画布里。剩下的部分可以伸出
+// 画布（伸出去的被切掉，看起来就是「贴着边」）。
+//
+// `outline` 是**调整之前**的轮廓（没挪没缩的那一份）—— 挪动的余地按它
+// 算，不然形状越小能挪的范围反而越大，没道理。
+export function clampTransform(transform, ratio, outline) {
+  const tf = normalizeTransform(transform);
+  const b = shapeBounds(outline);
+  if (!Number.isFinite(b.minX) || !(b.w > 0) || !(b.h > 0)) return tf;
+  // 画布里至少要留下三分之一的宽和高。
+  const keepX = b.w / 3;
+  const keepY = b.h / 3;
+  // 形状的左边最多能到画布右边往左 keepX 的地方。
+  const minDx = ratio - b.maxX - keepX;
+  const maxDx = -b.minX + keepX;
+  const minDy = 1 - b.maxY - keepY;
+  const maxDy = -b.minY + keepY;
+  return {
+    scale: tf.scale,
+    dx: Math.max(minDx, Math.min(maxDx, tf.dx)),
+    dy: Math.max(minDy, Math.min(maxDy, tf.dy)),
+  };
+}
+
 // 把轮廓切成一条条水平带，每条带记住它在 x 上的几段区间。
 //
 // 一条带里的截面是不变的（只有碰到顶点的 y 才会变），所以「格子有没有
@@ -177,10 +281,25 @@ function crossSpans(points, y) {
 }
 
 // 形状和画幅定下来以后，带子和轮廓就不再变了 —— 缓存起来省得每次重算。
+//
+// 键里还有形状的调整（位置 + 大小）—— 拖一下形状，带子和轮廓都得跟着
+// 变，所以它们是键的一部分。
 const bandCache = new Map();
 
-function shapeGeometry(shape, ratio) {
-  const key = `${shape.id}@${ratio.toFixed(4)}`;
+// 形状调整在键里的精度 —— 拖动时每一步都会算一次几何，键太细的话缓存
+// 会被拖动过程塞满。四位小数（模板单位）远小于一个像素，够用了。
+const TRANSFORM_KEY_PRECISION = 10000;
+
+// 缓存最多留多少条。
+//
+// 拖动形状的时候，每一步都是一个新的键 —— 拖一次能攒下几十条。缓存是给
+// 「反复问同一个问题」用的（重画、换网格、导出），拖动过程中的那些几乎
+// 不会再被问一遍。所以超过上限就把**最老的**扔掉（Map 按插入顺序排）。
+const BAND_CACHE_MAX = 200;
+
+function shapeGeometry(shape, ratio, transform) {
+  const tf = normalizeTransform(transform);
+  const key = `${shape.id}@${ratio.toFixed(4)}@${transformKey(tf)}`;
   const hit = bandCache.get(key);
   if (hit) return hit;
   // 模板里的坐标：画布宽 ratio、高 1。画的时候乘一个缩放就是像素。
@@ -189,8 +308,17 @@ function shapeGeometry(shape, ratio) {
     x: place.x + p.x * place.w,
     y: place.y + p.y * place.h,
   }));
-  const geo = { bands: buildBands(outline), outline };
+  // 用户调整过的形状：先按中心缩放，再平移 —— 带子和轮廓用的是同一份
+  // 算好的点，所以「哪些格子落进形状里」和「画出来的形状」永远一致。
+  const placed = applyTransform(outline, place, tf);
+  const geo = { bands: buildBands(placed), outline: placed };
   bandCache.set(key, geo);
+  // 拖动会攒下很多条 —— 超出上限就丢掉最老的那些。
+  while (bandCache.size > BAND_CACHE_MAX) {
+    const oldest = bandCache.keys().next();
+    if (oldest.done) break;
+    bandCache.delete(oldest.value);
+  }
   return geo;
 }
 
@@ -222,15 +350,19 @@ function cellHitsShape(bands, x0, y0, x1, y1) {
 
 // ---- 填充方式 --------------------------------------------------------------
 //
-// 一张填充方式 = 形状 × 网格 × 画幅。
+// 一张填充方式 = 形状 × 网格 × 画幅 × 形状的调整。
 //
 // 格子按从上到下、从左到右的顺序编号，照片按这个顺序填进去。
-export function buildTemplate(shapeId, sizeId, ratioId) {
+//
+// `transform` 是形状的调整（位置 + 大小）—— 用户拖过形状以后，格子里
+// 哪些还落进形状里，就按调整过后的形状来算。
+export function buildTemplate(shapeId, sizeId, ratioId, transform) {
   const shape = getShape(shapeId);
   const size = getSize(sizeId);
   const ratio = ratioValue(ratioId);
   const n = size.n;
-  const { bands, outline } = shapeGeometry(shape, ratio);
+  const tf = normalizeTransform(transform);
+  const { bands, outline } = shapeGeometry(shape, ratio, tf);
 
   const cw = ratio / n;
   const ch = 1 / n;
@@ -257,6 +389,7 @@ export function buildTemplate(shapeId, sizeId, ratioId) {
     cells,
     capacity: cells.length,
     outline,
+    transform: tf,
   };
 }
 
@@ -265,16 +398,16 @@ export function buildTemplate(shapeId, sizeId, ratioId) {
 // 挑一个「装得下照片」的网格：格子数刚好够放照片的那一档（格子最少、
 // 空位最少）。一个都装不下时（照片比最密的网格还多），拿格子最多的那个
 // —— 剩下的照片由页面提示放不下。
-export function pickTemplate(shapeId, photoCount, ratioId) {
+export function pickTemplate(shapeId, photoCount, ratioId, transform) {
   const count = Math.max(0, photoCount | 0);
   let fit = null;
   let biggest = null;
   for (const size of WALL_SIZES) {
-    const t = buildTemplate(shapeId, size.id, ratioId);
+    const t = buildTemplate(shapeId, size.id, ratioId, transform);
     if (!biggest || t.capacity > biggest.capacity) biggest = t;
     if (t.capacity >= count && (!fit || t.capacity < fit.capacity)) fit = t;
   }
-  return fit || biggest || buildTemplate(shapeId, WALL_SIZES[0].id, ratioId);
+  return fit || biggest || buildTemplate(shapeId, WALL_SIZES[0].id, ratioId, transform);
 }
 
 // 一批照片里最常见的画幅 —— 用户给照片设的封面的主流形状。
@@ -323,6 +456,7 @@ export function wallGeometry(template, canvasH) {
   const s = canvasH;
   const cellW = (template.ratio * s) / template.n;
   const cellH = s / template.n;
+  const shape = template.outline.map((p) => ({ x: p.x * s, y: p.y * s }));
   return {
     scale: s,
     cellW,
@@ -331,7 +465,9 @@ export function wallGeometry(template, canvasH) {
     canvasH: s,
     x: (col) => col * cellW,
     y: (row) => row * cellH,
-    shape: template.outline.map((p) => ({ x: p.x * s, y: p.y * s })),
+    shape,
+    // 形状在画布上的包围盒（像素）—— 缩放手柄就画在它四个角上。
+    bounds: shapeBounds(shape),
   };
 }
 

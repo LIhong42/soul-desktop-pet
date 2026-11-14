@@ -3965,11 +3965,34 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   display: block;
   cursor: pointer;
 }
+/* 指针在形状里面 —— 可以拖着挪形状。 */
+.wall-stage canvas.wall-shape-hover { cursor: move; }
+/* 指针在角上的手柄上 —— 可以拖着缩放。 */
+.wall-stage canvas.wall-handle-hover { cursor: nwse-resize; }
+.wall-stage canvas.wall-move-mode { cursor: move; }
+.wall-stage canvas.wall-scale-mode { cursor: nwse-resize; }
 .wall-stage #wall-overlay {
   position: absolute;
   left: 0;
   top: 0;
   pointer-events: none;
+}
+
+/* 形状大小的滑块 —— 和它旁边的百分比。 */
+.wall-scale-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wall-scale-row input[type="range"] {
+  flex: 1;
+  min-width: 120px;
+}
+.wall-scale-value {
+  font-size: 13px;
+  color: var(--muted);
+  min-width: 44px;
+  text-align: right;
 }
 
 .wall-side h3 {
