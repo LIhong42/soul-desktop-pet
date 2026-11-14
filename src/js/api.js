@@ -236,6 +236,20 @@ export const api = {
     // file:// 的图会弄脏画布，toBlob() 就抛 SecurityError，导出是空的。
     read: (payload) => M.photoWallBg?.read?.(payload) || Promise.resolve(null),
   },
+  // 照片墙的编辑状态 —— 让用户改过的墙在离开页面后还在。
+  // 键是「用了哪几篇回忆」，所以同一组回忆进来，编辑就都还在。
+  photoWallState: {
+    get:   (payload) => M.photoWallState?.get?.(payload) || Promise.resolve(null),
+    save:  (payload) => M.photoWallState?.save?.(payload) || Promise.resolve(null),
+    clear: (payload) => M.photoWallState?.clear?.(payload) || Promise.resolve(false),
+  },
+  // 照片墙的导出历史 —— 每次导出都记一条（含当时那面墙的快照）。
+  photoWallHistory: {
+    list:   () => M.photoWallHistory?.list?.() || Promise.resolve([]),
+    add:    (payload) => M.photoWallHistory?.add?.(payload) || Promise.resolve(null),
+    remove: (payload) => M.photoWallHistory?.remove?.(payload) || Promise.resolve([]),
+    clear:  () => M.photoWallHistory?.clear?.() || Promise.resolve([]),
+  },
   // Video → frames zip tool. Main opens the file picker and save dialog so
   // raw video bytes never have to round-trip through IPC.
   tools: {

@@ -284,6 +284,28 @@ contextBridge.exposeInMainWorld('mp', {
     read: (payload) => ipcRenderer.invoke('photo_wall_bg:read', payload || {}),
   },
 
+  // 照片墙的编辑状态 —— 让用户改过的墙在离开页面后还在。
+  //   get({ eventIds })          → 存档的状态，或 null
+  //   save({ eventIds, state })  → 存下来的状态
+  //   clear({ eventIds })        → 丢掉存档（「恢复默认」）
+  photoWallState: {
+    get:   (payload) => ipcRenderer.invoke('photo_wall_state:get', payload || {}),
+    save:  (payload) => ipcRenderer.invoke('photo_wall_state:save', payload || {}),
+    clear: (payload) => ipcRenderer.invoke('photo_wall_state:clear', payload || {}),
+  },
+
+  // 照片墙的导出历史 —— 每次导出都记一条（含当时那面墙的快照）。
+  //   list()          → 最新的在最前面
+  //   add(entry)      → 记一条
+  //   remove({ id })  → 忘掉一条
+  //   clear()         → 全忘掉
+  photoWallHistory: {
+    list:   () => ipcRenderer.invoke('photo_wall_history:list'),
+    add:    (payload) => ipcRenderer.invoke('photo_wall_history:add', payload || {}),
+    remove: (payload) => ipcRenderer.invoke('photo_wall_history:remove', payload || {}),
+    clear:  () => ipcRenderer.invoke('photo_wall_history:clear'),
+  },
+
   // Video → frames zip tool. Backed by `tools:split_video_to_frames` and
   // `tools:cancel` in main/ipc.js. Both dialogs (input + save) run in the
   // main process — the renderer just kicks off the job and waits.

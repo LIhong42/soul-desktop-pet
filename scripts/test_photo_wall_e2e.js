@@ -236,6 +236,15 @@ function appCsp() {
 function writeHarnessPage(dir, ids) {
   const script = `import { start } from '${pathToFileURL(path.join(ROOT, 'src', 'js', 'router.js')).href}';
 import '${pathToFileURL(path.join(ROOT, 'src', 'js', 'pages', 'photo_wall.js')).href}';
+// An uncaught error in the page is printed with its stack, so a failure
+// points at the line that threw.
+window.addEventListener('error', (e) => {
+  console.error('UNCAUGHT ' + (e.error && e.error.stack ? e.error.stack : e.message));
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason;
+  console.error('UNHANDLED ' + (r && r.stack ? r.stack : String(r)));
+});
 location.hash = '#/photo-wall?ids=${ids.join(',')}';
 start();
 `;
@@ -379,16 +388,63 @@ module.exports = (async () => {
   ipcMain.handle('photo_wall_bg:read', (_e, payload) =>
     photoWallBg.read(null, payload && payload.ratioId, payload && payload.id));
 
+  // The wall's edit state and its export history — the REAL modules, on a
+  // fake database (the settings table in memory).
+  //
+  // The real modules are the point: the test wants to know whether the
+  // renderer saves what it should and reads it back, and the saving/reading
+  // rules live in these two files.
+  const photoWallState = require(path.join(ROOT, 'main', 'photo_wall_state.js'));
+  const photoWallHistory = require(path.join(ROOT, 'main', 'photo_wall_history.js'));
+  const settingsRows = new Map();
+  const fakeDb = {
+    getSetting: (key) => (settingsRows.has(key) ? settingsRows.get(key) : null),
+    setSetting: (key, value) => { settingsRows.set(key, String(value)); },
+    run: (sql, params) => {
+      if (/DELETE\s+FROM\s+settings/i.test(sql)) { settingsRows.delete(params[0]); return; }
+      throw new Error('fakeDb.run: unexpected SQL: ' + sql);
+    },
+    nowStr: () => new Date().toISOString().slice(0, 19).replace('T', ' '),
+  };
+  ipcMain.handle('photo_wall_state:get', (_e, payload) =>
+    photoWallState.loadState(fakeDb, payload && payload.eventIds));
+  ipcMain.handle('photo_wall_state:save', (_e, payload) =>
+    photoWallState.saveState(fakeDb, payload && payload.eventIds, payload && payload.state));
+  ipcMain.handle('photo_wall_state:clear', (_e, payload) =>
+    photoWallState.clearState(fakeDb, payload && payload.eventIds));
+  ipcMain.handle('photo_wall_history:list', () => photoWallHistory.listEntries(fakeDb));
+  ipcMain.handle('photo_wall_history:add', (_e, payload) =>
+    photoWallHistory.addEntry(fakeDb, payload || {}));
+  ipcMain.handle('photo_wall_history:remove', (_e, payload) =>
+    photoWallHistory.removeEntry(fakeDb, payload && payload.id));
+  ipcMain.handle('photo_wall_history:clear', () => photoWallHistory.clearEntries(fakeDb));
+
   const outPath = path.join(tmp, 'wall.png');
   // The exports go to a different file each time, so the second export (the
   // one WITH the background) does not overwrite the first one (the baseline
   // without a background).
   let exportTarget = outPath;
+  const exportMetas = [];
   ipcMain.handle('export:photo_wall', (_e, payload) => {
     const bytes = payload && payload.bytes;
     if (!bytes || !bytes.byteLength) throw new Error('没有可导出的照片墙数据');
     fs.writeFileSync(exportTarget, Buffer.from(bytes));
-    return { path: exportTarget, bytes: bytes.byteLength };
+    // The real handler records the export in the history; the harness does
+    // the same so the history the page shows is the one the app would show.
+    exportMetas.push(payload.meta || null);
+    const meta = payload.meta || {};
+    const entry = photoWallHistory.addEntry(fakeDb, {
+      exportedAt: fakeDb.nowStr(),
+      path: exportTarget,
+      width: Number(meta.width) || 0,
+      height: Number(meta.height) || 0,
+      photoCount: Number(meta.photoCount) || 0,
+      shapeId: meta.shapeId || '',
+      sizeId: meta.sizeId || '',
+      ratioId: meta.ratioId || '',
+      snapshot: meta.snapshot || null,
+    });
+    return { path: exportTarget, bytes: bytes.byteLength, entry };
   });
 
   const errors = [];
@@ -413,6 +469,11 @@ module.exports = (async () => {
     if (level >= 2
       && !/Security Warning/.test(message)
       && !/willReadFrequently/.test(message)) errors.push(message);
+  });
+  // An uncaught error in the page — with its stack, so a failure points at
+  // the line that threw rather than just at the message.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    errors.push('render process gone: ' + JSON.stringify(details));
   });
 
   const report = { photos: photoCount, ok: false };
@@ -1283,6 +1344,196 @@ module.exports = (async () => {
     }, 10000);
     report.tmpFilesAfterLeave = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
 
+    // ---- the edits survive leaving the page --------------------------------
+    //
+    // The whole point of the state saving: the user edits the wall (moves the
+    // shape, picks a grid, swaps two photos, changes a cover), goes to another
+    // page, and comes back. The wall must be AS IT WAS — not back at the
+    // default.
+    //
+    // The check is on the WALL, not on the page's inputs: the inputs could
+    // show numbers while the canvas shows something else. So the shape's
+    // position and size are measured from the PIXELS, exactly like the rest
+    // of this test does.
+    const ids = events.map((e) => e.id);
+    const wallUrl = '#/photo-wall?ids=' + ids.join(',');
+
+    // Wait until the wall page is mounted and has drawn.
+    //
+    // The check is the wall's own note (it says "正在读取照片…" while the
+    // photos are loading) — NOT the canvas' width: the canvas of the
+    // PREVIOUS visit is still in the DOM for a moment, so a width check
+    // would pass before the new page had even started.
+    const waitForWall = async () => {
+      const n = await waitFor(async () => {
+        const s = await win.webContents.executeJavaScript(`(() => {
+          const cv = document.getElementById('wall-canvas');
+          const note = document.getElementById('wall-template-note');
+          if (!cv || !cv.width) return 0;
+          if (note && note.textContent.includes('正在读取')) return 0;
+          return cv.width;
+        })()`);
+        return s > 0 ? s : null;
+      }, 20000);
+      return n;
+    };
+
+    // Edit the wall: a grid of its own, the shape moved and scaled.
+    await win.webContents.executeJavaScript(`location.hash = ${JSON.stringify(wallUrl)}`);
+    await waitForWall();
+
+    await win.webContents.executeJavaScript(`(() => {
+      const size = document.getElementById('wall-size');
+      const cx = document.getElementById('wall-shape-cx');
+      const cy = document.getElementById('wall-shape-cy');
+      const scale = document.getElementById('wall-scale');
+      if (size) { size.value = 'g9'; size.dispatchEvent(new Event('change', { bubbles: true })); }
+      if (cx) { cx.value = '44'; cx.dispatchEvent(new Event('change', { bubbles: true })); }
+      if (cy) { cy.value = '46'; cy.dispatchEvent(new Event('change', { bubbles: true })); }
+      if (scale) { scale.value = '85'; scale.dispatchEvent(new Event('input', { bubbles: true })); }
+    })()`);
+    await new Promise((r) => setTimeout(r, 1200));
+
+    // The shape's box on the canvas, measured from the pixels — the
+    // reference for "the wall came back the same".
+    const editedBox = await shapeBox(win);
+    report.editedBox = editedBox;
+    report.editedUi = await win.webContents.executeJavaScript(`(() => ({
+      size: document.getElementById('wall-size') ? document.getElementById('wall-size').value : null,
+      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
+      cy: document.getElementById('wall-shape-cy') ? document.getElementById('wall-shape-cy').value : null,
+      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
+    }))()`);
+    // The photos on the wall, in the order the cells hold them — the
+    // reference for "the photos are where they were".
+    report.editedCells = await win.webContents.executeJavaScript(`(() => {
+      // The page keeps its cells in the module's state; read them through the
+      // canvas' pixels instead: the red pixels are the photos, in cell order.
+      const cv = document.getElementById('wall-canvas');
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      let red = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
+      }
+      return { red };
+    })()`);
+
+    // Leave the page — to another page, exactly like the user's "go to the
+    // tools page and come back".
+    await win.webContents.executeJavaScript(`location.hash = '#/elsewhere'`);
+    await new Promise((r) => setTimeout(r, 700));
+
+    // Come back.
+    await win.webContents.executeJavaScript(`location.hash = ${JSON.stringify(wallUrl)}`);
+    await waitForWall();
+    await new Promise((r) => setTimeout(r, 900));
+
+    // The wall came back the way it was.
+    const restoredBox = await shapeBox(win);
+    report.restoredBox = restoredBox;
+    report.restoredUi = await win.webContents.executeJavaScript(`(() => ({
+      size: document.getElementById('wall-size') ? document.getElementById('wall-size').value : null,
+      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
+      cy: document.getElementById('wall-shape-cy') ? document.getElementById('wall-shape-cy').value : null,
+      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
+      restoredNote: document.getElementById('wall-restored-note')
+        ? document.getElementById('wall-restored-note').textContent : '',
+    }))()`);
+    report.restoredCells = await win.webContents.executeJavaScript(`(() => {
+      const cv = document.getElementById('wall-canvas');
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      let red = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red += 1;
+      }
+      return { red };
+    })()`);
+    // The grid is the one that was picked (g9), the shape is where it was put
+    // (44 / 46) and the size it was given (85%).
+    report.stateRestoredUi = !!(report.restoredUi
+      && report.restoredUi.size === 'g9'
+      && report.restoredUi.cx === '44'
+      && report.restoredUi.cy === '46'
+      && report.restoredUi.scale === '85');
+    // And the shape really is where it was — measured from the pixels.
+    report.stateRestoredPixels = !!(editedBox && restoredBox
+      && Math.abs(restoredBox.minX - editedBox.minX) < 6
+      && Math.abs(restoredBox.maxX - editedBox.maxX) < 6
+      && Math.abs(restoredBox.minY - editedBox.minY) < 6
+      && Math.abs(restoredBox.maxY - editedBox.maxY) < 6);
+    // The photos are still on the wall (not an empty wall).
+    report.stateRestoredPhotos = !!(report.restoredCells && report.restoredCells.red > 0);
+
+    // ---- the export history ------------------------------------------------
+    //
+    // Every export is recorded, with the wall as it was at that moment — so
+    // the user can export the same arrangement again.
+    report.historyBefore = await win.webContents.executeJavaScript(`(() => {
+      const box = document.getElementById('wall-history');
+      return box ? box.querySelectorAll('.wall-history-item').length : -1;
+    })()`);
+    // Export once more — this one lands in the history.
+    const histOut = path.join(tmp, 'wall-history-entry.png');
+    exportTarget = histOut;
+    await win.webContents.executeJavaScript(
+      'document.getElementById("wall-export-btn").click()');
+    const histWritten = await waitFor(
+      () => (fs.existsSync(histOut) && fs.statSync(histOut).size > 0 ? histOut : null),
+      30000);
+    exportTarget = outPath;
+    report.historyExported = !!histWritten;
+    await new Promise((r) => setTimeout(r, 800));
+    report.historyAfter = await win.webContents.executeJavaScript(`(() => {
+      const box = document.getElementById('wall-history');
+      const items = box ? box.querySelectorAll('.wall-history-item') : [];
+      return {
+        count: items.length,
+        first: items.length ? items[0].textContent.replace(/\\s+/g, ' ').trim() : '',
+        hasReuse: !!(items[0] && items[0].querySelector('[data-history-act="reuse"]')),
+        hasRemove: !!(items[0] && items[0].querySelector('[data-history-act="remove"]')),
+      };
+    })()`);
+    // The export carried the wall's state along, so the history can restore
+    // that arrangement.
+    report.exportMeta = exportMetas.length ? exportMetas[exportMetas.length - 1] : null;
+    report.exportMetaHasSnapshot = !!(report.exportMeta
+      && report.exportMeta.snapshot
+      && Array.isArray(report.exportMeta.snapshot.cells));
+    report.exportMetaHasSize = !!(report.exportMeta && report.exportMeta.sizeId === 'g9');
+
+    // 「按这版再导」—— read that version back onto the wall. The wall is
+    // already that version, so what matters is that the button WORKS: it
+    // puts the arrangement back and says so.
+    report.reuseResult = await win.webContents.executeJavaScript(`(() => {
+      const btn = document.querySelector('[data-history-act="reuse"]');
+      if (!btn) return { skipped: true };
+      btn.click();
+      return { clicked: true };
+    })()`);
+    await new Promise((r) => setTimeout(r, 900));
+    report.reuseUi = await win.webContents.executeJavaScript(`(() => ({
+      size: document.getElementById('wall-size') ? document.getElementById('wall-size').value : null,
+      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
+      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
+      status: document.getElementById('wall-status') ? document.getElementById('wall-status').textContent : '',
+    }))()`);
+    report.reuseWorked = !!(report.reuseUi
+      && report.reuseUi.size === 'g9'
+      && report.reuseUi.cx === '44'
+      && report.reuseUi.scale === '85');
+
+    // Removing a history entry takes it off the list.
+    report.historyRemove = await win.webContents.executeJavaScript(`(() => {
+      const before = document.querySelectorAll('.wall-history-item').length;
+      const btn = document.querySelector('[data-history-act="remove"]');
+      if (!btn) return { skipped: true };
+      btn.click();
+      return { before };
+    })()`);
+    await new Promise((r) => setTimeout(r, 700));
+    report.historyCountAfterRemove = await win.webContents.executeJavaScript(
+      'document.querySelectorAll(".wall-history-item").length');
+
     report.errors = errors;
     // The wall is one canvas now: the pictures are on it, the shape clips
     // them (so the corner of the canvas stays white), and the export comes
@@ -1373,6 +1624,24 @@ module.exports = (async () => {
       && report.bgExported
       && report.bgPng && report.bgPng.corner[0] < 250
       && report.bgPng && report.bgPng.redRatio > 0.01
+      // The edits survive leaving the page: the grid, the shape's place and
+      // its size all come back, and the wall really is drawn the same way
+      // (measured from the pixels, not from the inputs).
+      && report.stateRestoredUi
+      && report.stateRestoredPixels
+      && report.stateRestoredPhotos
+      // The export history: the export is recorded, the entry carries the
+      // wall's state along (so it can be restored), and the entry can be
+      // put back onto the wall.
+      && report.historyExported
+      && report.historyAfter && report.historyAfter.count >= 1
+      && report.historyAfter.hasReuse
+      && report.historyAfter.hasRemove
+      && report.exportMetaHasSnapshot
+      && report.exportMetaHasSize
+      && report.reuseWorked
+      && report.historyRemove && !report.historyRemove.skipped
+      && report.historyCountAfterRemove < report.historyAfter.count
       && errors.length === 0;
   } catch (e) {
     report.error = String((e && e.stack) || e);

@@ -22,6 +22,12 @@ const tmpPhotos = require('./tmp_photos');
 // 照片墙的背景图库 (resources/photo_wall_background/<宽-高>/*.png)。
 // 见 main/photo_wall_bg.js 的说明。
 const photoWallBg = require('./photo_wall_bg');
+// 照片墙的编辑状态（形状 / 网格 / 画幅 / 照片摆法 / 封面），按「用了哪几篇
+// 回忆」存进 settings 表。见 main/photo_wall_state.js。
+const photoWallState = require('./photo_wall_state');
+// 照片墙的导出历史（含当时那面墙的快照，用于「按上次的样子再导一次」）。
+// 见 main/photo_wall_history.js。
+const photoWallHistory = require('./photo_wall_history');
 const { verifyPin, hashPin, isValidPinShape } = require('./auth');
 const petInteractions = require('./pet_interactions');
 const bondEngine = require('./bond_engine');
@@ -1406,6 +1412,46 @@ function normFreeText(s) {
   // SecurityError, so the exported PNG would be empty.
   ipcMain.handle('photo_wall_bg:read', (_e, payload = {}) =>
     photoWallBg.read(null, payload && payload.ratioId, payload && payload.id));
+
+  // ---- Photo wall's edit state --------------------------------------------
+  //
+  // The wall's edits (the shape, the grid, the photos' places, the covers)
+  // used to live only in the renderer's memory — leaving the page threw them
+  // away. They live in the settings table now, keyed by the set of memories
+  // the wall is made of, so coming back to the SAME selection restores the
+  // wall the user built.
+  //
+  //   get({ eventIds })  → the saved state, or null
+  //   save({ eventIds, state }) → the saved state (with savedAt)
+  //   clear({ eventIds }) → wipe it (the "恢复默认" button)
+  ipcMain.handle('photo_wall_state:get', (_e, payload = {}) =>
+    photoWallState.loadState(db, payload && payload.eventIds));
+
+  ipcMain.handle('photo_wall_state:save', (_e, payload = {}) =>
+    photoWallState.saveState(db, payload && payload.eventIds, payload && payload.state));
+
+  ipcMain.handle('photo_wall_state:clear', (_e, payload = {}) =>
+    photoWallState.clearState(db, payload && payload.eventIds));
+
+  // ---- Photo wall's export history ----------------------------------------
+  //
+  // Every successful export is recorded — with a snapshot of the wall as it
+  // was at that moment — so the user can export the same arrangement again
+  // (or an earlier one) without rebuilding it.
+  //
+  //   list()                 → the entries, newest first
+  //   add({ ... })           → record one export
+  //   remove({ id })         → forget one
+  //   clear()                → forget them all
+  ipcMain.handle('photo_wall_history:list', () => photoWallHistory.listEntries(db));
+
+  ipcMain.handle('photo_wall_history:add', (_e, payload = {}) =>
+    photoWallHistory.addEntry(db, payload || {}));
+
+  ipcMain.handle('photo_wall_history:remove', (_e, payload = {}) =>
+    photoWallHistory.removeEntry(db, payload && payload.id));
+
+  ipcMain.handle('photo_wall_history:clear', () => photoWallHistory.clearEntries(db));
 
   // ---- Photo bytes --------------------------------------------------------
   //
@@ -3894,6 +3940,11 @@ function normFreeText(s) {
   //
   // The bytes travel as a Uint8Array — a data URL would make them a third
   // bigger and a lot slower to copy.
+  //
+  // `payload.meta` is the wall's state at the moment of the export (the
+  // shape, the grid, the ratio, the photos' places). It goes into the
+  // export history as a snapshot, so the user can come back and export the
+  // same arrangement again — or an earlier one.
   ipcMain.handle('export:photo_wall', async (_e, payload = {}) => {
     const bytes = payload && payload.bytes;
     if (!bytes || !bytes.byteLength) throw new Error('没有可导出的照片墙数据');
@@ -3909,7 +3960,27 @@ function normFreeText(s) {
     } catch (e) {
       throw new Error('照片墙写入失败：' + ((e && e.message) || e));
     }
-    return { path: result.filePath, bytes: bytes.byteLength };
+    // Record the export. A failure here must NOT fail the export — the PNG
+    // is already on disk, and losing the history entry is much smaller a
+    // problem than telling the user the export failed.
+    let entry = null;
+    try {
+      const meta = payload.meta || {};
+      entry = photoWallHistory.addEntry(db, {
+        exportedAt: db.nowStr(),
+        path: result.filePath,
+        width: Number(meta.width) || 0,
+        height: Number(meta.height) || 0,
+        photoCount: Number(meta.photoCount) || 0,
+        shapeId: meta.shapeId || '',
+        sizeId: meta.sizeId || '',
+        ratioId: meta.ratioId || '',
+        snapshot: meta.snapshot || null,
+      });
+    } catch (e) {
+      console.error('photo wall export history failed', e);
+    }
+    return { path: result.filePath, bytes: bytes.byteLength, entry };
   });
 
   ipcMain.handle('export:pdf', async (_e, payload = {}) => {

@@ -57,6 +57,19 @@ const state = {
   bgId: '',          // 当前选中的背景 id（空串 = 无背景）
   bgImg: null,       // 当前背景的 ImageBitmap，没有则为 null
   bgToken: 0,        // 读背景图的代号 —— 用来作废过期的读图请求
+  // 这次进来有没有找到上次的编辑状态（存档）。
+  restored: false,
+  // 导出历史。见「导出历史」一节。
+  history: [],
+  // 正在往存档里写 —— 免得连着好几次改动写出一串存档。
+  saveTimer: null,
+  // 攒着的那一次存档要写什么（哪几篇回忆 + 当时那面墙的样子）。
+  //
+  // 每次改动都更新它 —— 离开页面时 flushSave() 写的就是它。单独存一份是
+  // 因为换页时 state 会被下一轮清空，到时候再从 state 里取就取错了。
+  pending: null,     // { eventIds, snapshot }
+  // 已经写出去的那一份 —— 用来判断「离开时要不要再写一次」。
+  written: null,     // { eventIds, snapshot }
 };
 
 // 窗口大小变了，画布要跟着重新算宽度。监听器只留一个（换页时换掉）。
@@ -87,6 +100,10 @@ async function mount(_args, params) {
   state.transform = { ...DEFAULT_SHAPE_TRANSFORM };
   state.dragging = null;
   state.bgId = '';
+  state.restored = false;
+  // 上一轮攒着的存档 —— 换了一组回忆，它属于上一轮，不该带过来。
+  state.pending = null;
+  state.written = null;
   // 上一轮留下的 bitmap（换了一组回忆又进来）—— 先放掉，别攒着占显存。
   state.bgToken = (state.bgToken || 0) + 1;
   releaseBackground();
@@ -96,9 +113,24 @@ async function mount(_args, params) {
   }
   state.loading = true;
   render();
+  // 上次的编辑状态 —— 存档在主进程（settings 表），这一组回忆对应一份。
+  //
+  // 先读存档，再读照片：读照片要一会儿（缩略图），等它读完再决定用哪份
+  // 状态铺格子。
+  const saved = await loadSavedState(state.eventIds);
   await Promise.all([loadPhotos(), loadBackgrounds()]);
   state.loading = false;
-  autoPick();
+  // 铺格子：先用存档（形状 / 网格 / 画幅 / 照片的摆法 / 封面），没有存档
+  // 就自动匹配一份。
+  if (!applySavedState(saved)) {
+    autoPick();
+  }
+  // 背景要等画幅定下来才能选（背景是按画幅分目录的）—— 先对一下，再用
+  // 存档里选的那张。
+  syncBackground();
+  await reloadBackground();
+  render();
+  await loadHistory();
   render();
   if (resizeHandler) window.removeEventListener('resize', resizeHandler);
   resizeHandler = () => {
@@ -107,14 +139,21 @@ async function mount(_args, params) {
   };
   window.addEventListener('resize', resizeHandler);
   // 离开这一页：临时照片用完就删（导出了，或者干脆没导出）。
+  //
+  // 存档在离开时写 —— 写的是 state.pending（最后攒下的那一次改动）。换页
+  // 的时候路由先动（下一轮 mount() 把 state 清空），离开的收尾才跑，所以
+  // 这里不能到时候再从 state 里取 —— 取到的是下一轮的空状态。
   if (leaveHandler) window.removeEventListener('hashchange', leaveHandler);
   leaveHandler = () => {
     if ((location.hash || '').startsWith('#/photo-wall')) return;
     window.removeEventListener('hashchange', leaveHandler);
     leaveHandler = null;
+    // 离开前把这一轮的编辑存下来 —— 用户改完切到别的页面再回来，墙上还是
+    // 他摆好的样子。
+    flushSave();
     dropTmpPhotos();
     // 背景的 bitmap 占着显存 —— 离开这一页就放掉（正在读的那次也作废）。
-    state.bgToken = (state.bgToken || 0) + 1;
+    state.bgToken = (state.bgToken + 1);
     releaseBackground();
   };
   window.addEventListener('hashchange', leaveHandler);
@@ -251,6 +290,7 @@ async function selectBackground(bgId) {
   state.bgId = hit ? hit.id : '';
   await reloadBackground();
   render();
+  scheduleSave();
 }
 
 // 把当前选中的背景读进内存（还没读就读，读不出来就退回无背景）。
@@ -404,6 +444,203 @@ function buildCells() {
   state.hover = -1;
 }
 
+// ---- 编辑状态的存取 --------------------------------------------------------
+//
+// 用户在墙上改的东西 —— 形状、网格、画幅、形状的调整、背景、照片摆在哪
+// 个格子里、每个格子的封面 —— 全都要留下来。离开这一页再回来，墙上应该
+// 还是他摆好的样子，而不是回到默认。
+//
+// 存档在主进程（settings 表，见 main/photo_wall_state.js），键是「用了
+// 哪几篇回忆」—— 所以从导出页选同样的几篇回忆进来，编辑就都还在。
+//
+// 这里存的是**用户改过的那些**，不是整个渲染状态：照片本身还在数据库里
+// （这里只存它的 id），临时导入的照片不在这里（它们属于这一轮，导出完
+// 就删了）。
+
+// 当前这一轮的存档 —— 一份可以直接存进主进程的样子。
+function currentState() {
+  const t = state.template;
+  return {
+    eventIds: state.eventIds.slice(),
+    shapeId: t ? t.shapeId : '',
+    sizeId: t ? t.sizeId : '',
+    ratioId: t ? t.ratioId : '',
+    transform: { ...state.transform },
+    bgId: state.bgId || '',
+    cells: state.cells.map((c) => ({
+      index: c.index,
+      photoId: c.photoId || null,
+      cover: c.cover ? { ...c.cover } : null,
+    })),
+  };
+}
+
+// 读存档。读不到就是没有存档（返回 null）—— 不是错误，只是没存过。
+async function loadSavedState(eventIds) {
+  try {
+    const saved = await api.photoWallState.get({ eventIds: eventIds || [] });
+    return saved || null;
+  } catch (e) {
+    console.error('photo wall state load failed', e);
+    return null;
+  }
+}
+
+// 把这一轮的编辑存进主进程。
+//
+// **存档按「哪几篇回忆」分** —— 所以必须写清楚是哪一组，而且得连着**当时
+// 那面墙的样子**一起写。
+//
+// 为什么这两样都得记下来，而不是等到写的时候再从 state 里取：换页的时候
+// 路由先动（下一轮 mount() 把 state 清空），离开的收尾才跑。等收尾再取，
+// 拿到的已经是下一轮的空状态了 —— 上一面墙的摆法就存丢了，或者更糟：
+// 存到下一组回忆头上。
+//
+// 存失败不该拦住页面（存档只是锦上添花），所以错误只记不抛。
+async function saveState(eventIds, snapshot) {
+  const ids = Array.isArray(eventIds) ? eventIds : [];
+  if (!ids.length) return;
+  const body = snapshot || currentState();
+  try {
+    await api.photoWallState.save({
+      eventIds: ids,
+      state: body,
+    });
+    // 记下写出去的是哪一份 —— 离开页面时就不用把一样的东西再写一遍。
+    state.written = { eventIds: ids.slice(), snapshot: body };
+  } catch (e) {
+    console.error('photo wall state save failed', e);
+  }
+}
+
+// 改动之后把存档更新掉。
+//
+// 拖形状的时候每一步都会调到这里 —— 每一步都往主进程写一次太吵，所以
+// 攒一会儿再写（250ms）。离开页面时 flushSave() 把攒着的这一次补上。
+//
+// **排队那一刻就把 ids 和样子都记下来** —— 定时器触发时 state 可能已经
+// 换成下一轮了（换页时路由先动）。所以定时器闭包里存的是快照，不是
+// 「到时候再从 state 里取」。
+function scheduleSave() {
+  const ids = state.eventIds.slice();
+  const snapshot = currentState();
+  // 攒着的那一次 —— 离开页面时 flushSave() 写的就是它。
+  state.pending = { eventIds: ids, snapshot };
+  if (state.saveTimer) clearTimeout(state.saveTimer);
+  state.saveTimer = setTimeout(() => {
+    state.saveTimer = null;
+    saveState(ids, snapshot);
+  }, 250);
+}
+
+// 立刻把攒着的存档写掉（离开页面时用）。
+//
+// 写的是**最后攒下的那一次**（state.pending）—— 用户改了什么，就存什么。
+// 跟已经写出去的那一份一样就不用再写一遍。
+function flushSave() {
+  const pending = state.pending;
+  if (state.saveTimer) {
+    clearTimeout(state.saveTimer);
+    state.saveTimer = null;
+  }
+  if (!pending) return;
+  state.pending = null;
+  if (sameSnapshot(pending, state.written)) return;
+  saveState(pending.eventIds, pending.snapshot);
+}
+
+// 两份存档是不是同一份。
+function sameSnapshot(a, b) {
+  if (!a || !b) return false;
+  if (!Array.isArray(a.eventIds) || !Array.isArray(b.eventIds)) return false;
+  if (a.eventIds.length !== b.eventIds.length) return false;
+  for (let i = 0; i < a.eventIds.length; i += 1) {
+    if (a.eventIds[i] !== b.eventIds[i]) return false;
+  }
+  return JSON.stringify(a.snapshot) === JSON.stringify(b.snapshot);
+}
+
+// 把存档铺回墙上。
+//
+// 返回 true = 铺上了（这次进来看到的是上次摆好的墙）；false = 存档没法用
+// （没有、或者跟现在这组回忆对不上），调用方退回自动匹配。
+//
+// 存档里的东西要一样一样验：照片可能已经被删了，形状 / 网格可能已经换了，
+// 格子数可能变了。所以每一样都用不上的时候，退回自动匹配，而不是摆出
+// 一面半残的墙。
+function applySavedState(saved) {
+  if (!saved || !state.eventIds.length) return false;
+  const t = state.template;
+  const shapeId = SHAPES.some((s) => s.id === saved.shapeId) ? saved.shapeId : (t ? t.shapeId : SHAPES[0].id);
+  const sizeId = WALL_SIZES.some((s) => s.id === saved.sizeId) ? saved.sizeId : null;
+  const ratioId = WALL_RATIOS.some((r) => r.id === saved.ratioId) ? saved.ratioId : null;
+  if (!sizeId || !ratioId) return false;
+
+  // 形状的调整 —— 存坏的值会让形状飞到画布外面去，所以每个数都得是有限
+  // 的数（主进程也查一遍，这里再查一遍：那一边的存档可能来自旧版本）。
+  let transform = { ...DEFAULT_SHAPE_TRANSFORM };
+  const tf = saved.transform;
+  if (tf && Number.isFinite(tf.scale) && Number.isFinite(tf.dx) && Number.isFinite(tf.dy)) {
+    transform = normalizeTransform(tf);
+  }
+
+  state.transform = transform;
+  state.template = buildTemplate(shapeId, sizeId, ratioId, transform);
+  state.bgId = typeof saved.bgId === 'string' ? saved.bgId : '';
+
+  // 格子：按存档把照片摆回原来的位置。
+  //
+  // 存着的格子是「按 index 记的」—— 换了网格以后 index 的含义就变了，
+  // 所以这里按**照片 id**来找格子：存档说「这张照片摆在第 3 格」，我们
+  // 就把这张照片放进当前这个模板的第 3 格（如果第 3 格在当前模板里存在）。
+  // 照片已经被删了的（id 对不上）就跳过 —— 它本来就不在了。
+  const cells = state.template.cells.map((c) => ({
+    index: c.index, col: c.col, row: c.row,
+    photoId: null, cover: null,
+  }));
+  const savedCells = Array.isArray(saved.cells) ? saved.cells : [];
+  const placed = new Set();
+  for (const sc of savedCells) {
+    if (!sc || !sc.photoId) continue;
+    // 照片还在吗？临时导入的照片不在存档里（导出完就删了），回忆里的照片
+    // 可能已经被用户删了。
+    if (!state.photoById.has(sc.photoId)) continue;
+    if (placed.has(sc.photoId)) continue;
+    const idx = Number(sc.index);
+    const cell = Number.isFinite(idx) ? cells.find((c) => c.index === idx) : null;
+    if (!cell) continue;
+    cell.photoId = sc.photoId;
+    placed.add(sc.photoId);
+    // 封面也跟着回来 —— 但画幅得对得上现在的格子，不然取景框会跑偏。
+    if (sc.cover && typeof sc.cover === 'object'
+      && Number.isFinite(sc.cover.x) && Number.isFinite(sc.cover.y)
+      && Number.isFinite(sc.cover.zoom)) {
+      cell.cover = {
+        ratio: state.template.ratioId,
+        x: sc.cover.x,
+        y: sc.cover.y,
+        zoom: sc.cover.zoom,
+      };
+    }
+  }
+  // 剩下的照片（存档里没有的：新增的，或者当次没摆上墙的）按顺序补进空
+  // 着的格子 —— 和自动匹配时一样。
+  const free = cells.filter((c) => !c.photoId);
+  let fi = 0;
+  for (const p of state.photos) {
+    if (placed.has(p.photoId)) continue;
+    if (fi >= free.length) break;
+    free[fi].photoId = p.photoId;
+    placed.add(p.photoId);
+    fi += 1;
+  }
+  state.cells = cells;
+  state.selected = -1;
+  state.hover = -1;
+  state.restored = true;
+  return true;
+}
+
 // 一个格子上摆的照片的封面。
 //
 // 用户在墙上改过的封面优先；否则用笔记里的封面 —— 画幅和格子一样就用，
@@ -452,6 +689,10 @@ function render() {
             <label>&nbsp;</label>
             <button type="button" class="btn" id="wall-auto-btn">重新自动匹配</button>
           </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <button type="button" class="btn" id="wall-reset-btn">恢复默认摆法</button>
+          </div>
         </div>
         <div class="form-row">
           <div class="field">
@@ -494,6 +735,7 @@ function render() {
           </div>
         </div>
         <p class="meta" id="wall-template-note">${templateNote()}</p>
+        <p class="meta" id="wall-restored-note">${restoredNote()}</p>
       </div>
 
       <div class="wall-layout">
@@ -529,6 +771,12 @@ function render() {
           <span class="meta">${used} 张已上墙 · 共 ${state.photos.length} 张</span>
         </div>
         <p class="meta" style="margin-top:8px;">导出的是一块完整的 PNG：照片按原始分辨率裁切，照片墙整个盖在背景上（不透明），形状之外露出来的是背景（没选背景时是白底）。</p>
+        <p class="meta" style="margin-top:8px;">改过的摆法（照片顺序、封面、形状位置和大小、背景）会<b>自动存下来</b> —— 离开这一页再回来，墙上还是你摆好的样子。</p>
+      </div>
+
+      <div class="card">
+        <h2>导出历史</h2>
+        <div id="wall-history">${historyHtml()}</div>
       </div>
     </div>
   `;
@@ -537,6 +785,7 @@ function render() {
   drawWall();
   renderSide();
   renderTray();
+  wireHistory();
 }
 
 // 网格下拉：每一档都标上它能装多少格 —— 照片数决定选哪一档。
@@ -558,6 +807,15 @@ function templateNote() {
   const ratio = WALL_RATIOS.find((r) => r.id === t.ratioId);
   return `当前：${shape ? shape.name : t.shapeId} · ${t.sizeName} 网格 · ${ratio ? ratio.id : t.ratioId}（${ratio ? ratio.name : ''}） · `
     + `画布 ${t.ratio.toFixed(2)}:1 · 共 ${t.capacity} 个格子，照片 ${state.photos.length} 张。`;
+}
+
+// 「上次的摆法还在」那一句提示。
+//
+// 存档是自动的 —— 用户改一下就存下来，离开页面再回来时自动摆回去。所以
+// 这一句只是告诉他「刚才的改动还在」，以及怎么扔掉它。
+function restoredNote() {
+  if (!state.restored) return '';
+  return '已经把你上次摆好的样子摆回来了（照片顺序、封面、形状位置和大小、背景）。想从头再来，点上面的「恢复默认摆法」。';
 }
 
 // 背景下拉：先是「无背景」，然后是当前画幅下的候选。
@@ -878,6 +1136,8 @@ function applyTransform(next) {
   syncScaleUi();
   render();
   syncCenterUi();
+  // 形状改了 —— 存档跟着改（scheduleSave 会把它攒起来，拖动时不吵）。
+  scheduleSave();
 }
 
 // 百分数夹在 0 ~ 100。
@@ -1064,6 +1324,7 @@ function wire() {
       state.template = pickTemplate(shapeSel.value, state.photos.length, ratio, state.transform);
       buildCells();
       render();
+      scheduleSave();
     };
   }
   const sizeSel = document.getElementById('wall-size');
@@ -1072,6 +1333,7 @@ function wire() {
       state.template = buildTemplate(state.template.shapeId, sizeSel.value, state.template.ratioId, state.transform);
       buildCells();
       render();
+      scheduleSave();
     };
   }
   const ratioSel = document.getElementById('wall-ratio');
@@ -1085,6 +1347,7 @@ function wire() {
       syncBackground();
       await reloadBackground();
       render();
+      scheduleSave();
     };
   }
   const autoBtn = document.getElementById('wall-auto-btn');
@@ -1093,12 +1356,16 @@ function wire() {
     // 自动匹配可能改了画幅 —— 背景要重新读。
     await reloadBackground();
     render();
+    scheduleSave();
   };
   const resetShapeBtn = document.getElementById('wall-shape-reset-btn');
   if (resetShapeBtn) resetShapeBtn.onclick = () => {
     state.transform = { ...DEFAULT_SHAPE_TRANSFORM };
     applyTransform();
   };
+  // 「恢复默认摆法」—— 把存档丢掉，墙上回到自动匹配的样子。
+  const resetWallBtn = document.getElementById('wall-reset-btn');
+  if (resetWallBtn) resetWallBtn.onclick = resetWall;
   const scaleRange = document.getElementById('wall-scale');
   if (scaleRange) {
     scaleRange.oninput = () => {
@@ -1251,6 +1518,7 @@ function wireCanvas(canvas) {
       assignPhoto(index, payload.photoId);
     }
     render();
+    scheduleSave();
   });
 }
 
@@ -1306,6 +1574,7 @@ function wireTray(tray) {
     cell.photoId = null;
     cell.cover = null;
     render();
+    scheduleSave();
   });
 }
 
@@ -1374,6 +1643,7 @@ function renderSide() {
     cell.photoId = null;
     cell.cover = null;
     render();
+    scheduleSave();
   };
 }
 
@@ -1402,6 +1672,7 @@ function renderTray() {
       if (!cell) return;
       assignPhoto(cell.index, el.dataset.photoId);
       render();
+      scheduleSave();
     };
   });
 }
@@ -1550,6 +1821,7 @@ function openCoverForCell() {
     onSave: (cover) => {
       cell.cover = cover;
       render();
+      scheduleSave();
     },
   });
 }
@@ -1582,6 +1854,7 @@ function openPhotoPicker() {
       assignPhoto(cell.index, el.dataset.photoId);
       close();
       render();
+      scheduleSave();
     };
   });
   overlay.querySelector('.wall-picker-x').onclick = close;
@@ -1633,7 +1906,20 @@ async function doExport() {
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) throw new Error('生成 PNG 失败');
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    const r = await api.export_.photoWall({ bytes });
+    // 带上这面墙的样子 —— 主进程把它记进导出历史，用户就能「按上次的样子
+    // 再导一次」。
+    const r = await api.export_.photoWall({
+      bytes,
+      meta: {
+        width: W,
+        height: H,
+        photoCount: filled.length,
+        shapeId: t.shapeId,
+        sizeId: t.sizeId,
+        ratioId: t.ratioId,
+        snapshot: currentState(),
+      },
+    });
     if (r && r.canceled) {
       // 用户自己取消了保存 —— 临时照片留着（也许还要再导一次）。
       setStatus('');
@@ -1643,6 +1929,10 @@ async function doExport() {
     // 磁盘上。墙上它们的位置也空出来（照片已经不在了）。
     const tmpCount = state.photos.filter((p) => p.tmpId).length;
     await dropTmpPhotos();
+    // 墙上动了（临时照片被撤下来了）—— 存档跟着更新。
+    scheduleSave();
+    // 历史里多了一条 —— 把列表读回来。
+    await loadHistory();
     const mb = (r && r.bytes ? (r.bytes / 1024 / 1024).toFixed(1) : '?');
     const failedTxt = failed ? ` · ${failed} 张没画上` : '';
     const tmpTxt = tmpCount ? ` · ${tmpCount} 张临时照片已清理` : '';
@@ -1713,6 +2003,145 @@ function setStatus(text) {
   state.status = text || '';
   const el = document.getElementById('wall-status');
   if (el) el.textContent = state.status;
+}
+
+// ---- 导出历史 --------------------------------------------------------------
+//
+// 每次导出都记一条 —— 什么时候导的、导到哪里、几张照片、画布多大，以及
+// **当时那面墙的样子**。
+//
+// 有了那份样子，用户就能：
+//
+//   * 「按这版再导一次」—— 把上次那版摆法读回墙上，确认后直接导出；
+//   * 知道上次导到哪儿了（文件路径），省得翻文件夹。
+//
+// 历史存在主进程（settings 表，见 main/photo_wall_history.js）。
+
+// 读历史。读不到就当没有历史 —— 历史没了不该把页面弄挂。
+async function loadHistory() {
+  try {
+    const list = await api.photoWallHistory.list();
+    state.history = Array.isArray(list) ? list : [];
+  } catch (e) {
+    console.error('photo wall history load failed', e);
+    state.history = [];
+  }
+  return state.history;
+}
+
+// 历史里的一条 —— 时间、路径、尺寸、照片数。
+function historyItemHtml(entry) {
+  const when = String(entry.exportedAt || '').slice(0, 16);
+  const size = entry.width && entry.height ? `${entry.width}×${entry.height}` : '';
+  const name = entry.path ? String(entry.path).split(/[\\/]/).pop() : '';
+  return `
+    <div class="wall-history-item" data-history-id="${escapeHtml(entry.id)}">
+      <div class="wall-history-main">
+        <div class="wall-history-title">${escapeHtml(when || '（时间未知）')}</div>
+        <div class="meta">${escapeHtml(name || '（未保存）')}${size ? ' · ' + escapeHtml(size) : ''}${entry.photoCount ? ' · ' + escapeHtml(String(entry.photoCount)) + ' 张' : ''}</div>
+      </div>
+      <div class="wall-history-actions">
+        <button type="button" class="btn secondary" data-history-act="reuse">按这版再导</button>
+        <button type="button" class="btn secondary" data-history-act="remove">删除</button>
+      </div>
+    </div>
+  `;
+}
+
+// 历史那一块（列表 + 清空）。
+function historyHtml() {
+  const list = state.history || [];
+  if (!list.length) {
+    return `<p class="meta">还没有导出过。导出一次之后，这里会记下每次的版本，可以按老版本再导一次。</p>`;
+  }
+  return `
+    <div class="wall-history-list">
+      ${list.map(historyItemHtml).join('')}
+    </div>
+    <div class="row" style="gap:8px; margin-top:8px;">
+      <button type="button" class="btn secondary" id="wall-history-clear">清空历史</button>
+    </div>
+  `;
+}
+
+// 把历史里某一版的样子读回墙上。
+//
+// 这一版可能是用**别的**那几篇回忆导出来的 —— 那些回忆现在不一定还在
+// 这一面墙上。所以读回来的时候，照片对不上的就跳过（applySavedState
+// 已经这么做了），墙上摆的是能对上的那些。
+async function reuseHistoryEntry(entry) {
+  if (!entry || !entry.snapshot) {
+    toast('这一版没有保存摆法');
+    return;
+  }
+  const ok = applySavedState(entry.snapshot);
+  if (!ok) {
+    toast('这一版的摆法用不上了（照片或形状已经变了）');
+    return;
+  }
+  // 背景要按当前的画幅重新读一遍（背景是按画幅分目录的）。
+  syncBackground();
+  await reloadBackground();
+  render();
+  scheduleSave();
+  toast('已按那版的样子摆好，确认后可以再导出');
+}
+
+// 把历史里的一条忘掉。
+async function removeHistoryEntry(id) {
+  try {
+    const list = await api.photoWallHistory.remove({ id });
+    state.history = Array.isArray(list) ? list : [];
+  } catch (e) {
+    console.error('photo wall history remove failed', e);
+  }
+  render();
+}
+
+// 清空历史。
+async function clearHistory() {
+  try {
+    const list = await api.photoWallHistory.clear();
+    state.history = Array.isArray(list) ? list : [];
+  } catch (e) {
+    console.error('photo wall history clear failed', e);
+  }
+  render();
+}
+
+// 历史的按钮 —— 每次 render() 之后重新挂上（render() 会换掉整块 innerHTML）。
+function wireHistory() {
+  const box = document.getElementById('wall-history');
+  if (!box) return;
+  box.querySelectorAll('[data-history-act]').forEach((btn) => {
+    btn.onclick = () => {
+      const row = btn.closest('[data-history-id]');
+      const id = row ? row.getAttribute('data-history-id') : '';
+      const entry = state.history.find((e) => e.id === id);
+      const act = btn.getAttribute('data-history-act');
+      if (act === 'remove') { removeHistoryEntry(id); return; }
+      if (act === 'reuse') { reuseHistoryEntry(entry); }
+    };
+  });
+  const clearBtn = document.getElementById('wall-history-clear');
+  if (clearBtn) clearBtn.onclick = clearHistory;
+}
+
+// 「恢复默认」—— 把这一组回忆的存档丢掉，墙上回到自动匹配的样子。
+async function resetWall() {
+  try {
+    await api.photoWallState.clear({ eventIds: state.eventIds });
+  } catch (e) {
+    console.error('photo wall state clear failed', e);
+  }
+  state.transform = { ...DEFAULT_SHAPE_TRANSFORM };
+  state.bgId = '';
+  state.restored = false;
+  autoPick();
+  await reloadBackground();
+  render();
+  scheduleSave();
+  toast('已恢复默认摆法');
 }
 
 register('/photo-wall', mount);

@@ -4137,3 +4137,32 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 照片墙的导出历史 —— 一行一条版本。 */
+.wall-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wall-history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex-wrap: wrap;
+}
+.wall-history-main {
+  flex: 1;
+  min-width: 0;
+}
+.wall-history-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.wall-history-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
