@@ -182,6 +182,64 @@ export function normalizeTransform(transform) {
   return { scale, dx, dy };
 }
 
+// ---- 形状中心在画布里的位置 -----------------------------------------------
+//
+// 「挪了多少」（dx / dy）是相对量：形状默认在正中，挪一点就偏一点。用户
+// 真正想说的是「心形的中心放在画布的哪儿」—— 那是**位置**，不是位移。
+//
+// 所以外面（输入框、拖动）都用中心位置说话：cx / cy 是画布的百分之几
+// （0 ~ 100）。这里负责它和 dx / dy 之间的换算。
+//
+// 中心位置的 50% / 50% 就是「正中」= 什么都不调。
+
+// 形状中心的百分之几 → 一份调整。
+//
+// `place` 是形状没调之前在画布里占的框（见 placeShape）—— 中心位置说的
+// 是「缩放之后形状的中心在哪儿」，所以要先按缩放算一遍。
+export function transformFromCenter(centerX, centerY, scale, place, ratio) {
+  const s = Math.min(SHAPE_SCALE_MAX, Math.max(SHAPE_SCALE_MIN, Number(scale) || 1));
+  const cx = Number(centerX);
+  const cy = Number(centerY);
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+    return { scale: s, dx: 0, dy: 0 };
+  }
+  // 中心位置的百分数 → 画布上的坐标。
+  const wantX = (cx / 100) * ratio;
+  const wantY = cy / 100;
+  // 形状自己的中心（缩放前）。
+  const baseCx = place.x + place.w / 2;
+  const baseCy = place.y + place.h / 2;
+  return {
+    scale: s,
+    dx: wantX - baseCx,
+    dy: wantY - baseCy,
+  };
+}
+
+// 一份调整 → 形状中心的百分之几。
+//
+// `place` 是形状没调之前占的框；`outline` 是**调整之后**的轮廓（中心就在
+// 它的包围盒正中）。
+export function centerFromTransform(transform, place, outline, ratio) {
+  const tf = normalizeTransform(transform);
+  const b = shapeBounds(outline);
+  const baseCx = place.x + place.w / 2;
+  const baseCy = place.y + place.h / 2;
+  return {
+    x: ((b.cx) / ratio) * 100,
+    y: (b.cy) * 100,
+    // 中心位置换算成位移（给那些要位移的地方用）。
+    dx: b.cx - baseCx,
+    dy: b.cy - baseCy,
+    scale: tf.scale,
+  };
+}
+
+// 形状没调之前在画布里占的框 —— 中心位置的换算要用它。
+export function basePlace(shape, ratio) {
+  return placeShape(shape, ratio, 1);
+}
+
 // 调整在缓存键里的样子。
 function transformKey(tf) {
   const q = (n) => Math.round(n * TRANSFORM_KEY_PRECISION);
@@ -222,8 +280,8 @@ function shapeBounds(outline) {
 // 把形状挪进画布范围里 —— 别让它整个跑到画布外面去（用户看不见，也找
 // 不回来）。
 //
-// 规矩：形状的包围盒至少要有**三分之一**留在画布里。剩下的部分可以伸出
-// 画布（伸出去的被切掉，看起来就是「贴着边」）。
+// 规矩：**形状的中心**要留在画布里。剩下的部分可以伸出画布（伸出去的被
+// 切掉，看起来就是「贴着边」）。
 //
 // `outline` 是**调整之前**的轮廓（没挪没缩的那一份）—— 挪动的余地按它
 // 算，不然形状越小能挪的范围反而越大，没道理。
@@ -231,14 +289,17 @@ export function clampTransform(transform, ratio, outline) {
   const tf = normalizeTransform(transform);
   const b = shapeBounds(outline);
   if (!Number.isFinite(b.minX) || !(b.w > 0) || !(b.h > 0)) return tf;
-  // 画布里至少要留下三分之一的宽和高。
-  const keepX = b.w / 3;
-  const keepY = b.h / 3;
-  // 形状的左边最多能到画布右边往左 keepX 的地方。
-  const minDx = ratio - b.maxX - keepX;
-  const maxDx = -b.minX + keepX;
-  const minDy = 1 - b.maxY - keepY;
-  const maxDy = -b.minY + keepY;
+  // 规矩：**形状的中心**留在画布里。
+  //
+  // 之前用的是「形状的三分之一留在画布里」—— 那太严了：正方形的画布上，
+  // 用户把中心挪到 30% 会被拉回 38%，输入框里填的数字和结果对不上，像是
+  // 坏了。而「中心在画布里」正是「设置中心位置」这句话本身的意思。
+  //
+  // 中心留在画布里，形状就至少还有一半看得见（除非它比画布还大）。
+  const minDx = -b.cx;
+  const maxDx = ratio - b.cx;
+  const minDy = -b.cy;
+  const maxDy = 1 - b.cy;
   return {
     scale: tf.scale,
     dx: Math.max(minDx, Math.min(maxDx, tf.dx)),

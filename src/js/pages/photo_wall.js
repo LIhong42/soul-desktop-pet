@@ -31,7 +31,8 @@ import {
   buildTemplate, pickTemplate, dominantRatio, resolveCellCover, photoDefaultRatio,
   wallGeometry, cellRect, exportCanvasWidth,
   DEFAULT_SHAPE_TRANSFORM, SHAPE_SCALE_MIN, SHAPE_SCALE_MAX,
-  normalizeTransform, clampTransform,
+  normalizeTransform, clampTransform, getShape,
+  transformFromCenter, centerFromTransform, basePlace,
 } from '../photo_wall_layout.js';
 
 const state = {
@@ -475,6 +476,23 @@ function render() {
             <button type="button" class="btn" id="wall-shape-reset-btn">重置形状位置和大小</button>
           </div>
         </div>
+        <div class="form-row">
+          <div class="field">
+            <label>形状中心位置</label>
+            <div class="wall-scale-row">
+              <span class="meta wall-pos-label">横向</span>
+              <input type="number" id="wall-shape-cx" class="wall-pos-input" min="0" max="100" step="1" value="${Math.round(shapeCenter().x)}" title="形状中心离画布左边的百分比"/>
+              <span class="meta">%</span>
+              <span class="meta wall-pos-label">纵向</span>
+              <input type="number" id="wall-shape-cy" class="wall-pos-input" min="0" max="100" step="1" value="${Math.round(shapeCenter().y)}" title="形状中心离画布上边的百分比"/>
+              <span class="meta">%</span>
+            </div>
+          </div>
+          <div class="field" style="flex:1; min-width:240px;">
+            <label>&nbsp;</label>
+            <p class="meta">50% / 50% 就是画布正中。也可以直接在画布上拖动形状来挪位置。</p>
+          </div>
+        </div>
         <p class="meta" id="wall-template-note">${templateNote()}</p>
       </div>
 
@@ -488,7 +506,7 @@ function render() {
           </div>
           <p class="meta" id="wall-status">${escapeHtml(state.status)}</p>
           <p class="meta">点一个格子就能换照片、删照片、改封面；把照片从侧栏拖到墙上可以换位置。</p>
-          <p class="meta">也可以直接调整形状：按住形状里<b>空着的格子</b>拖动可以挪位置，拖<b>四个角上的手柄</b>可以等比缩放（也可以用上面的滑块）。</p>
+          <p class="meta">也可以直接调整形状：按住形状里<b>空着的格子</b>拖动可以挪位置，拖<b>四个角上的手柄</b>可以等比缩放；位置也可以<b>直接填数字</b>（上面的「形状中心位置」，50% 就是正中）。</p>
         </div>
 
         <div class="card wall-side">
@@ -719,13 +737,16 @@ function shapePath(points) {
 }
 
 // 画布上的位置 → 格子（画布的坐标：宽 = 画幅，高 = 1）。
+//
+// 横竖分开换算：画布的屏幕像素是方的，而模板坐标的宽是画幅、高是 1 ——
+// x 要除以画布的**宽**再乘画幅，y 除以画布的**高**。
 function cellAt(clientX, clientY) {
   const canvas = document.getElementById('wall-canvas');
   const t = state.template;
   if (!canvas || !t) return -1;
   const rect = canvas.getBoundingClientRect();
-  if (!rect.height) return -1;
-  const x = (clientX - rect.left) / rect.height;
+  if (!rect.height || !rect.width) return -1;
+  const x = (clientX - rect.left) / rect.width * t.ratio;
   const y = (clientY - rect.top) / rect.height;
   if (x < 0 || y < 0 || x > t.ratio || y > 1) return -1;
   const col = Math.floor((x * t.n) / t.ratio);
@@ -772,14 +793,20 @@ function handlePoints(geo) {
 }
 
 // 屏幕坐标（像素）→ 画布坐标（宽 = ratio、高 = 1）。
+//
+// 横竖要分开换算：模板空间的**宽是 ratio、高是 1**，而画布的屏幕像素是
+// 方的 —— x 按画布的宽走，y 按画布的高走。
+//
+// 之前 x 也除了画布的高：正方形的画布（1:1）看不出来，宽画布（16:9）上
+// x 会偏一大截，于是「指针在不在形状里」判错，形状根本拖不动。
 function toCanvasPoint(clientX, clientY) {
   const canvas = document.getElementById('wall-canvas');
   const t = state.template;
   if (!canvas || !t) return null;
   const rect = canvas.getBoundingClientRect();
-  if (!rect.height) return null;
+  if (!rect.height || !rect.width) return null;
   return {
-    x: (clientX - rect.left) / rect.height,
+    x: (clientX - rect.left) / rect.width * t.ratio,
     y: (clientY - rect.top) / rect.height,
   };
 }
@@ -850,6 +877,12 @@ function applyTransform(next) {
   buildCells();
   syncScaleUi();
   render();
+  syncCenterUi();
+}
+
+// 百分数夹在 0 ~ 100。
+function clampPercent(n) {
+  return Math.max(0, Math.min(100, n));
 }
 
 // 没挪没缩的那份轮廓 —— 挪动的余地按它算。
@@ -869,6 +902,42 @@ function syncScaleUi() {
   if (range) range.value = String(Math.round(state.transform.scale * 100));
   const label = document.getElementById('wall-scale-value');
   if (label) label.textContent = `${Math.round(state.transform.scale * 100)}%`;
+}
+
+// 形状中心在画布里的位置（百分之几）—— 输入框里显示的就是它。
+//
+// 用的是**调整之后**的轮廓的中心：用户看到心形在哪儿，数字就是哪儿。
+function shapeCenter() {
+  const t = state.template;
+  if (!t) return { x: 50, y: 50 };
+  const c = centerFromTransform(
+    state.transform,
+    basePlace(getShape(t.shapeId), t.ratio),
+    t.outline,
+    t.ratio,
+  );
+  return { x: c.x, y: c.y };
+}
+
+// 两个输入框（横向 / 纵向）—— 跟着当前调整走。
+function syncCenterUi() {
+  const c = shapeCenter();
+  const cx = document.getElementById('wall-shape-cx');
+  if (cx && document.activeElement !== cx) cx.value = String(Math.round(c.x));
+  const cy = document.getElementById('wall-shape-cy');
+  if (cy && document.activeElement !== cy) cy.value = String(Math.round(c.y));
+}
+
+// 按输入框里的中心位置重摆形状。
+//
+// 中心位置 → 位移，交给 applyTransform 收尾（它会夹住画布边界）。
+function setShapeCenter(cx, cy) {
+  const t = state.template;
+  if (!t) return;
+  const shape = getShape(t.shapeId);
+  const place = basePlace(shape, t.ratio);
+  const next = transformFromCenter(cx, cy, state.transform.scale, place, t.ratio);
+  applyTransform(next);
 }
 
 // 拖动：记下手势的起点和形状当时的框。
@@ -917,9 +986,13 @@ function moveDrag(e) {
   const t = state.template;
   if (!d || !t) return;
   if (d.kind === 'move') {
-    // 挪动：按画布单位算位移（画布高 = 1）。
+    // 挪动：按画布单位算位移。
+    //
+    // 横竖分开换算：模板空间的宽是 ratio、高是 1，所以 x 的位移要除以画布
+    // 的**宽**再乘 ratio，y 除以画布的**高**。用同一个数换算横竖，宽画布
+    // 上形状会跑得不对。
     const rect = document.getElementById('wall-canvas').getBoundingClientRect();
-    const dx = (e.clientX - d.startClient.x) / rect.height;
+    const dx = (e.clientX - d.startClient.x) / rect.width * t.ratio;
     const dy = (e.clientY - d.startClient.y) / rect.height;
     state.transform = clampTransform({
       scale: d.startTransform.scale,
@@ -967,6 +1040,7 @@ function redrawTransform() {
   paintBaseNow();
   paintOverlay();
   syncScaleUi();
+  syncCenterUi();
 }
 
 // 拖动结束：真的重排格子，照片按顺序重新填进去。
@@ -1032,6 +1106,20 @@ function wire() {
       applyTransform({ ...state.transform, scale: Number(scaleRange.value) / 100 });
     };
   }
+  // 中心位置的两个输入框 —— 填数字就把形状摆到那儿去。
+  //
+  // 用 onchange 而不是 oninput：一边打字一边重画，输入到一半的数（比如
+  // 「1」想打成「15」）会把形状甩到奇怪的地方。填完、回车或失焦才生效。
+  const cxInput = document.getElementById('wall-shape-cx');
+  const cyInput = document.getElementById('wall-shape-cy');
+  const applyCenterInputs = () => {
+    const cx = Number(cxInput ? cxInput.value : NaN);
+    const cy = Number(cyInput ? cyInput.value : NaN);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
+    setShapeCenter(clampPercent(cx), clampPercent(cy));
+  };
+  if (cxInput) cxInput.onchange = applyCenterInputs;
+  if (cyInput) cyInput.onchange = applyCenterInputs;
 
   const bgSel = document.getElementById('wall-bg');
   if (bgSel) bgSel.onchange = () => { selectBackground(bgSel.value); };

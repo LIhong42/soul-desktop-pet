@@ -3984,8 +3984,9 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   align-items: center;
   gap: 8px;
 }
-.wall-scale-row input[type="range"] {
-  flex: 1;
+/* 只有滑块自己撑开 —— 数字框要保持窄。 */
+.wall-scale-row > input[type="range"] {
+  flex: 1 1 auto;
   min-width: 120px;
 }
 .wall-scale-value {
@@ -3993,6 +3994,21 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   color: var(--muted);
   min-width: 44px;
   text-align: right;
+}
+
+/* 形状中心位置的两个数字框 —— 横向 / 纵向各一个。
+   全局的 input 规则是 width:100%，这里要把它压回去（数字框就该那么窄）。 */
+.wall-pos-input {
+  width: 68px;
+  min-width: 68px;
+  max-width: 68px;
+  flex: 0 0 68px;
+  text-align: right;
+  padding: 8px 6px;
+}
+/* 「横向」「纵向」两个字 —— 别让它折行。 */
+.wall-pos-label {
+  white-space: nowrap;
 }
 
 .wall-side h3 {

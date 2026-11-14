@@ -169,6 +169,50 @@ function shapeBox(win) {
   })()`);
 }
 
+// The shape's centre, in PERCENTAGES of the canvas — the same measure the
+// page's centre-position boxes use.
+//
+// It is read from the page's own inputs (which the page keeps in sync with
+// the shape) and cross-checked against the pixels: a box that says 30 while
+// the shape sits at 50 would be a lie, and the test has to catch that.
+//
+// The pixel side measures the shape's **right edge**, not the middle of its
+// bounding box: the shape can hang off the canvas (that is allowed — only
+// its centre has to stay on), and a clipped box has a middle that is not
+// the shape's middle. The right edge is not clipped when the shape moves
+// LEFT, which is the direction this test moves it in.
+function shapeCentre(win) {
+  return win.webContents.executeJavaScript(`(() => {
+    const cv = document.getElementById('wall-canvas');
+    if (!cv) return null;
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let minX = cv.width, minY = cv.height, maxX = -1, maxY = -1;
+    for (let y = 0; y < cv.height; y += 1) {
+      for (let x = 0; x < cv.width; x += 1) {
+        const i = (y * cv.width + x) * 4;
+        if (d[i] > 248 && d[i + 1] > 248 && d[i + 2] > 248) continue;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) return null;
+    return {
+      // From the pixels: the shape's right edge, as a percentage. The
+      // centre sits half the shape's width to the left of it.
+      rightEdge: (maxX / cv.width) * 100,
+      topEdge: (minY / cv.height) * 100,
+      bottomEdge: (maxY / cv.height) * 100,
+      // From the page's inputs: what it says the centre is.
+      inputX: document.getElementById('wall-shape-cx')
+        ? Number(document.getElementById('wall-shape-cx').value) : null,
+      inputY: document.getElementById('wall-shape-cy')
+        ? Number(document.getElementById('wall-shape-cy').value) : null,
+    };
+  })()`);
+}
+
 // The app's own CSP, read from src/index.html.
 //
 // The harness page MUST carry it: the real window loads src/index.html, and
@@ -541,6 +585,120 @@ module.exports = (async () => {
     report.shapeReset = !!(box0 && box3
       && Math.abs(box3.minX - box0.minX) < 6 && Math.abs(box3.maxX - box0.maxX) < 6);
 
+    // (5) The shape's centre can be set BY NUMBER.
+    //
+    // Dragging the shape fights with dragging the photos (both start with a
+    // press on the canvas), so the position is also set numerically: type
+    // the percentages and the shape goes there. That is the reliable way to
+    // place the shape against a background.
+    //
+    // The check is on the PIXELS: the shape's box has to move the way the
+    // numbers said, by the right amount and in the right direction.
+    const centreBefore = await shapeCentre(win);
+    report.centreBefore = centreBefore;
+    await win.webContents.executeJavaScript(`(() => {
+      const cx = document.getElementById('wall-shape-cx');
+      const cy = document.getElementById('wall-shape-cy');
+      if (!cx || !cy) return;
+      cx.value = '30';
+      cy.value = '40';
+      cx.dispatchEvent(new Event('change', { bubbles: true }));
+      cy.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await waitFor(async () => {
+      const c = await shapeCentre(win);
+      return c && c.inputX === 30 && c.inputY === 40 ? c : null;
+    }, 8000);
+    const centreAfter = await shapeCentre(win);
+    report.centreAfter = centreAfter;
+    // The page accepted the numbers: its inputs say what was asked for.
+    report.centreSet = !!(centreAfter
+      && Math.abs(centreAfter.inputX - 30) < 0.01
+      && Math.abs(centreAfter.inputY - 40) < 0.01);
+    // The numbers in the boxes are the shape's real centre (not the ones
+    // that were typed in).
+    report.centreInputs = await win.webContents.executeJavaScript(`(() => ({
+      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
+      cy: document.getElementById('wall-shape-cy') ? document.getElementById('wall-shape-cy').value : null,
+    }))()`);
+    // The boxes kept what was asked for — the clamp did NOT pull the shape
+    // back to some other place (it only keeps the centre on the canvas).
+    report.centreKeptNumbers = !!(report.centreInputs
+      && report.centreInputs.cx === '30' && report.centreInputs.cy === '40');
+    // And the shape really MOVED on the canvas, by the amount the numbers
+    // asked for.
+    //
+    // The centre moved 20% of the canvas to the left, so the shape's RIGHT
+    // edge — the part of it that is not hanging off the canvas — moved 20%
+    // to the left too.
+    report.centreMovedShape = !!(centreBefore && centreAfter
+      && Math.abs((centreBefore.rightEdge - centreAfter.rightEdge) - 20) < 1.5);
+    // The shape went UP too: 40% instead of 50% means the whole shape is
+    // 10% higher. The BOTTOM edge is the one to measure — the top of the
+    // shape hangs off the canvas here, and a clipped edge cannot show the
+    // movement.
+    report.centreMovedUp = !!(centreBefore && centreAfter
+      && Math.abs((centreBefore.bottomEdge - centreAfter.bottomEdge) - 10) < 1.5);
+    // The shape's SIZE did not change (only its place did).
+    //
+    // The shape hangs off the canvas on the left and the top at 30/40, so
+    // its visible box cannot be measured there. Nudge it to 55/45 — where
+    // it is entirely on the canvas — and compare with the box it had at
+    // 50/50 (also entirely on the canvas). Both are unclipped, so the
+    // comparison is a real measurement of the shape's size.
+    await win.webContents.executeJavaScript(`(() => {
+      const cx = document.getElementById('wall-shape-cx');
+      const cy = document.getElementById('wall-shape-cy');
+      if (!cx || !cy) return;
+      cx.value = '55';
+      cy.value = '45';
+      cx.dispatchEvent(new Event('change', { bubbles: true }));
+      cy.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await waitFor(async () => {
+      const c = await shapeCentre(win);
+      return c && c.inputX === 55 && c.inputY === 45 ? c : null;
+    }, 8000);
+    const sizeAfter = await shapeBox(win);
+    report.shapeBox4 = sizeAfter;
+    // box3 is the shape's box at 50/50 — the reference for the size.
+    report.centreKeptSize = !!(box3 && sizeAfter
+      && Math.abs((sizeAfter.maxY - sizeAfter.minY) - (box3.maxY - box3.minY)) < 8
+      && Math.abs((sizeAfter.maxX - sizeAfter.minX) - (box3.maxX - box3.minX)) < 8);
+    // And it really did move 5% to the right and 5% up.
+    //
+    // The box is in CANVAS pixels, so 5% of the canvas is 5% of the box's
+    // width (horizontal) and height (vertical).
+    report.centreNudged = !!(box3 && sizeAfter
+      && Math.abs((sizeAfter.maxX - box3.maxX) - box3.width * 0.05) < 4
+      && Math.abs((box3.maxY - sizeAfter.maxY) - box3.height * 0.05) < 4);
+
+    // Putting it back to the middle.
+    await win.webContents.executeJavaScript(`(() => {
+      const cx = document.getElementById('wall-shape-cx');
+      const cy = document.getElementById('wall-shape-cy');
+      if (!cx || !cy) return;
+      cx.value = '50';
+      cy.value = '50';
+      cx.dispatchEvent(new Event('change', { bubbles: true }));
+      cy.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await waitFor(async () => {
+      const c = await shapeCentre(win);
+      return c && c.inputX === 50 && c.inputY === 50 ? c : null;
+    }, 8000);
+    const centreBack = await shapeCentre(win);
+    report.centreBack = centreBack;
+    report.centreRestored = !!(centreBack
+      && Math.abs(centreBack.inputX - 50) < 0.01
+      && Math.abs(centreBack.inputY - 50) < 0.01
+      && Math.abs(centreBack.rightEdge - centreBefore.rightEdge) < 1.5);
+    // The boxes show the shape's real centre after the restore.
+    report.centreInputsAfter = await win.webContents.executeJavaScript(`(() => ({
+      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
+      cy: document.getElementById('wall-shape-cy') ? document.getElementById('wall-shape-cy').value : null,
+    }))()`);
+
     // (5) The two gestures must not fight each other.
     //
     // The shape moves when you press an EMPTY cell of it, and a PHOTO is
@@ -578,6 +736,9 @@ module.exports = (async () => {
     })()`);
 
     if (report.photoDrag && !report.photoDrag.skipped) {
+      // The shape's box BEFORE the photo drag — the reference for "the photo
+      // drag did not move the shape".
+      const beforeDrag = await shapeBox(win);
       // The HTML5 drag-and-drop is driven by the browser's own drag events,
       // so this one is a DataTransfer-based gesture, not a pointer one.
       await win.webContents.executeJavaScript(`(() => {
@@ -598,15 +759,12 @@ module.exports = (async () => {
         fire('drop', dst.x, dst.y);
         fire('dragend', dst.x, dst.y);
       })()`);
-      await waitFor(async () => {
-        const b = await shapeBox(win);
-        return b && Math.abs(b.minX - box0.minX) < 6 ? b : null;
-      }, 4000);
+      await new Promise((r) => setTimeout(r, 600));
       // The shape stayed put, and the red area moved towards the target.
       const afterDrag = await shapeBox(win);
-      report.photoDragKeptShape = !!(afterDrag
-        && Math.abs(afterDrag.minX - box0.minX) < 6
-        && Math.abs(afterDrag.maxX - box0.maxX) < 6);
+      report.photoDragKeptShape = !!(afterDrag && beforeDrag
+        && Math.abs(afterDrag.minX - beforeDrag.minX) < 6
+        && Math.abs(afterDrag.maxX - beforeDrag.maxX) < 6);
       const moved = await win.webContents.executeJavaScript(`(() => {
         const cv = document.getElementById('wall-canvas');
         const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
@@ -759,6 +917,77 @@ module.exports = (async () => {
 
     // The background is exercised after the first export (so that export
     // stays the clean baseline for the shape's margins) — see below.
+
+    // (6) The drag works on a WIDE canvas too.
+    //
+    // The canvas' screen pixels are square, but the template's coordinates
+    // are not (its width is the ratio, its height is 1). So the pointer's
+    // position has to be converted on each axis separately — get that
+    // wrong and the shape cannot be grabbed at all on a 16:9 canvas,
+    // while it works fine on a square one.
+    //
+    // So: switch to 16:9, grab the shape, drag it, and check it moved.
+    await win.webContents.executeJavaScript(`(() => {
+      const ratio = document.getElementById('wall-ratio');
+      if (!ratio) return;
+      ratio.value = '16:9';
+      ratio.dispatchEvent(new Event('change'));
+    })()`);
+    await waitFor(async () => {
+      const v = await win.webContents.executeJavaScript(
+        'document.getElementById("wall-ratio").value');
+      return v === '16:9' ? v : null;
+    }, 8000);
+    await new Promise((r) => setTimeout(r, 600));
+
+    const wideBox0 = await shapeBox(win);
+    // An empty spot inside the shape, in CSS pixels.
+    const wideAim = await win.webContents.executeJavaScript(`(() => {
+      const cv = document.getElementById('wall-canvas');
+      if (!cv) return null;
+      const r = cv.getBoundingClientRect();
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      for (let y = 2; y < cv.height - 2; y += 2) {
+        for (let x = 2; x < cv.width - 2; x += 2) {
+          const i = (y * cv.width + x) * 4;
+          if (Math.abs(d[i] - 0xef) < 8 && Math.abs(d[i + 1] - 0xe9) < 8 && Math.abs(d[i + 2] - 0xe0) < 8) {
+            return { x: (x / cv.width) * r.width, y: (y / cv.height) * r.height };
+          }
+        }
+      }
+      return null;
+    })()`);
+    report.wideAim = wideAim;
+    if (wideAim) {
+      await pointerGesture(win, [wideAim.x, wideAim.y], [wideAim.x + 70, wideAim.y], 6);
+      await waitFor(async () => {
+        const b = await shapeBox(win);
+        return b && wideBox0 && b.minX > wideBox0.minX + 10 ? b : null;
+      }, 8000);
+    }
+    const wideBox1 = await shapeBox(win);
+    report.wideBox0 = wideBox0;
+    report.wideBox1 = wideBox1;
+    report.wideDragMoved = !!(wideBox0 && wideBox1 && wideBox1.minX > wideBox0.minX + 5);
+
+    // Back to a square canvas for the rest of the test, and put the shape
+    // back where it started — the drag above moved it, and the export that
+    // follows measures the shape's margin from the canvas' edges.
+    await win.webContents.executeJavaScript(`(() => {
+      const ratio = document.getElementById('wall-ratio');
+      if (!ratio) return;
+      ratio.value = '1:1';
+      ratio.dispatchEvent(new Event('change'));
+    })()`);
+    await waitFor(async () => {
+      const v = await win.webContents.executeJavaScript(
+        'document.getElementById("wall-ratio").value');
+      return v === '1:1' ? v : null;
+    }, 8000);
+    await new Promise((r) => setTimeout(r, 600));
+    await win.webContents.executeJavaScript(
+      'document.getElementById("wall-shape-reset-btn").click()');
+    await new Promise((r) => setTimeout(r, 400));
 
     // Import a picture from the system — the way a user does when the
     // notes have no photos left for the wall.
@@ -998,6 +1227,30 @@ module.exports = (async () => {
       report.screenshotError = String(e && e.message);
     }
 
+    // A second picture: the shape moved off the centre and shrunk, so the
+    // adjustment can be LOOKED at and not only measured.
+    try {
+      await win.webContents.executeJavaScript(`(() => {
+        const cx = document.getElementById('wall-shape-cx');
+        const cy = document.getElementById('wall-shape-cy');
+        const scale = document.getElementById('wall-scale');
+        if (cx) { cx.value = '38'; cx.dispatchEvent(new Event('change', { bubbles: true })); }
+        if (cy) { cy.value = '42'; cy.dispatchEvent(new Event('change', { bubbles: true })); }
+        if (scale) { scale.value = '75'; scale.dispatchEvent(new Event('input', { bubbles: true })); }
+      })()`);
+      await new Promise((r) => setTimeout(r, 800));
+      const shot2 = await win.webContents.capturePage();
+      const shotPath2 = path.join(tmp, 'wall-adjusted-page.png');
+      fs.writeFileSync(shotPath2, shot2.toPNG());
+      report.screenshotAdjusted = shotPath2;
+      // Put it back.
+      await win.webContents.executeJavaScript(
+        'document.getElementById("wall-shape-reset-btn").click()');
+      await new Promise((r) => setTimeout(r, 400));
+    } catch (e) {
+      report.screenshotAdjustedError = String(e && e.message);
+    }
+
     // Import once more and leave the page WITHOUT exporting: the temporary
     // photos are cleaned up on the way out too.
     const importFile2 = path.join(tmp, 'imported-green.png');
@@ -1054,6 +1307,21 @@ module.exports = (async () => {
       && report.shapeScaleRatio && report.shapeScaleRatio > 0.9
       && report.shapeScaleRatio < 1.1
       && report.shapeReset
+      // The shape's centre can be set by NUMBER: the shape goes where the
+      // numbers say (both the page's inputs and the drawn pixels agree),
+      // and it moves the right way on the canvas.
+      && report.centreSet
+      && report.centreKeptNumbers
+      && report.centreMovedShape
+      && report.centreKeptSize
+      && report.centreNudged
+      && report.centreMovedUp
+      && report.centreRestored
+      && report.centreInputsAfter && report.centreInputsAfter.cx === '50'
+      && report.centreInputsAfter && report.centreInputsAfter.cy === '50'
+      // The drag works on a wide canvas as well — the pointer's position
+      // has to be converted on each axis separately.
+      && report.wideDragMoved
       // The photo drag still works, and it does NOT drag the shape along.
       && report.photoDrag && !report.photoDrag.skipped
       && report.photoDragWorked
