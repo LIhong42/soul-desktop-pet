@@ -510,20 +510,35 @@ export function photoDefaultRatio(picW, picH) {
 
 // ---- 墙的几何 --------------------------------------------------------------
 //
-// 模板里的坐标是「画布宽 ratio、高 1」，画的时候乘一个缩放就变成像素。
-// 编辑器里的墙和导出的墙用的是同一个算法（只是画布大小不同），所以看到
-// 的和导出的长得一样。
-export function wallGeometry(template, canvasH) {
-  const s = canvasH;
-  const cellW = (template.ratio * s) / template.n;
-  const cellH = s / template.n;
-  const shape = template.outline.map((p) => ({ x: p.x * s, y: p.y * s }));
+// 模板里的坐标是「画布宽 ratio、高 1」。画的时候要把模板空间**铺到**实际
+// 的画布上 —— 画布多宽就铺多宽，多高就铺多高。
+//
+// 之前这里是「乘一个缩放」：px = 模板坐标 × 画布高。这等于**假定画布的宽
+// = ratio × 画布高**。编辑器的画布是 CSS 排出来的，宽度被 max-width 夹住
+// 的时候画布并不是那个比例 —— 墙就被画进一个宽了太多（或太窄）的空间里，
+// 照片错位、右边一截还被切掉。
+//
+// 现在改成按画布的真实宽高铺：
+//
+//   px_x = 模板x / ratio × 画布宽
+//   px_y = 模板y × 画布高
+//
+// 导出的时候画布宽正好 = ratio × 画布高，于是 px_x = 模板x × 画布高 ——
+// 和以前**一模一样**，导出的 PNG 一个像素都不变。
+export function wallGeometry(template, canvasW, canvasH) {
+  const w = Math.max(1, canvasW);
+  const h = Math.max(1, canvasH);
+  const sx = w / template.ratio;
+  const sy = h;
+  const cellW = w / template.n;
+  const cellH = h / template.n;
+  const shape = template.outline.map((p) => ({ x: p.x * sx, y: p.y * sy }));
   return {
-    scale: s,
+    scale: sy,
     cellW,
     cellH,
-    canvasW: template.ratio * s,
-    canvasH: s,
+    canvasW: w,
+    canvasH: h,
     x: (col) => col * cellW,
     y: (row) => row * cellH,
     shape,

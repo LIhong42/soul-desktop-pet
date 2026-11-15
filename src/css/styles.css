@@ -4096,25 +4096,47 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   line-height: 0;
   /* 画布的尺寸由 CSS 定。
 
-     宽度必须写死 100%：不写的话这一行的宽度是由画布决定的（画布的固有
-     宽度是 300px），于是「宽度铺满」变成「宽度等于 300px」—— 画布永远是
-     那么小一块。 */
+     这一行是**画布能占的框**（stage），画布在里面居中。
+     stage 的宽 = 100%（跟着左边那一列走），高 = --wall-max-h（页面给的高度上限）。
+
+     画布要同时被两个方向限制住：既不能宽过 stage，也不能高过 stage ——
+     所以画布的尺寸用 min() 从两个方向一起算（见下面 .wall-stage canvas）。
+     stage 本身用 flex 居中，画布比 stage 小的时候就在中间待着。 */
   width: 100%;
   /* 这一行的高度就是画布能占的高度上限。 */
   height: var(--wall-max-h, none);
   display: flex;
   align-items: center;
   justify-content: center;
+  /* stage 的内容不能被画布撑大 —— 画布宽过 stage 的时候要能滚出去看。 */
+  min-width: 0;
+  /* 画布用 cqw / cqh 量 stage 的宽高（container query 单位）——
+     有了这一行，cqw = stage 的宽，cqh = stage 的高。 */
+  container-type: size;
 }
 .wall-stage canvas {
   display: block;
   cursor: pointer;
-  /* 高度按画幅算（--wall-ratio 是画布的长宽比），宽度跟着高度走 ——
-     这样高度被压住的时候，宽度会按比例一起缩，画幅不会走形。 */
-  height: 100%;
-  width: auto;
-  max-width: 100%;
-  aspect-ratio: var(--wall-ratio, 1 / 1);
+  /* 画布的**长宽比**必须真的是 --wall-ratio —— 墙的几何是按画布的宽高
+     算出来的（见 photo_wall_layout.js 的 wallGeometry），画布变形了，
+     照片和形状就会错位、还会被切掉。
+
+     所以宽和高**成对**地算：一个按 stage 的宽算，一个按 stage 的高算，
+     取小的那个 —— 画布就既装得下、又一点不变形。
+
+     宽 = min(stage 宽, stage 高 × 画幅)
+     高 = min(stage 高, stage 宽 ÷ 画幅)
+
+     这两个数是同一个尺寸的两种写法（宽高比都是画幅），所以取小的那个之后
+     宽高仍然成比例。
+
+     为什么不能只靠 aspect-ratio + max-width/max-height：
+     宽度一旦写死（width:100%），aspect-ratio 算出来的高度被 max-height 夹住
+     时，宽度**不会**跟着缩 —— 画布就变形了（16:9 的墙会变成方的）。
+     两个方向都得由 calc 一起算出来，才不会出现这种情况。 */
+  --wall-ar: var(--wall-ratio, 1);
+  width: min(100%, calc(100cqh * var(--wall-ar)));
+  height: min(100%, calc(100cqw / var(--wall-ar)));
 }
 /* 指针在形状里面 —— 可以拖着挪形状。 */
 .wall-stage canvas.wall-shape-hover { cursor: move; }

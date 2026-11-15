@@ -1040,6 +1040,22 @@ function syncTemplateNote() {
   if (el) el.textContent = templateNote();
 }
 
+// 把画幅写进 CSS 的自定义属性 —— 画布的**长宽比**由它决定。
+//
+// 画布的 CSS 盒子必须真的是这个长宽比：墙的几何是按画布的宽高算出来的
+// （photo_wall_layout.js 的 wallGeometry），盒子一变形，照片和形状就错位、
+// 还会被切掉。
+//
+// 这个属性平时是 render() 写在 stage 的 style 上的，但换画幅**不重画整页**
+// （只重画画布）—— 所以每次模板变了都要在这里补一次，否则 CSS 里的画幅
+// 还是旧的，画布就会按旧的比例排。
+function syncStageRatio() {
+  const stage = document.getElementById('wall-stage');
+  const t = state.template;
+  if (!stage) return;
+  stage.style.setProperty('--wall-ratio', String(t ? t.ratio : 1));
+}
+
 // 设置面板里的下拉框 —— 让它们跟上当前的模板。
 //
 // 「重新自动匹配」会自己挑一档网格，用户没选过 —— 面板里的「网格」下拉框
@@ -1142,15 +1158,37 @@ function drawWall() {
   // 遮罩那一层跟底下的画布一样大 —— 它就盖在它上面。
   overlay.style.width = cssW + 'px';
   overlay.style.height = cssH + 'px';
+  // **位置**也要一样。
+  //
+  // 遮罩是 absolute（钉在 .wall-stage 的左上角），而底下的画布是 flex 居中
+  // 的 —— 只改宽高的话，遮罩会画在墙的左边：选中框、悬停框、四个缩放手柄
+  // 全都落在错的地方，看着像没反应。
+  //
+  // 所以这里把底图画布相对 stage 的偏移写进遮罩 —— 遮罩就精确盖在墙上。
+  positionOverlay(overlay, canvas);
 
   paintBase(canvas.getContext('2d'), W, H);
   paintOverlay();
 }
 
+// 把遮罩挪到和底下的画布重合。
+//
+// 遮罩钉在 .wall-stage 上（absolute），画布在 stage 里是居中的（flex）——
+// 两者的位置不一样，所以要按画布相对 stage 的偏移把遮罩挪过去。
+function positionOverlay(overlay, canvas) {
+  const stage = document.getElementById('wall-stage');
+  if (!stage || !canvas) return;
+  const sr = stage.getBoundingClientRect();
+  const cr = canvas.getBoundingClientRect();
+  if (!sr.width || !cr.width) return;
+  overlay.style.left = (cr.left - sr.left) + 'px';
+  overlay.style.top = (cr.top - sr.top) + 'px';
+}
+
 // 一个画布像素等于几个屏幕像素 —— 拖形状的手柄靠它跟手。
 //
-// 画布的 CSS 宽高是 CSS 算出来的（width:100% + aspect-ratio），这里量的是
-// 排完版之后的实际值。
+// 画布的 CSS 宽高是 CSS 算出来的（见 styles.css 的 .wall-stage canvas ——
+// 宽高成对地算出来，长宽比就是画幅），这里量的是排完版之后的实际值。
 function canvasScale() {
   const canvas = document.getElementById('wall-canvas');
   if (!canvas || !canvas.width) return 1;
@@ -1188,7 +1226,7 @@ function paintBase(ctx, W, H) {
   // 背景铺在最底下（铺满整个画布）。形状和照片随后整个盖在它上面。
   paintBackground(ctx, W, H);
   if (!t) return;
-  const geo = wallGeometry(t, H);
+  const geo = wallGeometry(t, W, H);
   const path = shapePath(geo.shape);
 
   // 形状的底：一层淡色，让人看得见形状（空着的格子就是它）。
@@ -1241,7 +1279,7 @@ function paintOverlay() {
   ctx.clearRect(0, 0, overlay.width, overlay.height);
   const t = state.template;
   if (!t) return;
-  const geo = wallGeometry(t, overlay.height);
+  const geo = wallGeometry(t, overlay.width, overlay.height);
   const width = Math.max(2, overlay.height / 260);
   const mark = (index, color) => {
     const cell = state.cells[index];
@@ -1379,7 +1417,7 @@ function handleAt(clientX, clientY) {
   if (!canvas || !t) return null;
   const rect = canvas.getBoundingClientRect();
   if (!rect.height) return null;
-  const geo = wallGeometry(t, canvas.height);
+  const geo = wallGeometry(t, canvas.width, canvas.height);
   const scale = canvasScale();
   const px = clientX - rect.left;
   const py = clientY - rect.top;
@@ -1542,7 +1580,7 @@ function beginDrag(e, kind, extra) {
   const rect = canvas.getBoundingClientRect();
   // 几何按画布的**实际像素**算（不是 CSS 尺寸乘 dpr —— 那两个数对不上，
   // 差一个取整，手柄就会跟手差一点点）。
-  const geo = wallGeometry(t, canvas.height);
+  const geo = wallGeometry(t, canvas.width, canvas.height);
   // 画布像素 → 屏幕像素的比例。
   const scale = canvasScale();
   // 形状中心在屏幕上的位置（CSS 像素）—— 缩放的尺子。
@@ -1652,6 +1690,9 @@ function wire() {
   // 这些都在**设置面板外面**，所以改了以后不必重开面板 —— 面板里用户刚
   // 选的那个下拉框已经是对的值了，重画整页反而会把正在拖的滑块弄断。
   const afterTemplateChange = () => {
+    // 画幅变了的话，CSS 里的 --wall-ratio 要跟着变 —— 画布的盒子得按新画幅
+    // 排，不然墙还是按旧的比例画（形状会被拉扁、照片会错位）。
+    syncStageRatio();
     drawWall();
     syncTemplateNote();
     refreshSheetHints();
@@ -2222,7 +2263,7 @@ async function doExport() {
   // 背景铺在最底下 —— 和编辑器里看到的是同一张图（只是分辨率不同）。
   paintBackground(ctx, W, H);
 
-  const geo = wallGeometry(t, H);
+  const geo = wallGeometry(t, W, H);
   const path = shapePath(geo.shape);
   // 形状的底 —— 空着的格子是它，墙的轮廓因此看得见。
   // 不透明：墙整个盖在背景上。

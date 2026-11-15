@@ -587,6 +587,62 @@ module.exports = (async () => {
       };
     })()`);
 
+    // The canvas' box must really be the ratio the wall asks for — at EVERY
+    // ratio. The wall's geometry is computed from the canvas' width and
+    // height (photo_wall_layout.js's wallGeometry), so a canvas whose box
+    // is not the ratio gets the photos and the shape out of place, and the
+    // part that does not fit is cut off.
+    //
+    // And the overlay (the selection box and the shape's handles) must sit
+    // exactly on top of the wall — it is absolutely positioned inside the
+    // stage, while the wall itself is centred in it.
+    report.aspectByRatio = [];
+    for (const ratio of ['1:1', '4:3', '3:4', '16:9', '9:16']) {
+      await win.webContents.executeJavaScript(`(() => {
+        const b = document.querySelector('[data-sheet-open="template"]');
+        if (b && !document.querySelector('.wall-sheet[data-sheet="template"]')) b.click();
+        const sel = document.getElementById('wall-ratio');
+        if (sel) { sel.value = ${JSON.stringify(ratio)}; sel.dispatchEvent(new Event('change')); }
+        return true;
+      })()`);
+      await waitFor(async () => {
+        const v = await win.webContents.executeJavaScript(
+          `(document.getElementById('wall-ratio') || {}).value || ''`);
+        return v === ratio ? ratio : null;
+      }, 5000);
+      await new Promise((r) => setTimeout(r, 400));
+      report.aspectByRatio.push(await win.webContents.executeJavaScript(`(() => {
+        const cv = document.getElementById('wall-canvas');
+        const ov = document.getElementById('wall-overlay');
+        const cr = cv.getBoundingClientRect();
+        const or_ = ov.getBoundingClientRect();
+        const want = ${JSON.stringify(ratio)};
+        const [rw, rh] = want.split(':').map(Number);
+        return {
+          ratio: want,
+          // The wanted aspect and the one the canvas actually has.
+          wantAspect: rw / rh,
+          gotAspect: cr.height ? cr.width / cr.height : 0,
+          // The overlay must be exactly on the wall.
+          overlayDx: or_.left - cr.left,
+          overlayDy: or_.top - cr.top,
+          // The wall must fit inside its canvas — nothing cut off.
+          fits: cr.width <= cr.height * 10 && cr.height <= cr.height * 10,
+          cssW: +cr.width.toFixed(1),
+          cssH: +cr.height.toFixed(1),
+        };
+      })()`));
+    }
+    // Back to the ratio the rest of the test works with.
+    await win.webContents.executeJavaScript(`(() => {
+      const b = document.querySelector('[data-sheet-open="template"]');
+      if (b && !document.querySelector('.wall-sheet[data-sheet="template"]')) b.click();
+      const sel = document.getElementById('wall-ratio');
+      if (sel) { sel.value = '4:3'; sel.dispatchEvent(new Event('change')); }
+      return true;
+    })()`);
+    await new Promise((r) => setTimeout(r, 500));
+
     // Clicking a cell picks it — the side panel then offers that cell's
     // photo (the top-left cell always carries the first picture).
     await win.webContents.executeJavaScript(`(() => {
@@ -1737,6 +1793,13 @@ module.exports = (async () => {
       && report.png.width > 200 && report.png.height > 200
       && margin.left > 0.03 && margin.right > 0.03
       && margin.top > 0.03 && margin.bottom > 0.03
+      // The canvas' box is the ratio the wall asks for — at every ratio.
+      // Otherwise the photos and the shape are out of place and the part
+      // that does not fit is cut off.
+      && report.aspectByRatio && report.aspectByRatio.length === 5
+      && report.aspectByRatio.every((r) => Math.abs(r.gotAspect - r.wantAspect) < 0.01)
+      // The overlay (selection box, shape handles) sits exactly on the wall.
+      && report.aspectByRatio.every((r) => Math.abs(r.overlayDx) < 1 && Math.abs(r.overlayDy) < 1)
       // The shape can be adjusted: dragged (it moves), scaled by its
       // corner handle (it grows, and it grows PROPORTIONALLY — the width
       // and the height grow by the same factor), and put back with the
