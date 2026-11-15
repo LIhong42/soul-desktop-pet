@@ -3926,9 +3926,23 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 
    A second, transparent canvas lies on top of the first one. It only ever
    carries the selected cell's frame, so picking a cell does not mean
-   repainting the whole wall. */
+   repainting the whole wall.
 
-.wall-head { margin-bottom: 4px; }
+   整页是一块工作台：左边是画布，右边是一栏。
+   右栏里常驻的只有「选中的格子」和「还没上墙的照片」—— 搬照片、改封面
+   的时候要一直看着它们。其余的参数（形状、网格、画幅、背景、历史）都是
+   **按钮**：点一下弹出一块设置面板，设完关掉。 */
+
+/* 照片墙这一页 —— 整页撑满可滚动区域的高度，页头固定，下面那两块各占
+   自己该占的。这样整页正好一屏：画布和右边的参数栏都看得见。 */
+.wall-page {
+  max-width: 1400px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.wall-head { margin-bottom: 10px; flex: 0 0 auto; }
 .wall-back {
   display: inline-block;
   color: var(--muted);
@@ -3937,18 +3951,38 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   margin-bottom: 6px;
 }
 .wall-back:hover { color: var(--accent); }
+/* 说明那一段太长 —— 收进「怎么用」卡片里，页头只留一句话。 */
+.wall-head .meta { max-width: 980px; }
 
 .wall-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 10px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 12px;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
-@media (max-width: 900px) {
-  .wall-layout { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1080px) {
+  /* 窄窗口：改成单列，一栏一栏往下排 —— 这时候页面自然地滚，
+     画布按宽度铺满。 */
+  .wall-layout { grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .wall-page { height: auto; display: block; }
+  .wall-stage-wrap { display: block; }
+  .wall-panel { margin-top: 10px; }
 }
 
-.wall-stage-card { overflow: hidden; }
+/* 左边这一列 —— 画布。
+   整列的高度就是页面剩下的高度，画布按这个高度铺 —— 整页正好一屏。 */
+.wall-stage-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 画布那一块 —— 高度跟左边这一列一样（画布按这个高度铺）。 */
+.wall-stage-card { overflow: hidden; flex: 0 0 auto; }
 .wall-scroll {
   overflow: auto;
   padding: 10px;
@@ -3958,12 +3992,28 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 }
 .wall-stage {
   position: relative;
-  margin: 0 auto;
   line-height: 0;
+  /* 画布的尺寸由 CSS 定。
+
+     宽度必须写死 100%：不写的话这一行的宽度是由画布决定的（画布的固有
+     宽度是 300px），于是「宽度铺满」变成「宽度等于 300px」—— 画布永远是
+     那么小一块。 */
+  width: 100%;
+  /* 这一行的高度就是画布能占的高度上限。 */
+  height: var(--wall-max-h, none);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .wall-stage canvas {
   display: block;
   cursor: pointer;
+  /* 高度按画幅算（--wall-ratio 是画布的长宽比），宽度跟着高度走 ——
+     这样高度被压住的时候，宽度会按比例一起缩，画幅不会走形。 */
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: var(--wall-ratio, 1 / 1);
 }
 /* 指针在形状里面 —— 可以拖着挪形状。 */
 .wall-stage canvas.wall-shape-hover { cursor: move; }
@@ -3976,7 +4026,148 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   left: 0;
   top: 0;
   pointer-events: none;
+  /* 尺寸跟底下的画布一样（画好了由脚本写成一样的数）。 */
 }
+
+/* 状态行（导出进度）—— 空的时候不留位置。 */
+.wall-status:empty { display: none; }
+.wall-status { margin-top: 8px; }
+
+/* ---- 右边的控制面板 ------------------------------------------------------ */
+
+/* 右边的控制面板 —— 跟左边那一列一样高。
+   常驻的只有「选中的格子」和「还没上墙的照片」；其余参数是上面的按钮，
+   点一下弹出一块设置面板。 */
+.wall-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+/* 那排「打开设置面板」的按钮。
+   每个按钮两行：上面是名字，下面是当前的样子（一句小字）。 */
+.wall-btn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.wall-btn-grid .btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 10px;
+  text-align: left;
+  line-height: 1.3;
+}
+/* 按钮上的小字 —— 「现在的样子」。 */
+.wall-btn-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 「形状模板」那一格占满整行 —— 它的信息最多。 */
+.wall-btn-grid .btn:first-child { grid-column: 1 / -1; }
+
+/* 常驻的一块（选中的格子 / 还没上墙的照片）。 */
+.wall-block {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.wall-block h2 {
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+/* 钉在底下的一栏 —— 导出按钮一直看得见。 */
+.wall-export-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.wall-export-bar .btn { flex: 0 0 auto; }
+
+/* ---- 设置面板（点按钮弹出来的那一块）------------------------------------- */
+
+/* 遮罩 —— 盖住页面，点它就关掉面板。 */
+.wall-sheet-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(30, 25, 20, 0.35);
+  z-index: 55;
+}
+/* 面板本体 —— 浮在页面靠右的地方（它在右栏那一侧，点按钮的地方附近）。 */
+.wall-sheet {
+  position: fixed;
+  top: 50%;
+  right: 32px;
+  transform: translateY(-50%);
+  width: min(380px, 92vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 12px 14px;
+  z-index: 56;
+}
+.wall-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.wall-sheet-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+/* 关掉面板的那个 ✕。 */
+.wall-sheet-x {
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0 2px;
+}
+.wall-sheet-x:hover { color: var(--accent); }
+/* 面板里的两列（形状 / 画幅 并排）。 */
+.wall-grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 8px;
+}
+/* 面板里的字段间距比整页的紧一点。 */
+.wall-sheet .field { margin-bottom: 8px; }
+.wall-sheet .field label { font-size: 12px; }
+/* 按钮行 —— 按钮挨着放，宽度自己撑开。 */
+.wall-btn-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.wall-btn-row .btn { flex: 0 0 auto; }
 
 /* 形状大小的滑块 —— 和它旁边的百分比。 */
 .wall-scale-row {
@@ -3987,7 +4178,7 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 /* 只有滑块自己撑开 —— 数字框要保持窄。 */
 .wall-scale-row > input[type="range"] {
   flex: 1 1 auto;
-  min-width: 120px;
+  min-width: 100px;
 }
 .wall-scale-value {
   font-size: 13px;
@@ -3999,10 +4190,10 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 /* 形状中心位置的两个数字框 —— 横向 / 纵向各一个。
    全局的 input 规则是 width:100%，这里要把它压回去（数字框就该那么窄）。 */
 .wall-pos-input {
-  width: 68px;
-  min-width: 68px;
-  max-width: 68px;
-  flex: 0 0 68px;
+  width: 62px;
+  min-width: 62px;
+  max-width: 62px;
+  flex: 0 0 62px;
   text-align: right;
   padding: 8px 6px;
 }
@@ -4011,12 +4202,6 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   white-space: nowrap;
 }
 
-.wall-side h3 {
-  font-size: 13px;
-  margin: 14px 0 6px;
-  color: var(--muted);
-  font-weight: 600;
-}
 .wall-side-photo {
   display: flex;
   gap: 8px;
@@ -4040,8 +4225,9 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  max-height: 320px;
+  max-height: 220px;
   overflow: auto;
+  margin-bottom: 8px;
 }
 .wall-tray.drop-target {
   outline: 2px dashed var(--accent);
@@ -4049,13 +4235,13 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   border-radius: 6px;
 }
 .wall-tray-item {
-  width: 72px;
+  width: 64px;
   cursor: grab;
   user-select: none;
 }
 .wall-tray-item img {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   object-fit: cover;
   border-radius: 6px;
   background: var(--bg);
@@ -4076,6 +4262,7 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+  margin-bottom: 8px;
 }
 
 /* The photo picker — "换一张照片". A sheet over the page with every photo

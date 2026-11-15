@@ -83,6 +83,10 @@ let resizeHandler = null;
 // 离开这一页的监听器 —— 只留一个（换页时换掉）。
 let leaveHandler = null;
 
+// 盯着画布尺寸的那个观察者 —— 画布的尺寸变了就重画。
+// 换页的时候摘掉（它盯着的是已经换掉的元素）。
+let stageObserver = null;
+
 // 刚刚拖过形状 —— 拖完的那一次点击不算「选格子」（手一松就点，容易误点）。
 let justDragged = false;
 
@@ -106,6 +110,8 @@ async function mount(_args, params) {
   state.dragging = null;
   state.bgId = '';
   state.restored = false;
+  // 上一轮开着的那块设置面板 —— 关掉，新的一轮从头开始。
+  openSheet = '';
   // 上一轮攒着的存档 —— 换了一组回忆，它属于上一轮，不该带过来。
   state.pending = null;
   state.written = null;
@@ -143,6 +149,9 @@ async function mount(_args, params) {
   if (resizeHandler) window.removeEventListener('resize', resizeHandler);
   resizeHandler = () => {
     if (!document.getElementById('wall-canvas')) return;
+    // 窗口改了大小 —— 画布能占的高度上限也变了。
+    const stage = document.getElementById('wall-stage');
+    if (stage) stage.style.setProperty('--wall-max-h', stageMaxHeight() + 'px');
     drawWall();
   };
   window.addEventListener('resize', resizeHandler);
@@ -163,6 +172,12 @@ async function mount(_args, params) {
     // 背景的 bitmap 占着显存 —— 离开这一页就放掉（正在读的那次也作废）。
     state.bgToken = (state.bgToken + 1);
     releaseBackground();
+    // 看着画布的那个观察者 —— 离开这一页就摘掉（它盯着的是已经换掉的
+    // 那个元素，留着只会白跑）。
+    if (stageObserver) {
+      stageObserver.disconnect();
+      stageObserver = null;
+    }
   };
   window.addEventListener('hashchange', leaveHandler);
 }
@@ -297,7 +312,10 @@ async function selectBackground(bgId) {
   const hit = opts.find((o) => o.id === bgId) || null;
   state.bgId = hit ? hit.id : '';
   await reloadBackground();
-  render();
+  // 换背景要重画画布（背景铺在最底下），但不用重画整页 —— 「背景」那块
+  // 面板里的下拉框已经是对的值了。
+  drawWall();
+  refreshSheetHints();
   scheduleSave();
 }
 
@@ -660,142 +678,340 @@ function cellCover(cell) {
 }
 
 // ---- 渲染 ------------------------------------------------------------------
+//
+// 整页就是一块工作台：左边是画布（看得见的那面墙），右边是一栏。
+//
+// 右栏里**常驻**的只有两块 —— 「选中的格子」和「还没上墙的照片」：搬照片、
+// 改封面的时候要一直看着它们。
+//
+// 其余的参数（形状模板、形状的位置和大小、背景、导出历史、怎么用）都做成
+// **按钮**：点一下弹出一块设置面板，设完点「完成」关掉。理由是那些参数
+// 一般只设一次，搬照片的时候不需要它们一直占着地方，也不需要实时刷新。
+
+// 现在开着哪一块设置面板（空串 = 都关着）。
+let openSheet = '';
+
+// 一块设置面板：遮罩 + 面板本体（标题 + 内容）。
+//
+// 面板是浮在页面上的（不是页面的内容）—— 所以它自己的内容可以随时重建，
+// 不用管它跟页面那一堆 DOM 的关系。
+function sheet(key, title, body) {
+  return `
+    <div class="wall-sheet-mask"></div>
+    <div class="wall-sheet" data-sheet="${escapeHtml(key)}">
+      <div class="wall-sheet-head">
+        <span class="wall-sheet-title">${escapeHtml(title)}</span>
+        <button type="button" class="wall-sheet-x" data-sheet-close="${escapeHtml(key)}" title="关闭">✕</button>
+      </div>
+      <div class="wall-sheet-body">${body}</div>
+    </div>
+  `;
+}
+
+// 一块设置面板的内容（打开的时候才拼出来 —— 关着的时候页面上根本没有
+// 这些控件，省得它们跟着 render() 一起被换掉）。
+function sheetBody(key) {
+  const t = state.template;
+  if (key === 'template') {
+    return `
+      <div class="wall-grid2">
+        <div class="field">
+          <label>形状</label>
+          <select id="wall-shape">
+            ${SHAPES.map((s) => `<option value="${escapeHtml(s.id)}"${t && t.shapeId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>格子画幅</label>
+          <select id="wall-ratio">
+            ${WALL_RATIOS.map((r) => `<option value="${escapeHtml(r.id)}"${t && t.ratioId === r.id ? ' selected' : ''}>${escapeHtml(r.id)} ${escapeHtml(r.name)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>网格</label>
+        <select id="wall-size">${sizeOptions()}</select>
+      </div>
+      <div class="wall-btn-row">
+        <button type="button" class="btn" id="wall-auto-btn">重新自动匹配</button>
+        <button type="button" class="btn secondary" id="wall-reset-btn">恢复默认摆法</button>
+      </div>
+    `;
+  }
+  if (key === 'shape') {
+    return `
+      <div class="field">
+        <label>形状大小</label>
+        <div class="wall-scale-row">
+          <input type="range" id="wall-scale" min="${Math.round(SHAPE_SCALE_MIN * 100)}" max="${Math.round(SHAPE_SCALE_MAX * 100)}" step="1" value="${Math.round(state.transform.scale * 100)}"/>
+          <span class="wall-scale-value" id="wall-scale-value">${Math.round(state.transform.scale * 100)}%</span>
+        </div>
+      </div>
+      <div class="field">
+        <label>形状中心位置</label>
+        <div class="wall-scale-row">
+          <span class="meta wall-pos-label">横向</span>
+          <input type="number" id="wall-shape-cx" class="wall-pos-input" min="0" max="100" step="1" value="${Math.round(shapeCenter().x)}" title="形状中心离画布左边的百分比"/>
+          <span class="meta">%</span>
+          <span class="meta wall-pos-label">纵向</span>
+          <input type="number" id="wall-shape-cy" class="wall-pos-input" min="0" max="100" step="1" value="${Math.round(shapeCenter().y)}" title="形状中心离画布上边的百分比"/>
+          <span class="meta">%</span>
+        </div>
+        <p class="meta">50% / 50% 就是画布正中。也可以直接在画布上拖动形状来挪位置。</p>
+      </div>
+      <div class="wall-btn-row">
+        <button type="button" class="btn secondary" id="wall-shape-reset-btn">重置形状位置和大小</button>
+      </div>
+    `;
+  }
+  if (key === 'bg') {
+    return `
+      <div class="field">
+        <label>背景</label>
+        <select id="wall-bg">${bgOptionsHtml()}</select>
+      </div>
+      <p class="meta" id="wall-bg-note">${bgNote()}</p>
+    `;
+  }
+  if (key === 'history') {
+    return `
+      <div id="wall-history">${historyHtml()}</div>
+      <p class="meta">点「<b>载入编辑</b>」把那一版的摆法摆回墙上，接着改（挪照片、改封面、调形状都行），改完再导出。载入<b>不会</b>覆盖你现在这一版 —— 载入前摆的那一版还在存档里，随时可以「撤销载入」回去。</p>
+    `;
+  }
+  if (key === 'help') {
+    return `
+      <p class="meta">画布的长宽比跟照片一样，照片摆进格子不用裁；形状画在画布正中、四周留一圈白边，只有落进形状里的格子才摆照片，照片再被形状裁一刀 —— 整面墙的轮廓就是形状。画布底下还能铺一张背景图，照片墙整个盖在上面。</p>
+      <p class="meta">点墙上的一个格子 → 右栏里换照片、删照片、改封面；把右栏的照片拖到墙上可以换位置。</p>
+      <p class="meta">调整形状：按住形状里<b>空着的格子</b>拖动可以挪位置，拖<b>四个角上的手柄</b>可以等比缩放；位置也可以在「形状的位置和大小」里<b>直接填数字</b>（50% 就是正中）。</p>
+      <p class="meta">改过的摆法（照片顺序、封面、形状位置和大小、背景）会<b>自动存下来</b> —— 离开这一页再回来，墙上还是你摆好的样子。</p>
+    `;
+  }
+  return '';
+}
+
+// 右栏上那排按钮 —— 每个按钮弹一块设置面板。
+//
+// 按钮上带一个小标记，标出「现在的样子」（比如形状是什么、画幅多少），
+// 免得每次都要打开面板才知道当前是什么。
+function sheetButtons() {
+  const t = state.template;
+  const shape = t ? SHAPES.find((s) => s.id === t.shapeId) : null;
+  const ratio = t ? WALL_RATIOS.find((r) => r.id === t.ratioId) : null;
+  return `
+    <div class="wall-btn-grid">
+      <button type="button" class="btn secondary" data-sheet-open="template">
+        形状模板<span class="wall-btn-hint">${escapeHtml(shape ? shape.name : '—')} · ${escapeHtml(t ? t.sizeName : '—')} · ${escapeHtml(ratio ? ratio.id : '—')}</span>
+      </button>
+      <button type="button" class="btn secondary" data-sheet-open="shape">
+        形状的位置和大小<span class="wall-btn-hint">${Math.round(state.transform.scale * 100)}%</span>
+      </button>
+      <button type="button" class="btn secondary" data-sheet-open="bg">
+        背景<span class="wall-btn-hint">${escapeHtml(bgLabel())}</span>
+      </button>
+      <button type="button" class="btn secondary" data-sheet-open="history">
+        导出历史<span class="wall-btn-hint">${state.history.length} 条</span>
+      </button>
+      <button type="button" class="btn secondary" data-sheet-open="help">
+        怎么用
+      </button>
+    </div>
+  `;
+}
+
+// 当前背景的名字（按钮上的那个小标记）。
+function bgLabel() {
+  if (!state.bgId) return '无背景';
+  const hit = bgOptions().find((o) => o.id === state.bgId);
+  return hit ? (hit.label || hit.id) : '无背景';
+}
 
 function render() {
   const app = document.getElementById('app');
   const t = state.template;
   const used = state.cells.filter((c) => c.photoId).length;
 
+  // 画布**留着不换** —— 把它从旧的那块 DOM 里摘出来，搬到新的这一块里。
+  //
+  // 不留的话，每 render() 一次（开一次面板、改一个参数）画布就换成一个空
+  // 的 —— 白闪一下，等下一帧画好了才有内容。留着就没这个问题：画布一直
+  // 在，尺寸变了才重画。
+  const canvas = document.getElementById('wall-canvas');
+  const overlay = document.getElementById('wall-overlay');
+
   app.innerHTML = `
-    <div class="page-column">
+    <div class="page-column wall-page">
       <div class="wall-head">
         <a class="wall-back" href="#/export">← 返回导出页</a>
         <h1>照片墙</h1>
-        <p class="meta">把回忆里的照片拼成一块形状。画布的长宽比跟照片一样，照片摆进格子不用裁；形状画在画布正中、四周留一圈白边，只有落进形状里的格子才摆照片，照片再被形状裁一刀 —— 整面墙的轮廓就是形状。画布底下还能铺一张背景图，照片墙整个盖在上面。</p>
-      </div>
-
-      <div class="card">
-        <h2>形状模板</h2>
-        <div class="form-row">
-          <div class="field">
-            <label>形状</label>
-            <select id="wall-shape">
-              ${SHAPES.map((s) => `<option value="${escapeHtml(s.id)}"${t && t.shapeId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field">
-            <label>网格</label>
-            <select id="wall-size">${sizeOptions()}</select>
-          </div>
-          <div class="field">
-            <label>格子画幅</label>
-            <select id="wall-ratio">
-              ${WALL_RATIOS.map((r) => `<option value="${escapeHtml(r.id)}"${t && t.ratioId === r.id ? ' selected' : ''}>${escapeHtml(r.id)} ${escapeHtml(r.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button type="button" class="btn" id="wall-auto-btn">重新自动匹配</button>
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button type="button" class="btn" id="wall-reset-btn">恢复默认摆法</button>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="field">
-            <label>背景</label>
-            <select id="wall-bg">${bgOptionsHtml()}</select>
-          </div>
-          <div class="field" style="flex:1; min-width:240px;">
-            <label>&nbsp;</label>
-            <p class="meta" id="wall-bg-note">${bgNote()}</p>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="field">
-            <label>形状大小</label>
-            <div class="wall-scale-row">
-              <input type="range" id="wall-scale" min="${Math.round(SHAPE_SCALE_MIN * 100)}" max="${Math.round(SHAPE_SCALE_MAX * 100)}" step="1" value="${Math.round(state.transform.scale * 100)}"/>
-              <span class="wall-scale-value" id="wall-scale-value">${Math.round(state.transform.scale * 100)}%</span>
-            </div>
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button type="button" class="btn" id="wall-shape-reset-btn">重置形状位置和大小</button>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="field">
-            <label>形状中心位置</label>
-            <div class="wall-scale-row">
-              <span class="meta wall-pos-label">横向</span>
-              <input type="number" id="wall-shape-cx" class="wall-pos-input" min="0" max="100" step="1" value="${Math.round(shapeCenter().x)}" title="形状中心离画布左边的百分比"/>
-              <span class="meta">%</span>
-              <span class="meta wall-pos-label">纵向</span>
-              <input type="number" id="wall-shape-cy" class="wall-pos-input" min="0" max="100" step="1" value="${Math.round(shapeCenter().y)}" title="形状中心离画布上边的百分比"/>
-              <span class="meta">%</span>
-            </div>
-          </div>
-          <div class="field" style="flex:1; min-width:240px;">
-            <label>&nbsp;</label>
-            <p class="meta">50% / 50% 就是画布正中。也可以直接在画布上拖动形状来挪位置。</p>
-          </div>
-        </div>
-        <p class="meta" id="wall-template-note">${templateNote()}</p>
-        <p class="meta" id="wall-restored-note">${restoredNote()}</p>
+        <p class="meta">把回忆里的照片拼成一块形状 —— 整面墙的轮廓就是形状。画布在左边，右边是常驻的照片栏；形状、网格、背景这些参数点按钮调。</p>
       </div>
 
       <div class="wall-layout">
-        <div class="card wall-stage-card">
-          <div class="wall-scroll">
-            <div class="wall-stage" id="wall-stage">
-              <canvas id="wall-canvas" draggable="true"></canvas>
-              <canvas id="wall-overlay"></canvas>
+        <div class="wall-stage-wrap">
+          <div class="card wall-stage-card">
+            <div class="wall-scroll">
+              <div class="wall-stage" id="wall-stage" style="--wall-ratio:${t ? t.ratio : 1};--wall-max-h:${stageMaxHeight()}px">
+                <canvas id="wall-canvas" draggable="true"></canvas>
+                <canvas id="wall-overlay"></canvas>
+              </div>
             </div>
+            <p class="meta wall-status" id="wall-status">${escapeHtml(state.status)}</p>
+            <p class="meta" id="wall-template-note">${templateNote()}</p>
+            <p class="meta" id="wall-restored-note">${restoredNote()}</p>
           </div>
-          <p class="meta" id="wall-status">${escapeHtml(state.status)}</p>
-          <p class="meta">点一个格子就能换照片、删照片、改封面；把照片从侧栏拖到墙上可以换位置。</p>
-          <p class="meta">也可以直接调整形状：按住形状里<b>空着的格子</b>拖动可以挪位置，拖<b>四个角上的手柄</b>可以等比缩放；位置也可以<b>直接填数字</b>（上面的「形状中心位置」，50% 就是正中）。</p>
         </div>
 
-        <div class="card wall-side">
-          <h2>选中的格子</h2>
-          <div id="wall-selected"></div>
-          <h3>还没上墙的照片</h3>
-          <div class="wall-tray" id="wall-tray"></div>
-          <h3>临时导入</h3>
-          <div class="wall-import">
-            <button type="button" class="btn" id="wall-import-btn"${state.importing ? ' disabled' : ''}>${state.importing ? '导入中…' : '导入照片'}</button>
-            <input type="file" id="wall-import-input" accept="image/*" multiple hidden/>
+        <div class="wall-panel">
+          ${sheetButtons()}
+
+          <div class="wall-block">
+            <h2>选中的格子</h2>
+            <div id="wall-selected"></div>
           </div>
-          <p class="meta">回忆里的照片不够摆满这面墙时，可以从系统里再导入几张。导入的照片<b>不属于任何一篇回忆</b>，只存在临时目录里 —— 导出完成后自动删除。</p>
+
+          <div class="wall-block">
+            <h2>还没上墙的照片</h2>
+            <div class="wall-tray" id="wall-tray"></div>
+            <div class="wall-import">
+              <button type="button" class="btn secondary" id="wall-import-btn"${state.importing ? ' disabled' : ''}>${state.importing ? '导入中…' : '导入照片'}</button>
+              <input type="file" id="wall-import-input" accept="image/*" multiple hidden/>
+            </div>
+            <p class="meta">回忆里的照片不够摆满这面墙时，可以从系统里再导入几张。导入的照片<b>不属于任何一篇回忆</b>，只存在临时目录里 —— 导出完成后自动删除。</p>
+          </div>
+
+          <div class="wall-export-bar">
+            <button type="button" class="btn primary" id="wall-export-btn"${state.exporting || !t || used === 0 ? ' disabled' : ''}>导出照片墙 (PNG)</button>
+            <span class="meta">${used} 张已上墙 · 共 ${state.photos.length} 张</span>
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <div class="row" style="gap:8px; flex-wrap:wrap; align-items:center;">
-          <button type="button" class="btn primary" id="wall-export-btn"${state.exporting || !t || used === 0 ? ' disabled' : ''}>导出照片墙 (PNG)</button>
-          <span class="meta">${used} 张已上墙 · 共 ${state.photos.length} 张</span>
-        </div>
-        <p class="meta" style="margin-top:8px;">导出的是一块完整的 PNG：照片按原始分辨率裁切，照片墙整个盖在背景上（不透明），形状之外露出来的是背景（没选背景时是白底）。</p>
-        <p class="meta" style="margin-top:8px;">改过的摆法（照片顺序、封面、形状位置和大小、背景）会<b>自动存下来</b> —— 离开这一页再回来，墙上还是你摆好的样子。</p>
-      </div>
-
-      <div class="card">
-        <h2>导出历史</h2>
-        <div id="wall-history">${historyHtml()}</div>
-        <p class="meta" style="margin-top:8px;">点「<b>载入编辑</b>」把那一版的摆法摆回墙上，接着改（挪照片、改封面、调形状都行），改完再导出。载入<b>不会</b>覆盖你现在这一版 —— 载入前摆的那一版还在存档里，随时可以「撤销载入」回去。</p>
-      </div>
+      ${openSheet ? sheet(openSheet, sheetTitle(openSheet), sheetBody(openSheet)) : ''}
     </div>
   `;
 
+  // 把刚才摘下来的画布搬进新的一块里 —— 它一直是同一个画布，只是换了个
+  // 位置（换位置不会让它闪一下 —— 换掉才会）。
+  if (canvas) {
+    const fresh = document.getElementById('wall-canvas');
+    if (fresh && fresh !== canvas) fresh.replaceWith(canvas);
+  }
+  if (overlay) {
+    const fresh = document.getElementById('wall-overlay');
+    if (fresh && fresh !== overlay) fresh.replaceWith(overlay);
+  }
+
   wire();
-  drawWall();
+  wireSheets();
   renderSide();
   renderTray();
   wireHistory();
+  // 画布的尺寸由 CSS 定，尺寸变了由 ResizeObserver 通知 —— 这一层只负责
+  // 把像素缓冲区对上 CSS 的尺寸（排完版之后量到的才是真的尺寸）。
+  watchStage();
+  // 马上画一遍（内容要立刻对 —— 刚导入的照片不能等到下一帧才上墙）。
+  drawWall();
+  // 排完版之后再画一遍 —— 那时候量到的尺寸才是真的（布局还没排完时
+  // 量到的宽高是 0，画布用的是上一个尺寸）。
+  scheduleDraw();
 }
+
+// 画布上的那些监听器 —— **只挂一次**。
+//
+// 画布是留着不换的（render() 把它搬来搬去，还是同一个元素），所以监听器
+// 只能挂一次 —— 每 render() 挂一遍的话，同一个手势会被处理好几遍（拖一
+// 下形状，动好几格）。
+function wireCanvasOnce(canvas) {
+  if (!canvas || canvas.dataset.wired) return;
+  canvas.dataset.wired = '1';
+  wireCanvas(canvas);
+}
+
+// 画布最多能有多高 —— 免得它把这一页撑得太长。
+//
+// 这是个**上限**，不是画布自己的高度：CSS 用它给 canvas 加 max-height，
+// 画布按宽度铺满、按画幅算高度，被这个上限压住。
+//
+// 算的是「窗口高度减去页头、画布上下那些字、卡片内边距」。
+function stageMaxHeight() {
+  const win = window.innerHeight || 800;
+  // 窄窗口下整页是单列、页面自然地滚 —— 画布按宽度铺满就行。
+  if (window.innerWidth <= 1080) return Math.floor(win * 0.8);
+  // 页面上的固定高度：页头 + 上下内边距。
+  const head = document.querySelector('.wall-head');
+  let used = 160;
+  if (head) used += head.getBoundingClientRect().height;
+  const app = document.getElementById('app');
+  if (app) {
+    const cs = getComputedStyle(app);
+    used += parseFloat(cs.paddingTop || 0) + parseFloat(cs.paddingBottom || 0);
+  }
+  return Math.max(240, Math.floor(win - used));
+}
+
+// 排完版之后再画一次画布。
+//
+// 同一帧里只排一次 —— render() 有时连着调好几次（换参数时既更新了状态
+// 又重画了整页），每一帧画一次就够。
+let drawFrame = null;
+function scheduleDraw() {
+  if (drawFrame != null) return;
+  drawFrame = requestAnimationFrame(() => {
+    drawFrame = null;
+    drawWall();
+  });
+}
+
+// 设置面板的标题。
+function sheetTitle(key) {
+  switch (key) {
+    case 'template': return '形状模板';
+    case 'shape': return '形状的位置和大小';
+    case 'bg': return '背景';
+    case 'history': return '导出历史';
+    case 'help': return '怎么用';
+    default: return '设置';
+  }
+}
+
+// 设置面板的打开 / 关闭。
+//
+// 打开一块就关掉别的 —— 一次只开一块，页面不会乱。
+function openSheetPanel(key) {
+  openSheet = key;
+  render();
+}
+
+function closeSheetPanel() {
+  if (!openSheet) return;
+  openSheet = '';
+  render();
+}
+
+function wireSheets() {
+  document.querySelectorAll('[data-sheet-open]').forEach((btn) => {
+    btn.onclick = () => openSheetPanel(btn.getAttribute('data-sheet-open'));
+  });
+  document.querySelectorAll('[data-sheet-close]').forEach((btn) => {
+    btn.onclick = closeSheetPanel;
+  });
+  // 点面板外面那一层（遮罩）也关掉。
+  const mask = document.querySelector('.wall-sheet-mask');
+  if (mask) mask.onclick = closeSheetPanel;
+  // Esc 关掉。
+  //
+  // 监听挂在 document 上，但**每次只挂一个**（挂之前先把上一个摘掉）——
+  // 换页以后这个监听器要是还留着，就会拦住别的页面按 Esc。
+  if (sheetKeyHandler) document.removeEventListener('keydown', sheetKeyHandler);
+  sheetKeyHandler = (e) => {
+    if (e.key === 'Escape' && openSheet) closeSheetPanel();
+  };
+  document.addEventListener('keydown', sheetKeyHandler);
+}
+
+// Esc 那个监听器（挂在 document 上的那一个）。
+let sheetKeyHandler = null;
 
 // 网格下拉：每一档都标上它能装多少格 —— 照片数决定选哪一档。
 function sizeOptions() {
@@ -816,6 +1032,27 @@ function templateNote() {
   const ratio = WALL_RATIOS.find((r) => r.id === t.ratioId);
   return `当前：${shape ? shape.name : t.shapeId} · ${t.sizeName} 网格 · ${ratio ? ratio.id : t.ratioId}（${ratio ? ratio.name : ''}） · `
     + `画布 ${t.ratio.toFixed(2)}:1 · 共 ${t.capacity} 个格子，照片 ${state.photos.length} 张。`;
+}
+
+// 「当前：…」那一行 —— 模板变了就地改，不用重画整页。
+function syncTemplateNote() {
+  const el = document.getElementById('wall-template-note');
+  if (el) el.textContent = templateNote();
+}
+
+// 设置面板里的下拉框 —— 让它们跟上当前的模板。
+//
+// 「重新自动匹配」会自己挑一档网格，用户没选过 —— 面板里的「网格」下拉框
+// 得跟着变，不然关掉再打开看到的是旧的一档。
+function syncSheetControls() {
+  const t = state.template;
+  if (!t) return;
+  const sizeSel = document.getElementById('wall-size');
+  if (sizeSel) sizeSel.value = t.sizeId;
+  const shapeSel = document.getElementById('wall-shape');
+  if (shapeSel) shapeSel.value = t.shapeId;
+  const ratioSel = document.getElementById('wall-ratio');
+  if (ratioSel) ratioSel.value = t.ratioId;
 }
 
 // 「上次的摆法还在」那一句提示。
@@ -856,33 +1093,84 @@ const SHAPE_FILL = '#efe9e0';
 //
 // 形状是画布正中最大那一个（整圈轮廓按比例放进去，一点不裁掉）。照片
 // 先铺进格子，再被形状裁一刀 —— 于是墙的轮廓就是形状。
+//
+// 画布的**尺寸是 CSS 定好的**（.wall-stage 里的 canvas 宽度 100%，高度按
+// 画幅算，再被 max-height 压住），这一层只负责把像素缓冲区对上它的 CSS
+// 尺寸。
+//
+// 尺寸交给 CSS（而不是在这里量），是因为量出来的那一刻布局可能还没排完
+// —— render() 刚换掉整块 innerHTML，浏览器还没排版，量到的是上一次的
+// 尺寸。CSS 排完了再由 ResizeObserver 通知，那时量到的才是真的。
 function drawWall() {
   const canvas = document.getElementById('wall-canvas');
   const overlay = document.getElementById('wall-overlay');
   const t = state.template;
   if (!canvas || !overlay || !t) return;
-  const stage = canvas.parentElement;
-  const avail = Math.max(240, (stage ? stage.clientWidth : 720) - 4);
-  let cssW = avail;
-  let cssH = cssW / t.ratio;
-  // 太高的墙会把页面撑得很长 —— 顶到窗口的六成就够了。
-  const maxH = Math.max(240, Math.floor(window.innerHeight * 0.62));
-  if (cssH > maxH) { cssH = maxH; cssW = cssH * t.ratio; }
+  // 画布的 CSS 尺寸（浏览器排好的）。
+  const rect = canvas.getBoundingClientRect();
+  const cssW = Math.max(1, Math.round(rect.width));
+  const cssH = Math.max(1, Math.round(rect.height));
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const W = Math.max(1, Math.round(cssW * dpr));
   const H = Math.max(1, Math.round(cssH * dpr));
+  // 布局还没排完（量到的宽高是 0）—— 那就**先按现在这个尺寸画**。
+  //
+  // 尺寸对不对是另一回事（ResizeObserver 会来通知，到时候重画一遍），
+  // 但内容得马上对：刚导入的照片、刚换的格子，不该等到下一帧才出现在
+  // 墙上。
+  //
+  // 「现在这个尺寸」得是**画好了的**那个尺寸 —— 浏览器给画布的默认是
+  // 300×150，还没画过的画布就是那个大小。拿它当「现在的尺寸」会把墙
+  // 画成一小块。
+  if (!cssW || !cssH) {
+    if (!canvas.dataset.sized) return;
+    paintBase(canvas.getContext('2d'), canvas.width, canvas.height);
+    paintOverlay();
+    return;
+  }
 
-  canvas.width = W;
-  canvas.height = H;
-  canvas.style.width = cssW + 'px';
-  canvas.style.height = cssH + 'px';
-  overlay.width = W;
-  overlay.height = H;
+  // 缓冲区跟 CSS 的尺寸对齐。
+  //
+  // 设 canvas.width 会**清空**画布 —— 所以每次都重画一遍底。
+  if (canvas.width !== W) canvas.width = W;
+  if (canvas.height !== H) canvas.height = H;
+  if (overlay.width !== W) overlay.width = W;
+  if (overlay.height !== H) overlay.height = H;
+  // 记下「这个画布已经画过了，尺寸是它自己的」—— 布局还没排完的那会儿
+  // 就靠它知道现在该按哪个尺寸画。
+  canvas.dataset.sized = '1';
+  // 遮罩那一层跟底下的画布一样大 —— 它就盖在它上面。
   overlay.style.width = cssW + 'px';
   overlay.style.height = cssH + 'px';
 
   paintBase(canvas.getContext('2d'), W, H);
   paintOverlay();
+}
+
+// 一个画布像素等于几个屏幕像素 —— 拖形状的手柄靠它跟手。
+//
+// 画布的 CSS 宽高是 CSS 算出来的（width:100% + aspect-ratio），这里量的是
+// 排完版之后的实际值。
+function canvasScale() {
+  const canvas = document.getElementById('wall-canvas');
+  if (!canvas || !canvas.width) return 1;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width) return 1;
+  return rect.width / canvas.width;
+}
+
+// 画布的尺寸变了（窗口改了大小、或者这一列的宽度变了）—— 重画一次。
+//
+// ResizeObserver 报的是**排完版之后**的尺寸，所以这时候量到的是真的。
+function watchStage() {
+  if (stageObserver) stageObserver.disconnect();
+  stageObserver = null;
+  const canvas = document.getElementById('wall-canvas');
+  if (!canvas || typeof ResizeObserver === 'undefined') return;
+  stageObserver = new ResizeObserver(() => {
+    drawWall();
+  });
+  stageObserver.observe(canvas);
 }
 
 // 拖动形状的时候重画底画布 —— 尺寸不变，只把内容重画一遍。
@@ -1083,21 +1371,21 @@ function toCanvasPoint(clientX, clientY) {
 // 返回的 pxX / pxY 是手柄在**屏幕**上的位置（CSS 像素）—— 缩放的时候
 // 手柄跟手，就靠它。
 //
-// 手柄的位置来自 wallGeometry —— 那是**设备像素**（画布按 dpr 放大过），
-// 所以要除掉 dpr 才是屏幕上的 CSS 像素。
+// 手柄的位置来自 wallGeometry —— 那是**画布像素**（画布按 dpr 放大过），
+// 所以要乘上「一个画布像素等于几个屏幕像素」才是屏幕上的位置。
 function handleAt(clientX, clientY) {
   const canvas = document.getElementById('wall-canvas');
   const t = state.template;
   if (!canvas || !t) return null;
   const rect = canvas.getBoundingClientRect();
   if (!rect.height) return null;
-  const dpr = window.devicePixelRatio || 1;
-  const geo = wallGeometry(t, rect.height * dpr);
+  const geo = wallGeometry(t, canvas.height);
+  const scale = canvasScale();
   const px = clientX - rect.left;
   const py = clientY - rect.top;
   for (const h of handlePoints(geo)) {
-    const hx = h.x / dpr;
-    const hy = h.y / dpr;
+    const hx = h.x * scale;
+    const hy = h.y * scale;
     if (Math.abs(px - hx) <= HANDLE_GRAB && Math.abs(py - hy) <= HANDLE_GRAB) {
       return { id: h.id, pxX: rect.left + hx, pxY: rect.top + hy };
     }
@@ -1126,6 +1414,12 @@ function insideShape(pt) {
 }
 
 // 应用一份调整：形状变了，格子按新形状重排，照片重新填进去。
+//
+// 这里**不重画整页** —— 只重画画布、格子那些看得见的东西。
+//
+// 整页重画会把「形状的位置和大小」那块设置面板里的滑块换掉：手指还按在
+// 滑块上，元素却没了，拖动就断了。形状改了以后该跟着变的是画布和面板里
+// 的那几个数字 —— 前者重画，后者改数值，两边都不用重画整页。
 function applyTransform(next) {
   state.transform = normalizeTransform(next);
   if (!state.template) return;
@@ -1142,11 +1436,35 @@ function applyTransform(next) {
     state.transform,
   );
   buildCells();
+  // 画布上的墙重画一遍（格子重排过了）。
+  drawWall();
+  // 面板里的滑块、百分比、中心的两个数字框跟着走。
   syncScaleUi();
-  render();
   syncCenterUi();
+  // 按钮上那个「现在的样子」的小标记也变了（形状大小变了）。
+  refreshSheetHints();
   // 形状改了 —— 存档跟着改（scheduleSave 会把它攒起来，拖动时不吵）。
   scheduleSave();
+}
+
+// 设置面板的按钮上那个小标记（「现在的样子」）—— 改了参数就更新一下。
+//
+// 只改那几个字，不重画整页 —— 面板开着的时候整页重画会把用户正在拖的
+// 滑块弄断。
+function refreshSheetHints() {
+  const t = state.template;
+  const shape = t ? SHAPES.find((s) => s.id === t.shapeId) : null;
+  const ratio = t ? WALL_RATIOS.find((r) => r.id === t.ratioId) : null;
+  setSheetHint('template', `${shape ? shape.name : '—'} · ${t ? t.sizeName : '—'} · ${ratio ? ratio.id : '—'}`);
+  setSheetHint('shape', `${Math.round(state.transform.scale * 100)}%`);
+  setSheetHint('bg', bgLabel());
+  setSheetHint('history', `${state.history.length} 条`);
+}
+
+// 一个按钮上的小标记。
+function setSheetHint(key, text) {
+  const btn = document.querySelector(`[data-sheet-open="${key}"] .wall-btn-hint`);
+  if (btn) btn.textContent = text;
 }
 
 // 百分数夹在 0 ~ 100。
@@ -1222,13 +1540,16 @@ function beginDrag(e, kind, extra) {
   const t = state.template;
   if (!t) return;
   const rect = canvas.getBoundingClientRect();
-  const geo = wallGeometry(t, rect.height * (window.devicePixelRatio || 1));
-  const dpr = window.devicePixelRatio || 1;
+  // 几何按画布的**实际像素**算（不是 CSS 尺寸乘 dpr —— 那两个数对不上，
+  // 差一个取整，手柄就会跟手差一点点）。
+  const geo = wallGeometry(t, canvas.height);
+  // 画布像素 → 屏幕像素的比例。
+  const scale = canvasScale();
   // 形状中心在屏幕上的位置（CSS 像素）—— 缩放的尺子。
   //
-  // geo.bounds 是设备像素（画布按 dpr 放大过），除掉 dpr 才是屏幕像素。
-  const centreX = rect.left + geo.bounds.cx / dpr;
-  const centreY = rect.top + geo.bounds.cy / dpr;
+  // geo.bounds 是画布像素（画布按 dpr 放大过），除掉比例才是屏幕像素。
+  const centreX = rect.left + geo.bounds.cx * scale;
+  const centreY = rect.top + geo.bounds.cy * scale;
   state.dragging = {
     kind,
     startClient: { x: e.clientX, y: e.clientY },
@@ -1325,6 +1646,17 @@ function endDrag() {
 // ---- 交互 ------------------------------------------------------------------
 
 function wire() {
+  // 模板变了以后要跟着变的东西：画布、当前形状那一行说明、右栏按钮上的
+  // 小标记。
+  //
+  // 这些都在**设置面板外面**，所以改了以后不必重开面板 —— 面板里用户刚
+  // 选的那个下拉框已经是对的值了，重画整页反而会把正在拖的滑块弄断。
+  const afterTemplateChange = () => {
+    drawWall();
+    syncTemplateNote();
+    refreshSheetHints();
+  };
+
   const shapeSel = document.getElementById('wall-shape');
   if (shapeSel) {
     shapeSel.onchange = () => {
@@ -1332,7 +1664,7 @@ function wire() {
       const ratio = state.template ? state.template.ratioId : '1:1';
       state.template = pickTemplate(shapeSel.value, state.photos.length, ratio, state.transform);
       buildCells();
-      render();
+      afterTemplateChange();
       scheduleSave();
     };
   }
@@ -1341,7 +1673,7 @@ function wire() {
     sizeSel.onchange = () => {
       state.template = buildTemplate(state.template.shapeId, sizeSel.value, state.template.ratioId, state.transform);
       buildCells();
-      render();
+      afterTemplateChange();
       scheduleSave();
     };
   }
@@ -1355,7 +1687,7 @@ function wire() {
       // 图，所以要重新读一次。
       syncBackground();
       await reloadBackground();
-      render();
+      afterTemplateChange();
       scheduleSave();
     };
   }
@@ -1364,7 +1696,10 @@ function wire() {
     autoPick();
     // 自动匹配可能改了画幅 —— 背景要重新读。
     await reloadBackground();
-    render();
+    // 自动匹配挑的网格可能跟面板里选的不是一档 —— 面板里的下拉框得跟着
+    // 变，不然关掉面板再打开，看到的是旧的一档。
+    syncSheetControls();
+    afterTemplateChange();
     scheduleSave();
   };
   const resetShapeBtn = document.getElementById('wall-shape-reset-btn');
@@ -1401,7 +1736,7 @@ function wire() {
   if (bgSel) bgSel.onchange = () => { selectBackground(bgSel.value); };
 
   const canvas = document.getElementById('wall-canvas');
-  if (canvas) wireCanvas(canvas);
+  if (canvas) wireCanvasOnce(canvas);
 
   const tray = document.getElementById('wall-tray');
   if (tray) wireTray(tray);

@@ -98,6 +98,60 @@ async function waitFor(fn, timeoutMs) {
   return null;
 }
 
+// Open one of the wall's settings panels.
+//
+// The parameters (shape, grid, ratio, background, the shape's position) live
+// behind buttons — the page opens a small panel with the controls in it. So
+// a test that wants to touch one of those controls has to open the panel
+// first; the controls are not in the DOM while it is closed.
+async function openPanel(win, key) {
+  await win.webContents.executeJavaScript(`(() => {
+    const b = document.querySelector('[data-sheet-open="${key}"]');
+    if (!b) return false;
+    if (!document.querySelector('.wall-sheet[data-sheet="${key}"]')) b.click();
+    return true;
+  })()`);
+  await waitFor(() => win.webContents.executeJavaScript(
+    `!!document.querySelector('.wall-sheet[data-sheet="${key}"]')`
+  ), 5000);
+}
+
+// Close whatever settings panel is open.
+async function closePanel(win) {
+  await win.webContents.executeJavaScript(`(() => {
+    const b = document.querySelector('.wall-sheet-x');
+    if (b) b.click();
+    return true;
+  })()`);
+  await waitFor(() => win.webContents.executeJavaScript(
+    '!document.querySelector(".wall-sheet")'
+  ), 5000);
+}
+
+// The wall's settings, read from the panels.
+//
+// The controls live in two panels (the shape/grid/ratio in "形状模板", the
+// position and size in "形状的位置和大小") and only one panel is open at a
+// time — so each is opened, read, and closed again.
+async function wallSettings(win) {
+  const read = async (key, ids) => {
+    await openPanel(win, key);
+    const out = await win.webContents.executeJavaScript(`(() => {
+      const o = {};
+      for (const id of ${JSON.stringify(ids)}) {
+        const el = document.getElementById(id);
+        o[id] = el ? el.value : null;
+      }
+      return o;
+    })()`);
+    await closePanel(win);
+    return out;
+  };
+  const a = await read('template', ['wall-size', 'wall-ratio', 'wall-shape']);
+  const b = await read('shape', ['wall-shape-cx', 'wall-shape-cy', 'wall-scale']);
+  return Object.assign(a, b);
+}
+
 // A pointer gesture on the wall's canvas: press, move, release.
 //
 // The shape is dragged with POINTER events (not mouse ones), so this has to
@@ -164,7 +218,10 @@ function shapeBox(win) {
       minX, minY, maxX, maxY,
       width: cv.width,
       height: cv.height,
-      cssScale: parseFloat(cv.style.width) / cv.width,
+      // How many CSS pixels one canvas pixel is. The canvas' CSS size is
+      // decided by CSS (width:100% + aspect-ratio), so it has to be
+      // measured — not read off an inline style.
+      cssScale: cv.getBoundingClientRect().width / cv.width,
     };
   })()`);
 }
@@ -181,7 +238,11 @@ function shapeBox(win) {
 // its centre has to stay on), and a clipped box has a middle that is not
 // the shape's middle. The right edge is not clipped when the shape moves
 // LEFT, which is the direction this test moves it in.
-function shapeCentre(win) {
+async function shapeCentre(win) {
+  // The centre's inputs live in the "形状的位置和大小" panel — open it so
+  // they are in the DOM to be read. The panel is left open (the caller
+  // closes it when it is done with it).
+  await openPanel(win, 'shape');
   return win.webContents.executeJavaScript(`(() => {
     const cv = document.getElementById('wall-canvas');
     if (!cv) return null;
@@ -635,6 +696,9 @@ module.exports = (async () => {
       : null;
 
     // (4) The reset button puts the shape back.
+    //
+    // The button lives in the "形状的位置和大小" panel — open it first.
+    await openPanel(win, 'shape');
     await win.webContents.executeJavaScript(
       'document.getElementById("wall-shape-reset-btn").click()');
     await waitFor(async () => {
@@ -840,6 +904,7 @@ module.exports = (async () => {
     }
 
     // The scale slider and the percentage next to it follow the transform.
+    await openPanel(win, 'shape');
     report.scaleUi = await win.webContents.executeJavaScript(`(() => ({
       value: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
       label: document.getElementById('wall-scale-value')
@@ -875,6 +940,7 @@ module.exports = (async () => {
     // shape sits in the PNG with where it sits on the screen. Both are
     // measured from the pixels, and both are given as a share of their own
     // canvas — the two canvases have different sizes.
+    await openPanel(win, 'shape');
     await win.webContents.executeJavaScript(`(() => {
       const r = document.getElementById('wall-scale');
       if (!r) return;
@@ -951,6 +1017,7 @@ module.exports = (async () => {
     }
 
     // Put the shape back to normal before the rest of the test.
+    await openPanel(win, 'shape');
     await win.webContents.executeJavaScript(
       'document.getElementById("wall-shape-reset-btn").click()');
 
@@ -964,6 +1031,10 @@ module.exports = (async () => {
     // ships art yet, so the ratio is switched to 1:1 (which does) to
     // exercise the feature. A ratio WITHOUT art has to fall back to "no
     // background" — that is checked here too, before the switch.
+    //
+    // The background picker lives in the "背景" panel; the ratio switcher
+    // in the "形状模板" panel.
+    await openPanel(win, 'bg');
     report.bgPickerNoArt = await win.webContents.executeJavaScript(`(() => {
       const sel = document.getElementById('wall-bg');
       if (!sel) return null;
@@ -971,10 +1042,13 @@ module.exports = (async () => {
         options: Array.from(sel.options).map((o) => o.value),
         note: document.getElementById('wall-bg-note')
           ? document.getElementById('wall-bg-note').textContent : '',
-        ratio: document.getElementById('wall-ratio')
-          ? document.getElementById('wall-ratio').value : '',
       };
     })()`);
+    // The ratio it is asking about (the ratio switcher is in another panel).
+    await openPanel(win, 'template');
+    report.bgPickerNoArt.ratio = await win.webContents.executeJavaScript(
+      `(document.getElementById('wall-ratio') || {}).value || ''`
+    );
 
     // The background is exercised after the first export (so that export
     // stays the clean baseline for the shape's margins) — see below.
@@ -988,6 +1062,7 @@ module.exports = (async () => {
     // while it works fine on a square one.
     //
     // So: switch to 16:9, grab the shape, drag it, and check it moved.
+    await openPanel(win, 'template');
     await win.webContents.executeJavaScript(`(() => {
       const ratio = document.getElementById('wall-ratio');
       if (!ratio) return;
@@ -1034,6 +1109,7 @@ module.exports = (async () => {
     // Back to a square canvas for the rest of the test, and put the shape
     // back where it started — the drag above moved it, and the export that
     // follows measures the shape's margin from the canvas' edges.
+    await openPanel(win, 'template');
     await win.webContents.executeJavaScript(`(() => {
       const ratio = document.getElementById('wall-ratio');
       if (!ratio) return;
@@ -1046,6 +1122,7 @@ module.exports = (async () => {
       return v === '1:1' ? v : null;
     }, 8000);
     await new Promise((r) => setTimeout(r, 600));
+    await openPanel(win, 'shape');
     await win.webContents.executeJavaScript(
       'document.getElementById("wall-shape-reset-btn").click()');
     await new Promise((r) => setTimeout(r, 400));
@@ -1186,16 +1263,19 @@ module.exports = (async () => {
     // shape, so with no background it is white, and with one it is the
     // background's own colour.
     const bgOutPath = path.join(tmp, 'wall-with-bg.png');
-    const bgPicked = await win.webContents.executeJavaScript(`(async () => {
-      // Switch the canvas to 1:1 — the ratio that ships background art.
-      // (The ratio change re-picks the grid and re-renders the page.)
+    // Switch the canvas to 1:1 — the ratio that ships background art.
+    // (The ratio switcher is in the "形状模板" panel.)
+    await openPanel(win, 'template');
+    await win.webContents.executeJavaScript(`(() => {
       const ratio = document.getElementById('wall-ratio');
-      if (ratio) {
-        ratio.value = '1:1';
-        ratio.dispatchEvent(new Event('change'));
-        await new Promise((r) => setTimeout(r, 800));
-      }
-      // The picker of the new ratio.
+      if (!ratio) return;
+      ratio.value = '1:1';
+      ratio.dispatchEvent(new Event('change'));
+    })()`);
+    await new Promise((r) => setTimeout(r, 900));
+    // The picker of the new ratio (in the "背景" panel).
+    await openPanel(win, 'bg');
+    const bgPicked = await win.webContents.executeJavaScript(`(async () => {
       const picker = document.getElementById('wall-bg');
       if (!picker) return null;
       const opt = Array.from(picker.options).find((o) => o.value);
@@ -1291,6 +1371,7 @@ module.exports = (async () => {
     // A second picture: the shape moved off the centre and shrunk, so the
     // adjustment can be LOOKED at and not only measured.
     try {
+      await openPanel(win, 'shape');
       await win.webContents.executeJavaScript(`(() => {
         const cx = document.getElementById('wall-shape-cx');
         const cy = document.getElementById('wall-shape-cy');
@@ -1305,6 +1386,7 @@ module.exports = (async () => {
       fs.writeFileSync(shotPath2, shot2.toPNG());
       report.screenshotAdjusted = shotPath2;
       // Put it back.
+      await openPanel(win, 'shape');
       await win.webContents.executeJavaScript(
         'document.getElementById("wall-shape-reset-btn").click()');
       await new Promise((r) => setTimeout(r, 400));
@@ -1371,6 +1453,11 @@ module.exports = (async () => {
           const note = document.getElementById('wall-template-note');
           if (!cv || !cv.width) return 0;
           if (note && note.textContent.includes('正在读取')) return 0;
+          // The canvas' pixel buffer must have its REAL size — the browser's
+          // default is 300×150, so "cv.width is truthy" says nothing about
+          // whether the page has drawn the wall yet. (The page sets the
+          // buffer size when it draws; the CSS size alone doesn't.)
+          if (cv.width === 300 && cv.height === 150) return 0;
           return cv.width;
         })()`);
         return s > 0 ? s : null;
@@ -1382,12 +1469,19 @@ module.exports = (async () => {
     await win.webContents.executeJavaScript(`location.hash = ${JSON.stringify(wallUrl)}`);
     await waitForWall();
 
+    // Edit the wall: a grid of its own (「形状模板」panel), the shape moved
+    // and scaled (「形状的位置和大小」panel).
+    await openPanel(win, 'template');
     await win.webContents.executeJavaScript(`(() => {
       const size = document.getElementById('wall-size');
+      if (size) { size.value = 'g9'; size.dispatchEvent(new Event('change', { bubbles: true })); }
+    })()`);
+    await new Promise((r) => setTimeout(r, 400));
+    await openPanel(win, 'shape');
+    await win.webContents.executeJavaScript(`(() => {
       const cx = document.getElementById('wall-shape-cx');
       const cy = document.getElementById('wall-shape-cy');
       const scale = document.getElementById('wall-scale');
-      if (size) { size.value = 'g9'; size.dispatchEvent(new Event('change', { bubbles: true })); }
       if (cx) { cx.value = '44'; cx.dispatchEvent(new Event('change', { bubbles: true })); }
       if (cy) { cy.value = '46'; cy.dispatchEvent(new Event('change', { bubbles: true })); }
       if (scale) { scale.value = '85'; scale.dispatchEvent(new Event('input', { bubbles: true })); }
@@ -1398,12 +1492,7 @@ module.exports = (async () => {
     // reference for "the wall came back the same".
     const editedBox = await shapeBox(win);
     report.editedBox = editedBox;
-    report.editedUi = await win.webContents.executeJavaScript(`(() => ({
-      size: document.getElementById('wall-size') ? document.getElementById('wall-size').value : null,
-      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
-      cy: document.getElementById('wall-shape-cy') ? document.getElementById('wall-shape-cy').value : null,
-      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
-    }))()`);
+    report.editedUi = await wallSettings(win);
     // The photos on the wall, in the order the cells hold them — the
     // reference for "the photos are where they were".
     report.editedCells = await win.webContents.executeJavaScript(`(() => {
@@ -1431,14 +1520,10 @@ module.exports = (async () => {
     // The wall came back the way it was.
     const restoredBox = await shapeBox(win);
     report.restoredBox = restoredBox;
-    report.restoredUi = await win.webContents.executeJavaScript(`(() => ({
-      size: document.getElementById('wall-size') ? document.getElementById('wall-size').value : null,
-      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
-      cy: document.getElementById('wall-shape-cy') ? document.getElementById('wall-shape-cy').value : null,
-      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
-      restoredNote: document.getElementById('wall-restored-note')
-        ? document.getElementById('wall-restored-note').textContent : '',
-    }))()`);
+    report.restoredUi = await wallSettings(win);
+    report.restoredUi.restoredNote = await win.webContents.executeJavaScript(
+      `(document.getElementById('wall-restored-note') || {}).textContent || ''`
+    );
     report.restoredCells = await win.webContents.executeJavaScript(`(() => {
       const cv = document.getElementById('wall-canvas');
       const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
@@ -1451,10 +1536,10 @@ module.exports = (async () => {
     // The grid is the one that was picked (g9), the shape is where it was put
     // (44 / 46) and the size it was given (85%).
     report.stateRestoredUi = !!(report.restoredUi
-      && report.restoredUi.size === 'g9'
-      && report.restoredUi.cx === '44'
-      && report.restoredUi.cy === '46'
-      && report.restoredUi.scale === '85');
+      && report.restoredUi['wall-size'] === 'g9'
+      && report.restoredUi['wall-shape-cx'] === '44'
+      && report.restoredUi['wall-shape-cy'] === '46'
+      && report.restoredUi['wall-scale'] === '85');
     // And the shape really is where it was — measured from the pixels.
     report.stateRestoredPixels = !!(editedBox && restoredBox
       && Math.abs(restoredBox.minX - editedBox.minX) < 6
@@ -1468,6 +1553,9 @@ module.exports = (async () => {
     //
     // Every export is recorded, with the wall as it was at that moment — so
     // the user can export the same arrangement again.
+    //
+    // The history lives in its own settings panel.
+    await openPanel(win, 'history');
     report.historyBefore = await win.webContents.executeJavaScript(`(() => {
       const box = document.getElementById('wall-history');
       return box ? box.querySelectorAll('.wall-history-item').length : -1;
@@ -1483,6 +1571,7 @@ module.exports = (async () => {
     exportTarget = outPath;
     report.historyExported = !!histWritten;
     await new Promise((r) => setTimeout(r, 800));
+    await openPanel(win, 'history');
     report.historyAfter = await win.webContents.executeJavaScript(`(() => {
       const box = document.getElementById('wall-history');
       const items = box ? box.querySelectorAll('.wall-history-item') : [];
@@ -1507,6 +1596,7 @@ module.exports = (async () => {
     //
     // 先把墙上的摆法改成**另一版**（不然载入回来的就是同一版，看不出是
     // 不是真的换了），再从历史里载入之前那一版。
+    await openPanel(win, 'shape');
     await win.webContents.executeJavaScript(`(() => {
       const scale = document.getElementById('wall-scale');
       if (scale) { scale.value = '60'; scale.dispatchEvent(new Event('input', { bubbles: true })); }
@@ -1516,6 +1606,7 @@ module.exports = (async () => {
       'document.getElementById("wall-scale").value');
 
     // 载入历史里的那一版（前面导出的那次 —— 缩放 85%）。
+    await openPanel(win, 'history');
     report.loadResult = await win.webContents.executeJavaScript(`(() => {
       const btn = document.querySelector('[data-history-act="load"]');
       if (!btn) return { skipped: true };
@@ -1523,27 +1614,30 @@ module.exports = (async () => {
       return { clicked: true };
     })()`);
     await new Promise((r) => setTimeout(r, 1000));
-    report.loadedUi = await win.webContents.executeJavaScript(`(() => ({
-      size: document.getElementById('wall-size') ? document.getElementById('wall-size').value : null,
-      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
-      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
-      // 界面上标着「墙上就是这一版」。
-      badge: !!(document.querySelector('.wall-history-badge')),
-      loadedRow: !!document.querySelector('.wall-history-item-loaded'),
-      // 载入了以后，那个按钮变成「撤销载入」。
-      hasUnload: !!document.querySelector('[data-history-act="unload"]'),
-    }))()`);
+    await openPanel(win, 'history');
+    // The history panel's markers first (it is open right now).
+    report.loadedUi = {
+      badge: await win.webContents.executeJavaScript(
+        `!!(document.querySelector('.wall-history-badge'))`),
+      loadedRow: await win.webContents.executeJavaScript(
+        `!!(document.querySelector('.wall-history-item-loaded'))`),
+      hasUnload: await win.webContents.executeJavaScript(
+        `!!(document.querySelector('[data-history-act="unload"]'))`),
+    };
+    // Then the settings (the helper opens and closes the panels it needs).
+    Object.assign(report.loadedUi, await wallSettings(win));
     // 那一版真的摆回来了（形状回到 85%，网格还是 g9）。
     report.loadWorked = !!(report.loadedUi
-      && report.loadedUi.size === 'g9'
-      && report.loadedUi.cx === '44'
-      && report.loadedUi.scale === '85');
+      && report.loadedUi['wall-size'] === 'g9'
+      && report.loadedUi['wall-shape-cx'] === '44'
+      && report.loadedUi['wall-scale'] === '85');
     report.loadMarked = !!(report.loadedUi
       && report.loadedUi.badge && report.loadedUi.loadedRow && report.loadedUi.hasUnload);
 
     // ---- 载入之后还能接着改，改完还能导出 --------------------------------
     //
     // 这是用户要的核心：载入不是终点，载入之后就是**可编辑的底稿**。
+    await openPanel(win, 'shape');
     report.editAfterLoad = await win.webContents.executeJavaScript(`(() => {
       const cx = document.getElementById('wall-shape-cx');
       if (!cx) return { skipped: true };
@@ -1552,18 +1646,19 @@ module.exports = (async () => {
       return { edited: true };
     })()`);
     await new Promise((r) => setTimeout(r, 900));
-    report.editedAfterLoadUi = await win.webContents.executeJavaScript(`(() => ({
-      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
-      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
-      // 改过之后，标记还在 —— 但写的是「正在改这一版」（不再是「已载入这一版」）。
-      badge: document.querySelector('.wall-history-badge')
-        ? document.querySelector('.wall-history-badge').textContent : '',
+    // 改过之后，标记还在 —— 但写的是「正在改这一版」（不再是「已载入这一版」）。
+    await openPanel(win, 'history');
+    report.editedAfterLoadUi = {
+      badge: await win.webContents.executeJavaScript(
+        `(document.querySelector('.wall-history-badge') || {}).textContent || ''`),
       // 「撤销载入」还在 —— 随时能回到载入前那一版。
-      hasUnload: !!document.querySelector('[data-history-act="unload"]'),
-    }))()`);
+      hasUnload: await win.webContents.executeJavaScript(
+        `!!(document.querySelector('[data-history-act="unload"]'))`),
+    };
+    Object.assign(report.editedAfterLoadUi, await wallSettings(win));
     report.editAfterLoadWorked = !!(report.editedAfterLoadUi
-      && report.editedAfterLoadUi.cx === '62'
-      && report.editedAfterLoadUi.scale === '85');
+      && report.editedAfterLoadUi['wall-shape-cx'] === '62'
+      && report.editedAfterLoadUi['wall-scale'] === '85');
     report.editAfterLoadKeepsDraft = !!(report.editedAfterLoadUi
       && report.editedAfterLoadUi.badge.indexOf('正在改') >= 0
       && report.editedAfterLoadUi.hasUnload);
@@ -1594,6 +1689,7 @@ module.exports = (async () => {
     // ---- 「撤销载入」：回到载入之前那一版 ---------------------------------
     //
     // 载入**不能**把用户原来摆的那一版弄丢 —— 载入之前摆的是 60%。
+    await openPanel(win, 'history');
     report.unloadResult = await win.webContents.executeJavaScript(`(() => {
       const btn = document.querySelector('[data-history-act="unload"]');
       if (!btn) return { skipped: true };
@@ -1601,18 +1697,20 @@ module.exports = (async () => {
       return { clicked: true };
     })()`);
     await new Promise((r) => setTimeout(r, 1000));
-    report.unloadedUi = await win.webContents.executeJavaScript(`(() => ({
-      scale: document.getElementById('wall-scale') ? document.getElementById('wall-scale').value : null,
-      cx: document.getElementById('wall-shape-cx') ? document.getElementById('wall-shape-cx').value : null,
-      badge: !!document.querySelector('.wall-history-badge'),
-    }))()`);
+    await openPanel(win, 'history');
+    report.unloadedUi = {
+      badge: await win.webContents.executeJavaScript(
+        `!!(document.querySelector('.wall-history-badge'))`),
+    };
+    Object.assign(report.unloadedUi, await wallSettings(win));
     // 撤销之后回到的是**载入之前**的那一版（60%，中心 50 —— 载入前摆的
     // 那一版被拍下来了，撤销就是把它摆回去）。
     report.unloadWorked = !!(report.unloadedUi
-      && report.unloadedUi.scale === '60'
+      && report.unloadedUi['wall-scale'] === '60'
       && !report.unloadedUi.badge);
 
     // Removing a history entry takes it off the list.
+    await openPanel(win, 'history');
     report.historyRemove = await win.webContents.executeJavaScript(`(() => {
       const before = document.querySelectorAll('.wall-history-item').length;
       const btn = document.querySelector('[data-history-act="remove"]');
