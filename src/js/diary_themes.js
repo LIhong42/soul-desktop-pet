@@ -41,11 +41,20 @@
 // The styles come in two families. The first six are hand-written. The
 // rest are DERIVED from the colour cards in src/js/diary_palettes.js — a
 // card of three colours gives one style, a card of four gives two (a
-// pale one and a deep one). The rules that do the deriving are in
-// paletteStyles() further down.
+// pale one and a deep one), and a card of two gives one as well. The
+// rules that do the deriving are in paletteStyles() further down.
 
-import { DIARY_PALETTES } from './diary_palettes.js';
+import { DIARY_PALETTES, checkPaletteRgb } from './diary_palettes.js';
 
+// The hand-written styles.
+//
+// The `headerText` of a bar is the colour the TITLE is written in. It is
+// the ink that reads on that bar — and on a mid-tone bar (the olive of
+// Dark, the walnut of Shadow, the slate of Poonam) that ink is a deep
+// near-black rather than white: white only reaches 2.3:1 there, which
+// is too low for the title to read. The bar keeps its own colour, which
+// is the part of these styles that comes from the artwork; only the ink
+// moves, and only as far as it has to.
 export const DIARY_THEMES = [
   {
     id: 'light',
@@ -57,7 +66,7 @@ export const DIARY_THEMES = [
     // The decorative strip is a shade deeper than the body, so the two
     // layers read as two even on the palest paper.
     bgMid: '#d3bd88',
-    text: '#3a3222',
+    text: '#372f1f',
     muted: '#5a5040',
     rule: '#e2d5b8',
     dots: ['#d9c76a', '#3a3222', '#ffffff'],
@@ -66,11 +75,11 @@ export const DIARY_THEMES = [
     id: 'dark',
     name: 'Dark',
     headerBg: '#697356',
-    headerText: '#ffffff',
+    headerText: '#222222',
     bgTop: '#393628',
     bgFlat: '#393628',
     bgMid: '#2e2b1f',
-    text: '#e8e6dc',
+    text: '#f2f4f3',
     muted: '#aab8cd',
     rule: '#3a3b34',
     dots: ['#7d9a7f', '#e8e6dc', '#3f4038'],
@@ -93,7 +102,7 @@ export const DIARY_THEMES = [
     id: 'shadow',
     name: 'Shadow',
     headerBg: '#77613b',
-    headerText: '#ffffff',
+    headerText: '#1f1f1f',
     // A night sky over a dark blue stone floor.
     bgTop: '#0c1a31',
     bgFlat: '#0c1a31',
@@ -112,7 +121,7 @@ export const DIARY_THEMES = [
     bgTop: '#d1ddde',
     bgFlat: '#d1ddde',
     bgMid: '#9aad90',
-    text: '#2b3a49',
+    text: '#233241',
     muted: '#3d4433',
     rule: '#d6e3ee',
     dots: ['#a9c9e3', '#33506b', '#ffffff'],
@@ -121,7 +130,7 @@ export const DIARY_THEMES = [
     id: 'poonam',
     name: 'Poonam',
     headerBg: '#47678c',
-    headerText: '#ffffff',
+    headerText: '#1f1f1f',
     // A deep night over a dark teal ground.
     bgTop: '#16243d',
     bgFlat: '#16243d',
@@ -148,6 +157,10 @@ export const DIARY_THEMES = [
 //   · a card of FOUR colours becomes TWO styles: the four colours are
 //     split into two triples, so the same card yields a pale sheet and a
 //     deep one.
+//
+//   · a card of TWO colours becomes ONE style: a two-colour card has one
+//     layer to spare, so the pale colour is the paper, the deep one is
+//     the bar, and the foot strip is derived from the paper.
 //
 // The rules that do the splitting live in paletteStyles() below. They
 // are the same rules the hand-written styles follow, so the two families
@@ -222,10 +235,32 @@ function contrast(a, b) {
 // brightness threshold. A mid-tone surface (a terracotta bar, a sage
 // one) is exactly the case a threshold gets wrong: dark ink on it can
 // fall to 2:1 while white ink on the same colour sits at 4.5:1.
+//
+// The two inks are a floor, not a ceiling. A bar whose own colour sits
+// right between them — a walnut brown, a slate blue — can leave BOTH
+// of them short of 3:1, which is the bar the title is written on. So
+// the dark ink is then walked down towards black, which always reads on
+// a mid-tone bar. It is the ink's own colour pushed one way, not a
+// different colour, so the title still belongs to the card — only
+// deeper.
 function inkOn(surface) {
-  return contrast('#ffffff', surface) >= contrast('#2b2b2b', surface)
-    ? '#ffffff'
-    : '#2b2b2b';
+  // The bar carries the TITLE, which is 20px bold — large text, so 3:1
+  // is the ratio it has to reach.
+  const MIN = 3;
+  const light = '#ffffff';
+  const dark = '#2b2b2b';
+  if (contrast(light, surface) >= MIN) return light;
+  if (contrast(dark, surface) >= MIN) return dark;
+
+  // Neither ink is enough, so the bar is mid-tone. The white ink cannot
+  // improve — it is already white — so the dark one walks towards black
+  // instead, which always reads on a bar like this.
+  let ink = dark;
+  for (let i = 0; i < 24; i++) {
+    ink = shade(ink, -0.08);
+    if (contrast(ink, surface) >= MIN) return ink;
+  }
+  return '#000000';
 }
 
 // The ink the BODY is written in.
@@ -302,7 +337,7 @@ function readablePaper(paper) {
 // ground lands on the wrong side of the paper, it is derived from the
 // paper instead — one step deeper, in the direction that keeps the two
 // layers apart.
-function sheetOf(id, name, paper, accent, ground) {
+function sheetOf(id, name, paper, accent, ground, palette) {
   // The paper is made readable FIRST, and the ground follows it — so
   // the foot strip stays a step deeper than the body it sits under,
   // even when the body had to be moved to be readable.
@@ -333,6 +368,9 @@ function sheetOf(id, name, paper, accent, ground) {
     // The three accent dots in the picker preview: the accent, the
     // paper and the ink.
     dots: [accent, p, onDark ? '#ffffff' : ink],
+    // The card this sheet came from, with the colours and their RGB
+    // triples — the picker shows them so the values can be copied out.
+    palette: palette || null,
   };
 }
 
@@ -370,11 +408,23 @@ function paletteStyles(palette) {
   const n = cs.length;
   const out = [];
 
+  if (n === 2) {
+    // A card of two: the pale colour is the paper, the deep one is the
+    // bar, and the foot strip is left out — sheetOf() derives one from
+    // the paper, so the sheet still has three layers.
+    const [c0, c1] = cs;
+    out.push(sheetOf(
+      `${palette.id}`, palette.name,
+      c0.hex, c1.hex, null, palette
+    ));
+    return out;
+  }
+
   if (n === 3) {
     const [c0, c1, c2] = cs;
     out.push(sheetOf(
       `${palette.id}`, palette.name,
-      c0.hex, c2.hex, c1.hex
+      c0.hex, c2.hex, c1.hex, palette
     ));
     return out;
   }
@@ -385,13 +435,13 @@ function paletteStyles(palette) {
     // ground, the third is the accent.
     out.push(sheetOf(
       `${palette.id}`, palette.name,
-      c0.hex, c2.hex, c1.hex
+      c0.hex, c2.hex, c1.hex, palette
     ));
     // The deep sheet: the deepest colour is the paper, the third is the
     // ground, the second is the accent.
     out.push(sheetOf(
       `${palette.id}-deep`, `${palette.name}深`,
-      c3.hex, c1.hex, c2.hex
+      c3.hex, c1.hex, c2.hex, palette
     ));
     return out;
   }
@@ -403,6 +453,14 @@ function paletteStyles(palette) {
 
 // The styles derived from every colour card.
 const PALETTE_THEMES = DIARY_PALETTES.flatMap(paletteStyles);
+
+// The cards are checked against themselves before they are used: a colour
+// whose RGB triple disagrees with its hex would put a wrong number on
+// the picker. The check is cheap and runs once, at load.
+const RGB_MISMATCHES = checkPaletteRgb();
+if (RGB_MISMATCHES.length) {
+  console.warn('diary_palettes: rgb/hex mismatch —', RGB_MISMATCHES);
+}
 
 // The full list the picker offers: the hand-written styles first, then
 // the ones the cards produce.

@@ -3211,6 +3211,46 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   text-overflow: ellipsis;
   min-width: 0;
 }
+
+/* The RGB readout of a card's colours, printed under the tile.
+   It is a copy-out panel, not a control: the values are set by the card
+   and cannot be edited here, so they are set in a small, quiet type. */
+.diary-theme-rgbs {
+  display: block;
+  padding: 5px 7px 6px;
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+  background: rgba(255, 255, 255, 0.55);
+}
+.diary-theme-rgb {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  line-height: 1.5;
+  color: #6b6459;
+}
+.diary-theme-rgb i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+}
+.diary-theme-rgb-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The numbers are set in a monospace face so the digits line up down the
+   list and a value can be read at a glance. */
+.diary-theme-rgb-val {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+  color: #4a443a;
+}
 .diary-theme-check {
   position: absolute;
   top: 4px;

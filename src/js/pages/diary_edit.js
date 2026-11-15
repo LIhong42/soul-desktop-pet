@@ -171,6 +171,32 @@ function themeToggleHtml(theme) {
   `;
 }
 
+// The RGB values of a card's colours, as a list of swatch + readout.
+//
+// A tile that came from a colour card carries the card with it, and the
+// card carries the RGB triple of every colour on it. They are printed
+// under the tile so a designer can copy the values straight out of the
+// picker instead of measuring the swatch off the screen.
+//
+// The hand-written styles have no card behind them, so they get no
+// readout — there is no set of colours to quote.
+function themeRgbHtml(theme) {
+  const colors = theme.palette && theme.palette.colors;
+  if (!colors || !colors.length) return '';
+  const rows = colors.map((c) => {
+    const rgb = Array.isArray(c.rgb) && c.rgb.length === 3
+      ? `rgb(${c.rgb.join(', ')})`
+      : '';
+    return `
+      <span class="diary-theme-rgb">
+        <i style="background:${escapeHtml(c.hex)}"></i>
+        <span class="diary-theme-rgb-name">${escapeHtml(c.name)}</span>
+        <span class="diary-theme-rgb-val">${escapeHtml(rgb)}</span>
+      </span>`;
+  }).join('');
+  return `<span class="diary-theme-rgbs">${rows}</span>`;
+}
+
 // The background style tiles. Each tile previews the style faithfully:
 // the header bar, the body surface, the decorative strip and the three
 // accent dots, exactly like the reference picker.
@@ -192,6 +218,7 @@ function themePickerHtml(selectedId) {
               <span class="diary-theme-name" style="color:${escapeHtml(t.text)}">${escapeHtml(t.name)}</span>
             </span>
           </span>
+          ${themeRgbHtml(t)}
           <span class="diary-theme-check">✓</span>
         </button>
       `).join('')}

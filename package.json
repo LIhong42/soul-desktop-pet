@@ -13,6 +13,7 @@
     "test:pdf-page": "node scripts/test_pdf_photo_render.js",
     "test:pdf-e2e": "node scripts/run-electron.js scripts/run-pdf-e2e.js",
     "test:cover-editor": "node scripts/test_cover_editor.js",
+    "test:diary-picker": "node scripts/test_diary_picker.js",
     "test:wall-state": "node scripts/test_photo_wall_state.js",
     "test:wall-ipc": "node scripts/run-electron.js scripts/run-photo-wall-ipc.js",
     "test:wall-e2e": "node scripts/run-electron.js scripts/run-photo-wall-e2e.js",
