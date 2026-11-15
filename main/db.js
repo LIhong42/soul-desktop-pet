@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS memorial_events (
   notes       TEXT,
   occurred_at TEXT NOT NULL,
   -- The diary background style (see src/js/diary_themes.js). One of the
-  -- six preset ids, or NULL for the default. Stored as a plain TEXT so a
+  -- preset ids, or NULL for the default. Stored as a plain TEXT so a
   -- future preset can be added without another table rebuild.
   background  TEXT,
   -- The diary body as an ordered document: a JSON array of blocks, where
@@ -1281,7 +1281,7 @@ function migrateMemorialEventsV2() {
 
 // ---- memorial events v3 migration ----
 // Adds the column the diary editor writes:
-//   background — the chosen diary background style (one of the six preset
+//   background — the chosen diary background style (one of the preset
 //     ids in src/js/diary_themes.js, or NULL for the default)
 //
 // It also adds the `content` column that holds the mixed text/image

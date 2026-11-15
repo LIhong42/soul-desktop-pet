@@ -3110,12 +3110,17 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
 }
 .diary-theme-picker.open .diary-theme-chevron { transform: rotate(180deg); }
 
-/* The popover with the six styles. It is positioned under the button
-   rather than in the flow, so opening it does not push the page around.
+/* The popover with the background styles. It is positioned under the
+   button rather than in the flow, so opening it does not push the page
+   around.
 
    It is pulled out past the card's padding so its edges line up with the
    card's own edges — a popover that is narrower than the panel it grows
-   out of reads as a different thing. */
+   out of reads as a different thing.
+
+   There are enough styles now that the list is taller than the window on
+   a short screen, so the grid scrolls inside the popover and the popover
+   itself stays put. */
 .diary-theme-pop {
   position: absolute;
   top: calc(100% + 8px);
@@ -3129,11 +3134,16 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   border-radius: 10px;
   background: var(--panel);
   box-shadow: var(--shadow-md);
+  /* The popover never grows past the window. The grid inside it scrolls
+     instead, so the button it hangs off stays on screen. */
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .diary-theme-pop[hidden] { display: none; }
 
-/* The six background style tiles. Each tile previews the style: the
-   header bar, the page background and the three accent dots. */
+/* The background style tiles. Each tile previews the style: the header
+   bar, the page background and the three accent dots. */
 .diary-theme-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3191,7 +3201,16 @@ body.diary-reordering .diary-gallery-item { cursor: grabbing; }
   display: block;
   border: 1px solid rgba(0, 0, 0, 0.12);
 }
-.diary-theme-name { font-size: 11px; font-weight: 600; }
+.diary-theme-name {
+  font-size: 11px;
+  font-weight: 600;
+  /* The name sits on one line: a name that wraps makes its tile taller
+     than its neighbour, and the grid of tiles ends up ragged. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
 .diary-theme-check {
   position: absolute;
   top: 4px;

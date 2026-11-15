@@ -3,7 +3,7 @@
 // This page replaces the old one-field-per-slot memorial form. Instead of
 // five narrow inputs (去了哪里 / 吃了什么 / 穿了什么 / 干了哪些事 / 补充描述)
 // the user now writes on a single diary page: a title, a free-form body,
-// and any number of photos, laid over one of six background styles.
+// and any number of photos, laid over one of the background styles.
 //
 // Flow:
 //   /diary/new          → a blank diary page
@@ -74,7 +74,7 @@ import {
 import { register, navigate, getReferrerPath } from '../router.js';
 import { openContextMenu } from '../context_menu.js';
 import {
-  DIARY_THEMES, DEFAULT_THEME_ID, getDiaryTheme, diaryThemeVars,
+  ALL_DIARY_THEMES, DEFAULT_THEME_ID, getDiaryTheme, diaryThemeVars,
 } from '../diary_themes.js';
 import {
   DIARY_GALLERY_LAYOUTS, galleryLayout, defaultLayoutFor, photoCssWidth,
@@ -132,14 +132,14 @@ const pageState = {
 
 // ---- Theme picker --------------------------------------------------------
 //
-// The six background styles used to sit in an always-open panel beside
+// The background styles used to sit in an always-open panel beside
 // the writing surface. That crowded the page for a choice the user makes
 // once and then never touches again.
 //
 // Now the panel is ONE button: it shows the style in use — a miniature
-// of the page and the style's name — and pressing it opens the six
-// previews in a popover underneath. Picking a style closes the popover
-// again, so the page goes straight back to writing.
+// of the page and the style's name — and pressing it opens the previews
+// in a popover underneath. Picking a style closes the popover again, so
+// the page goes straight back to writing.
 
 // The miniature page on the collapsed button. It is painted in the same
 // three layers the real page is: the header bar, the body and the
@@ -171,13 +171,13 @@ function themeToggleHtml(theme) {
   `;
 }
 
-// The six background style tiles. Each tile previews the style
-// faithfully: the header bar, the body surface, the decorative strip and
-// the three accent dots, exactly like the reference picker.
+// The background style tiles. Each tile previews the style faithfully:
+// the header bar, the body surface, the decorative strip and the three
+// accent dots, exactly like the reference picker.
 function themePickerHtml(selectedId) {
   return `
     <div class="diary-theme-grid">
-      ${DIARY_THEMES.map((t) => `
+      ${ALL_DIARY_THEMES.map((t) => `
         <button type="button" class="diary-theme-tile${t.id === selectedId ? ' selected' : ''}"
                 data-theme-id="${escapeHtml(t.id)}" title="${escapeHtml(t.name)}">
           <span class="diary-theme-bar" style="background:${escapeHtml(t.headerBg)};--theme-header-text:${escapeHtml(t.headerText)}">标题</span>
