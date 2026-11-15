@@ -231,6 +231,9 @@ function rulesHtml() {
             <span class="cl-rule-title">官方卡片与自定义卡片混合</span>
           </li>
           <li>
+            <span class="cl-rule-title">最近抽过的卡会冷却，不会马上再来</span>
+          </li>
+          <li>
             <span class="cl-rule-title">完成后记录回忆</span>
           </li>
         </ol>

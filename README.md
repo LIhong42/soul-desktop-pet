@@ -61,6 +61,7 @@
 
 ### 🃏 Card Draw Life & Streak Wall
 - **Draw one card a week** from the built-in card library — and you can add your own cards too; both live in the same pool;
+- **A card you have just drawn will not come back straight away**: the **three most recently drawn cards are put on ice** (they cannot come up at all), and the three before those are **four times less likely** than a card nobody has drawn. So the card you drew last week is not waiting on top of the deck for you — but it does come back eventually, and the cooling is counted in **draws**, not days: skip a week and the card is not "re-seen";
 - The card you drew becomes a paper card (number, title, requirement), and **记录这一张** opens the diary editor with the title and requirement already filled in;
 - The **streak wall** answers "out of the five weeks I drew, how many did I actually write up?" A week counts as done only if that week's card really became a memory entry — **with a photo**, or **with more than 30 characters of text**;
 - Four stats (weeks drawn / completed / completion rate / streak) sit above a wall of one square per week. A completed week is a filled orange square, so **you can see the streak at a glance**.

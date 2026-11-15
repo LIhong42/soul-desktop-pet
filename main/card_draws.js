@@ -31,6 +31,12 @@ const path = require('path');
 // answering it differently would be worse than either answer.
 const cardProgress = require('./card_progress');
 
+// Which card a draw may come up. The weights live in their own module
+// (main/card_picker.js) because they are a rule worth testing on their
+// own: the cooldown, the soft band and the fallback all have to hold
+// however the pool is built.
+const cardPicker = require('./card_picker');
+
 // Where the deck file lives. `appPath` is the app root (the parent of
 // `main/`), matching how ui_artwork finds `resources/ui`.
 function deckPath(appPath) {
@@ -258,11 +264,27 @@ function draw(appPath, db, now = new Date()) {
   if (!pool.cards.length) {
     return { ok: false, card: null, reason: 'empty_deck', error: pool.error };
   }
-  // A card is picked at random from the whole pool — the official deck and
-  // the user's own cards together. The deck is small enough that a
-  // shuffle-and-take would behave the same, but the point of a draw is
-  // that the user cannot predict which card comes up.
-  const picked = pool.cards[Math.floor(Math.random() * pool.cards.length)];
+  // The cards drawn before this one, newest first — the memory that keeps
+  // a card the user has just seen from coming straight back.
+  //
+  // Only the recent ones matter, so the list is capped: the cooling band
+  // is a handful of draws wide, and reading a year of history to throw
+  // all but the first few away would be wasted work on every draw.
+  const history = db.listCardDrawsWithProgress(
+    cardPicker.COOLDOWN_DRAWS + cardPicker.SOFT_BAND_DRAWS + 1);
+  // A card is picked BY WEIGHT from the whole pool — the official deck and
+  // the user's own cards together. The three most recently drawn cards are
+  // cooled to zero weight, the three before that carry a quarter weight,
+  // and everything else carries full weight.
+  //
+  // The point of a draw is still that the user cannot predict which card
+  // comes up — but a card that came up last week should not be sitting on
+  // the top of the deck again, waiting for a user who has not even had a
+  // chance to write it down.
+  const picked = cardPicker.pickWeighted(pool.cards, history);
+  if (!picked) {
+    return { ok: false, card: null, reason: 'empty_deck', error: pool.error };
+  }
   const card = db.createCardDraw({
     week_key: key,
     card_no: picked.no,
@@ -285,4 +307,7 @@ module.exports = {
   weekEndKey,
   state,
   draw,
+  // The weighting rule, re-exported so a test can reach it through this
+  // module rather than reaching past it into main/card_picker.js.
+  picker: cardPicker,
 };
