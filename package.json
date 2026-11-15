@@ -1,6 +1,6 @@
 {
   "name": "soul-desktop-pet",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "SoulDesktopPet — local-first relationship & reminders with a desktop pet",
   "main": "main/main.js",
   "author": "SoulDesktopPet",
