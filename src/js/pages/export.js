@@ -149,71 +149,90 @@ function render() {
   const exporting = state.exporting;
   const exportDisabled = !hasEvents || selectedCount === 0 || exporting;
 
-  // The page sits in a `.page-column` — the app's shared centred reading
-  // band — so the filter and export cards keep the same side margin every
-  // other page has instead of running edge to edge on a wide window.
+  // The page is a workbench, like the photo wall's: the tall scrolling list
+  // on the LEFT (filter on top, the matching memories below it), and the
+  // actions on the RIGHT — the export buttons stay in sight while the
+  // list is scrolled, and there is no need to hunt for them at the bottom
+  // of the page.
   app.innerHTML = `
-    <div class="page-column">
+    <div class="page-column export-page">
     <h1>导出回忆</h1>
     <p class="meta">按联系人和时间段筛选已记录的回忆，导出为 PDF / Word 相册或 MP4 视频。素材仅来自「回忆」中已上传的事件与照片。</p>
 
-    <div class="card">
-      <h2>筛选条件</h2>
-      <div class="form-row">
-        <div class="field" style="flex:1; min-width:240px;">
-          <label>关联联系人</label>
-          <div class="chip-list" id="export-contacts">
-            <div class="chip-list-actions">
-              <a href="#" data-action="contacts-all">全选</a>
-              <a href="#" data-action="contacts-none">清空</a>
+    <div class="export-layout">
+      <div class="export-main">
+        <div class="card">
+          <h2>筛选条件</h2>
+          <div class="form-row">
+            <div class="field" style="flex:1; min-width:240px;">
+              <label>关联联系人</label>
+              <div class="chip-list" id="export-contacts">
+                <div class="chip-list-actions">
+                  <a href="#" data-action="contacts-all">全选</a>
+                  <a href="#" data-action="contacts-none">清空</a>
+                </div>
+                ${renderContactChipList()}
+              </div>
             </div>
-            ${renderContactChipList()}
+            <div class="field" style="flex:1; min-width:240px;">
+              <label>时间段</label>
+              <select id="export-preset">
+                ${renderPresetOptions(nowGroups)}
+              </select>
+            </div>
           </div>
+          <div class="form-row" id="export-custom-row" style="display:none;">
+            <div class="field">
+              <label>起始日期</label>
+              <input type="date" id="export-custom-start"/>
+            </div>
+            <div class="field">
+              <label>结束日期</label>
+              <input type="date" id="export-custom-end"/>
+            </div>
+          </div>
+          <p class="meta" id="export-counts">
+            匹配 <strong>${totalEvents}</strong> 个事件 · 共 <strong>${totalPhotos}</strong> 张照片${state.loading ? ' · 加载中…' : ''}
+          </p>
         </div>
-        <div class="field" style="flex:1; min-width:240px;">
-          <label>时间段</label>
-          <select id="export-preset">
-            ${renderPresetOptions(nowGroups)}
-          </select>
-        </div>
-      </div>
-      <div class="form-row" id="export-custom-row" style="display:none;">
-        <div class="field">
-          <label>起始日期</label>
-          <input type="date" id="export-custom-start"/>
-        </div>
-        <div class="field">
-          <label>结束日期</label>
-          <input type="date" id="export-custom-end"/>
-        </div>
-      </div>
-      <p class="meta" id="export-counts">
-        匹配 <strong>${totalEvents}</strong> 个事件 · 共 <strong>${totalPhotos}</strong> 张照片${state.loading ? ' · 加载中…' : ''}
-      </p>
-    </div>
 
-    <div class="card" id="export-events-card">
-      <h2>事件预览</h2>
-      <div class="chip-list-actions" style="margin-bottom:8px;">
-        <a href="#" data-action="events-all">全选</a>
-        <a href="#" data-action="events-none">全不选</a>
-        <a href="#" data-action="events-invert">反选</a>
-        <a href="#" data-action="events-with-photos">只选有照片的</a>
-        <span class="meta" style="margin-left:auto;">已选 ${selectedCount} / ${totalEvents}</span>
+        <div class="card export-events-card" id="export-events-card">
+          <h2>事件预览</h2>
+          <div class="chip-list-actions" style="margin-bottom:8px;">
+            <a href="#" data-action="events-all">全选</a>
+            <a href="#" data-action="events-none">全不选</a>
+            <a href="#" data-action="events-invert">反选</a>
+            <a href="#" data-action="events-with-photos">只选有照片的</a>
+            <span class="meta" style="margin-left:auto;">已选 ${selectedCount} / ${totalEvents}</span>
+          </div>
+          <div class="export-event-list">${renderEventList()}</div>
+        </div>
       </div>
-      <div class="export-event-list">${renderEventList()}</div>
-    </div>
 
-    <div class="card">
-      <h2>导出</h2>
-      <div class="row" style="gap:8px; flex-wrap:wrap;">
-        <button class="btn" id="export-pdf-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (PDF)</button>
-        <button class="btn" id="export-docx-btn" ${exportDisabled ? 'disabled' : ''}>导出相册 (Word)</button>
-        <button class="btn" id="export-mp4-btn" ${exportDisabled ? 'disabled' : ''}>导出回忆视频 (MP4)</button>
-        <button class="btn secondary" id="export-wall-btn" ${exportDisabled ? 'disabled' : ''}>导出照片墙 (PNG)</button>
+      <div class="export-side">
+        <div class="card">
+          <h2>导出</h2>
+          <div class="export-btn-row">
+            <button class="btn" id="export-pdf-btn" ${exportDisabled ? 'disabled' : ''}>
+              导出相册 (PDF)<span class="export-btn-hint">每篇一页，保留原文排版</span>
+            </button>
+            <button class="btn" id="export-docx-btn" ${exportDisabled ? 'disabled' : ''}>
+              导出相册 (Word)<span class="export-btn-hint">每篇一页，照片能点开原图</span>
+            </button>
+            <button class="btn" id="export-mp4-btn" ${exportDisabled ? 'disabled' : ''}>
+              导出回忆视频 (MP4)<span class="export-btn-hint">每张照片 4 秒，带推拉</span>
+            </button>
+            <button class="btn secondary" id="export-wall-btn" ${exportDisabled ? 'disabled' : ''}>
+              导出照片墙 (PNG)<span class="export-btn-hint">先编辑，再导出一张图</span>
+            </button>
+          </div>
+          <details class="export-more">
+            <summary>每种导出是什么样？</summary>
+            <p class="meta">PDF 每页一篇回忆，保留回忆编辑页里的文字与图片排版，整篇等比缩放到一页；Word 导出同样一篇一页（标题行 + 内容 + 日期行），照片保持等比并且每张都能点开原图。视频每张照片 4 秒（含 Ken Burns 推拉）。照片墙把选中的几篇回忆里的照片拼成一块心形的墙：画布的长宽比跟照片一样，形状画在正中，照片按网格填进形状里，墙的轮廓就是形状；画布底下还能铺一张背景图，照片墙整个盖在上面；进了编辑页还能换位置、改封面，最后导出成一张 PNG。</p>
+          </details>
+          ${renderExportProgress()}
+        </div>
       </div>
-      <p class="meta" style="margin-top:8px;">PDF 每页一篇回忆，保留回忆编辑页里的文字与图片排版，整篇等比缩放到一页；Word 导出同样一篇一页（标题行 + 内容 + 日期行），照片保持等比并且每张都能点开原图。视频每张照片 4 秒（含 Ken Burns 推拉）。照片墙把选中的几篇回忆里的照片拼成一块心形的墙：画布的长宽比跟照片一样，形状画在正中，照片按网格填进形状里，墙的轮廓就是形状；画布底下还能铺一张背景图，照片墙整个盖在上面；进了编辑页还能换位置、改封面，最后导出成一张 PNG。</p>
-      ${renderExportProgress()}
     </div>
     </div>
   `;
